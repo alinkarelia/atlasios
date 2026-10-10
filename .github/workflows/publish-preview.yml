@@ -1,0 +1,68 @@
+name: Publish manually reviewed iPhone preview
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: 'Successful full verification run with the reviewed source and IPA'
+        required: true
+        type: string
+      visual_review:
+        description: 'Both actual runtime screenshot sets have been reviewed and accepted'
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: atlas-preview-publication
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify accepted source run, review record, and IPA provenance
+        id: verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ATLAS_SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          ATLAS_VISUAL_REVIEW: ${{ inputs.visual_review }}
+        run: python3 .github/scripts/publish-preview.py prepare
+      - name: Check out the exact verified source for the source archive
+        uses: actions/checkout@v4
+        with:
+          repository: alinkarelia/atlasios
+          ref: ${{ steps.verify.outputs.source_sha }}
+          path: verified-source
+          persist-credentials: false
+      - name: Download only the verified run's exact IPA candidate
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: alinkarelia/atlasios
+          run-id: ${{ steps.verify.outputs.source_run_id }}
+          name: Atlas-unsigned-device-IPA-candidate
+          path: artifacts/publish/candidate
+      - name: Validate files and publish the complete reviewed prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ATLAS_SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          ATLAS_VISUAL_REVIEW: ${{ inputs.visual_review }}
+        run: python3 .github/scripts/publish-preview.py publish
+      - name: Retain downloaded candidate and staged files on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reviewed-preview-publication-files
+          path: artifacts/publish/
+          if-no-files-found: ignore
+          retention-days: 14
