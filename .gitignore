@@ -1,0 +1,17 @@
+.DS_Store
+.build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+node_modules/
+Server/data/
+Server/dist/
+.env
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+artifacts/
+*.zip
+__pycache__/
+*.pyc
+

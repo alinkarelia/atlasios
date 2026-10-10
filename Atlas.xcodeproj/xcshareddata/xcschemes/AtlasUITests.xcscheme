@@ -1,0 +1,20 @@
+<?xml version='1.0' encoding='utf-8'?>
+<Scheme LastUpgradeVersion="1600" version="1.3">
+   <BuildAction parallelizeBuildables="YES" buildImplicitDependencies="YES">
+      <BuildActionEntries>
+         <BuildActionEntry buildForTesting="YES" buildForRunning="NO" buildForProfiling="NO" buildForArchiving="NO" buildForAnalyzing="NO">
+            <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="42051451FD67DE84D87F2E9A" BuildableName="Atlas.app" BlueprintName="Atlas" ReferencedContainer="container:Atlas.xcodeproj" />
+         </BuildActionEntry>
+         <BuildActionEntry buildForTesting="YES" buildForRunning="NO" buildForProfiling="NO" buildForArchiving="NO" buildForAnalyzing="NO">
+            <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="6448910B700462C0C26F7DA7" BuildableName="AtlasUITests.xctest" BlueprintName="AtlasUITests" ReferencedContainer="container:Atlas.xcodeproj" />
+         </BuildActionEntry>
+      </BuildActionEntries>
+   </BuildAction>
+   <TestAction buildConfiguration="Debug" selectedDebuggerIdentifier="Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier="Xcode.IDEFoundation.Launcher.LLDB" shouldUseLaunchSchemeArgsEnv="YES">
+      <Testables>
+         <TestableReference skipped="NO" parallelizable="NO">
+            <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="6448910B700462C0C26F7DA7" BuildableName="AtlasUITests.xctest" BlueprintName="AtlasUITests" ReferencedContainer="container:Atlas.xcodeproj" />
+         </TestableReference>
+      </Testables>
+   </TestAction>
+</Scheme>
