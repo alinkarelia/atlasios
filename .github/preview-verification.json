@@ -1,6 +1,6 @@
 {
   "repository": "alinkarelia/atlasios",
-  "release_tag": "v0.4.1-preview.6",
+  "release_tag": "v0.5.0-preview.7",
   "release_id": null,
   "source_sha": null,
   "run_id": null,
@@ -11,15 +11,15 @@
   "ipa_bytes": null,
   "ipa_sha256": null,
   "application_id": "com.atlasfield.app",
-  "display_name": "Atlas",
-  "version": "0.4.1",
-  "build": "6",
+  "display_name": "TerraView",
+  "version": "0.5.0",
+  "build": "7",
   "minimum_iOS": "17.0",
   "platform": "iPhoneOS",
   "architecture": "arm64",
   "SDK": null,
   "Xcode": null,
-  "required_ui_tests": 5,
+  "required_ui_tests": 7,
   "personally_signed": false,
   "physical_camera_LiDAR_tested": false,
   "all_CI_checks": "pending",
@@ -54,7 +54,10 @@
       "09-viewer-reset",
       "11-transfer-manual-initial",
       "12-transfer-auto-wifi",
-      "13-transfer-restored-manual"
+      "13-transfer-restored-manual",
+      "14-free-tools",
+      "15-object-unavailable",
+      "16-viewer-section"
     ],
     "synthetic_test_room": true
   },
@@ -88,7 +91,10 @@
       "09-viewer-reset",
       "11-transfer-manual-initial",
       "12-transfer-auto-wifi",
-      "13-transfer-restored-manual"
+      "13-transfer-restored-manual",
+      "14-free-tools",
+      "15-object-unavailable",
+      "16-viewer-section"
     ],
     "synthetic_test_room": true
   },
@@ -104,5 +110,5 @@
     "opaque_RGB": true,
     "packaged_icon_validation": "pending"
   },
-  "note": "Pending native verification and screenshot acceptance of 0.4.1 (6), including actual packaged iPhone and iPad AppIcon declarations and PNG files. This record cannot publish a release."
+  "note": "Pending TerraView 0.5.0 (7) native verification, guided Object Capture fallback, section/measurement UI, free tools, real mesh export and LiDAR overlay checks. Hardware camera/LiDAR quality remains a physical iPhone check."
 }

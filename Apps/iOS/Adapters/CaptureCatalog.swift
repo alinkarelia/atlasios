@@ -62,6 +62,36 @@ enum CaptureCatalog {
             return [ScanRecord(id: manifest.id, projectID: manifest.projectID, source: .roomPlan,
                 status: status, frameID: manifest.frameID, assets: assets, createdAt: manifest.createdAt,
                 revision: 0, geoTag: manifest.geoTag)]
+        case "ObjectCapture":
+            let manifest = try decoder.decode(ObjectManifest.self, from: data)
+            if let geoTag = manifest.geoTag { try GeoTagPolicy.validate(geoTag) }
+            guard Set(manifest.images.map(\.relativePath)).count == manifest.images.count,
+                  manifest.images.count <= 5_000 else { throw CatalogError.invalidManifest }
+            let imagePaths = Set(manifest.images.map(\.relativePath))
+            guard manifest.completedAssets.allSatisfy({ $0.hasPrefix("Images/") || $0 == manifest.modelRelativePath }),
+                  imagePaths.isSubset(of: Set(manifest.completedAssets)),
+                  status != .ready || !manifest.images.isEmpty else { throw CatalogError.invalidManifest }
+            var assets = [asset(manifestFile, kind: .cameraMetadata, namespace: manifest.id, root: managedRoot)]
+            for image in manifest.images {
+                guard image.relativePath.hasPrefix("Images/"),
+                      ["heic", "heif", "jpg", "jpeg", "png", "tif", "tiff", "dng"].contains(URL(fileURLWithPath: image.relativePath).pathExtension.lowercased()),
+                      image.sha256.count == 64, image.sha256.allSatisfy(\.isHexDigit) else { throw CatalogError.invalidAssetPath }
+                let file = try regularFile(try child(image.relativePath, in: captureRoot), within: managedRoot)
+                guard file.byteCount == image.byteCount else { throw CatalogError.invalidManifest }
+                assets.append(asset(file, kind: .image, namespace: manifest.id, root: managedRoot, sha256: image.sha256))
+            }
+            for path in Set(manifest.completedAssets).subtracting(imagePaths).sorted() where path.hasPrefix("Images/") {
+                let file = try regularFile(try child(path, in: captureRoot), within: managedRoot)
+                assets.append(asset(file, kind: .depth, namespace: manifest.id, root: managedRoot))
+            }
+            if let path = manifest.modelRelativePath {
+                guard path == "object.usdz", manifest.completedAssets.contains(path) else { throw CatalogError.invalidAssetPath }
+                assets.append(asset(try regularFile(try child(path, in: captureRoot), within: managedRoot),
+                                    kind: .mesh, namespace: manifest.id, root: managedRoot))
+            }
+            return [ScanRecord(id: manifest.id, projectID: manifest.projectID, source: .photogrammetry,
+                status: status, frameID: manifest.frameID, assets: assets, createdAt: manifest.createdAt,
+                revision: 0, geoTag: manifest.geoTag)]
         default: throw CatalogError.unsupportedSource
         }
     }
@@ -175,6 +205,21 @@ enum CaptureCatalog {
         var cameraFrameID: UUID?
         var relativePath: String
         var sha256: String?
+    }
+    private struct ObjectManifest: Decodable {
+        struct Image: Decodable {
+            var relativePath: String
+            var byteCount: Int64
+            var sha256: String
+        }
+        var id: UUID
+        var projectID: UUID
+        var frameID: UUID
+        var createdAt: Date
+        var completedAssets: [String]
+        var images: [Image]
+        var modelRelativePath: String?
+        var geoTag: GeoTag?
     }
 
     enum CatalogError: LocalizedError {

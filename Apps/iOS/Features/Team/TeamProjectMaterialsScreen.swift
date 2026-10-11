@@ -140,7 +140,7 @@ private struct TeamMaterialDetailScreen: View {
                 if let device = material.manifest.device {
                     LabeledContent("Комплект подготовлен на", value: device.model)
                     LabeledContent("Система подготовки", value: device.osVersion)
-                    LabeledContent("Atlas при подготовке", value: device.appVersion)
+                    LabeledContent("Версия приложения при подготовке", value: device.appVersion)
                 }
                 Text("Даты ниже показаны в часовом поясе этого iPhone. Исходные значения времени и геометок сохраняются в паспорте.")
                     .font(.footnote).foregroundStyle(Color.atlasMuted)

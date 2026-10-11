@@ -1,0 +1,94 @@
+name: Native Simulator runtime QA
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Run full native UI tests or capture baseline launch only'
+        required: true
+        default: full
+        type: choice
+        options:
+          - full
+          - launch-only
+      toolchain:
+        description: 'Validate iOS 18.5 with Xcode 16.4 or the latest installed iOS 26/Xcode 26'
+        required: true
+        default: '16.4'
+        type: choice
+        options:
+          - '16.4'
+          - '26'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runtime-qa-${{ github.ref }}-${{ inputs.toolchain }}
+  cancel-in-progress: true
+
+jobs:
+  runtime:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Select the tested Apple toolchain
+        env:
+          ATLAS_RUNTIME_TOOLCHAIN: ${{ inputs.toolchain }}
+        run: |
+          python3 - <<'PY' > /tmp/atlas-selected-xcode.txt
+          import os, pathlib, re
+          if os.environ['ATLAS_RUNTIME_TOOLCHAIN'] == '26':
+              candidates = []
+              for app in pathlib.Path('/Applications').glob('Xcode_26*.app'):
+                  match = re.fullmatch(r'Xcode_(26(?:\.\d+){0,2})\.app', app.name)
+                  if match:
+                      candidates.append((tuple(int(part) for part in match[1].split('.')), app))
+              if not candidates:
+                  raise SystemExit('This runner has no installed stable Xcode 26 toolchain.')
+              app = max(candidates)[1]
+          else:
+              app = pathlib.Path('/Applications/Xcode_16.4.app')
+          developer = app / 'Contents/Developer'
+          if not developer.is_dir():
+              raise SystemExit(f'Required Apple toolchain is missing: {app}')
+          print(developer)
+          PY
+          sudo xcode-select -s "$(cat /tmp/atlas-selected-xcode.txt)"
+          xcodebuild -version
+          xcrun swift --version
+      - name: Install deterministic generator dependency
+        run: python3 -m pip install 'PyYAML==6.0.3'
+      - name: Launch the real native app or run UI tests in Simulator
+        env:
+          ATLAS_RUNTIME_MODE: ${{ inputs.mode }}
+          ATLAS_RUNTIME_IOS_MAJOR: ${{ inputs.toolchain == '26' && '26' || '' }}
+        run: |
+          if [[ "$ATLAS_RUNTIME_MODE" == 'launch-only' ]]; then
+            bash Scripts/check-runtime.sh --launch-only
+          else
+            bash Scripts/check-runtime.sh
+          fi
+      - name: Keep real Simulator screenshots and runtime diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-runtime-screenshots-and-diagnostics
+          path: |
+            artifacts/runtime/screenshots/
+            artifacts/runtime/diagnostics/
+            artifacts/runtime/simulator-selection.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Keep UI test result bundle and performance measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-runtime-test-results
+          path: artifacts/runtime/*.xcresult
+          if-no-files-found: ignore
+          retention-days: 14

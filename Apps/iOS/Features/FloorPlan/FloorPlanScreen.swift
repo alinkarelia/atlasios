@@ -178,10 +178,11 @@ struct FloorPlanScreen: View {
             AtlasSectionLabel(title: "Передать результат")
             HStack {
                 Button("DXF", systemImage: "square.and.arrow.up") { export(plan, pdf: false) }
+                Button("SVG", systemImage: "doc.text.image") { export(plan, pdf: false, format: .svg) }
                 Spacer()
                 Button("PDF", systemImage: "doc.richtext") { export(plan, pdf: true) }
             }.buttonStyle(.bordered)
-            Text("Экспортируется выбранный обмер в собственной локальной системе. DXF — метры; PDF — обзорный план с ведомостью, без заявленного печатного масштаба.")
+            Text("Экспортируется выбранный обмер в собственной локальной системе. DXF и SVG сохраняют метры; PDF — обзорный план с ведомостью.")
                 .font(.caption).foregroundStyle(Color.atlasMuted)
         }
     }
@@ -211,14 +212,14 @@ struct FloorPlanScreen: View {
         }
         do { try await persist(plan) } catch { issue = error.localizedDescription }
     }
-    private func export(_ plan: AtlasFloorPlan, pdf: Bool) {
+    private func export(_ plan: AtlasFloorPlan, pdf: Bool, format: ExportFormat = .dxf) {
         do {
             let directory = model.directory.appendingPathComponent("Exports", isDirectory: true)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let url: URL
             if pdf { url = try PlanPDFExporter.export(plan, directory: directory) }
             else {
-                let artifact = try AtlasExporter.exportFloorPlan(plan)
+                let artifact = try AtlasExporter.exportFloorPlan(plan, format: format)
                 url = directory.appendingPathComponent(artifact.fileName)
                 try artifact.data.write(to: url, options: .atomic)
             }

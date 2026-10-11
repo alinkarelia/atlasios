@@ -4,6 +4,7 @@ import Combine
 import AVFoundation
 import UIKit
 import Metal
+import CoreVideo
 import AtlasCore
 @preconcurrency import ARKit
 @preconcurrency import RealityKit
@@ -26,12 +27,21 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
     @Published private(set) var cameraFrameCount = 0
     /// Real AR plane boundaries projected into the visible camera viewport.
     @Published private(set) var detectedPlaneOutlines: [[CGPoint]] = []
+    @Published private(set) var overlayTriangleCount = 0
+    @Published private(set) var overlayAnchorCount = 0
+    @Published private(set) var surfaceDistanceMeters: Double?
+    @Published private(set) var scanGuidance = "Покажите стену или предмет с расстояния 0,5–3 м"
+    @Published private(set) var guidanceNeedsAttention = false
+    @Published var showRecordedSurfaces = true {
+        didSet { recordedSurfaceRoot?.isEnabled = showRecordedSurfaces }
+    }
     @Published private(set) var anchorCount = 0
     @Published private(set) var triangleCount = 0
     @Published private(set) var observedSurfaceArea: Double = 0
     @Published private(set) var segmentCount = 0
     @Published private(set) var lastCheckpoint: Date?
     @Published private(set) var errorMessage: String?
+    @Published private(set) var overlayIssue: String?
     @Published private(set) var availableDiskBytes: Int64 = 0
     @Published private(set) var captureDirectory: URL?
 
@@ -43,9 +53,12 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
         let view = ARView(frame: .zero, cameraMode: .ar, automaticallyConfigureSession: false)
         view.session.delegate = self
         view.session.delegateQueue = .main
-        view.debugOptions.insert(.showSceneUnderstanding)
-        // Occlusion adds depth rendering work without helping an untextured
-        // scanning overlay. Keep the camera responsive on older LiDAR devices.
+        // The debug mesh draws every diagonal and cannot communicate coverage.
+        // Our own depth-tested, unlit surfaces appear only after disk commit.
+        view.debugOptions = []
+        view.environment.sceneUnderstanding.options.remove(.occlusion)
+        view.renderOptions.insert(.disableMotionBlur)
+        view.renderOptions.insert(.disableDepthOfField)
         cameraView = view
         return view
     }
@@ -79,8 +92,26 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
     private var totalTriangles = 0
     private var totalSurfaceArea: Double = 0
     private var lastMetricPublication: TimeInterval = 0
-    private var planeBoundaries: [UUID: [SIMD3<Float>]] = [:]
+    private struct PlaneBoundary {
+        var points: [SIMD3<Float>]
+        var firstSeen: TimeInterval
+        var lastUpdated: TimeInterval
+        var isCeiling: Bool
+    }
+    private var planeBoundaries: [UUID: PlaneBoundary] = [:]
     private var lastOutlinePublication: TimeInterval = 0
+    private var recordedSurfaceRoot: AnchorEntity?
+    private struct SurfaceOverlay {
+        var entity: Entity
+        var center: SIMD3<Float>
+        var triangleCount: Int
+        var updatedAt: TimeInterval
+    }
+    private var surfaceOverlays: [UUID: SurfaceOverlay] = [:]
+    private var lastGuidancePublication: TimeInterval = 0
+    private var previousCameraPose: (position: SIMD3<Float>, forward: SIMD3<Float>, time: TimeInterval)?
+    private var motionWarningUntil: TimeInterval = 0
+    private var lastGeometryAt: TimeInterval = 0
 
     override init() {
         super.init()
@@ -140,8 +171,9 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
             config.worldAlignment = .gravity
             config.environmentTexturing = .none
             config.planeDetection = [.horizontal, .vertical]
+            if ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) { config.frameSemantics.insert(.sceneDepth) }
             isPreviewing = true
-            resetCameraReadiness()
+            resetCameraReadiness(clearRecordedSurfaces: true)
             view.session.run(config, options: [.resetTracking, .removeExistingAnchors])
             beginCameraWatchdog()
         } catch {
@@ -210,7 +242,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
             segmentCount = 1
             needsNewFrame = false
             isPreviewing = false
-            resetCameraReadiness()
+            resetCameraReadiness(clearRecordedSurfaces: true)
             state = .recording
             view.session.run(configuration(), options: [.resetTracking, .removeExistingAnchors])
             beginCameraWatchdog()
@@ -280,6 +312,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
                 manifest = current
                 try await writer?.saveManifest(current)
                 snapshots.removeAll(); lastSnapshotTimes.removeAll()
+                clearSurfaceOverlays()
                 meshGeneration = UUID()
                 totalTriangles = 0; totalSurfaceArea = 0; lastMetricPublication = 0
                 anchorCount = 0; triangleCount = 0; observedSurfaceArea = 0
@@ -407,43 +440,83 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
         consume(anchors)
     }
     func session(_ session: ARSession, didRemove anchors: [ARAnchor]) {
-        for anchor in anchors { planeBoundaries[anchor.identifier] = nil }
+        for anchor in anchors {
+            planeBoundaries[anchor.identifier] = nil
+            if let removed = surfaceOverlays.removeValue(forKey: anchor.identifier) {
+                removed.entity.removeFromParent()
+            }
+        }
+        publishOverlayMetrics()
     }
 
     private func updatePlaneBoundaries(_ anchors: [ARAnchor]) {
         guard state == .recording || isPreviewing else { return }
+        let now = ProcessInfo.processInfo.systemUptime
         for anchor in anchors {
             guard let plane = anchor as? ARPlaneAnchor,
-                  planeBoundaries[plane.identifier] != nil || planeBoundaries.count < 8 else { continue }
+                  planeBoundaries[plane.identifier] != nil || planeBoundaries.count < 24 else { continue }
+            let previous = planeBoundaries[plane.identifier]
+            guard previous == nil || now - (previous?.lastUpdated ?? 0) >= 0.4 else { continue }
             // Swift exposes the Objective-C pointer/count pair as an array.
             // Read it once; repeatedly accessing the overlay can copy buffers.
             let boundary = plane.geometry.boundaryVertices
             let count = boundary.count
-            guard count >= 3 else { planeBoundaries[plane.identifier] = nil; continue }
-            let samples = min(count, 32)
+            // Joining sparsely sampled corners across a detailed concave
+            // boundary would invent diagonals. Prefer fills for complex planes.
+            guard count >= 3, count <= LiDAROverlayGeometry.maximumBoundaryVertices else {
+                planeBoundaries[plane.identifier] = nil; continue
+            }
+            let samples = count
             var points = [SIMD3<Float>]()
             points.reserveCapacity(samples)
             for sample in 0..<samples {
-                let local = boundary[sample * count / samples]
+                let local = boundary[sample]
                 let world = plane.transform * SIMD4(local.x, local.y, local.z, 1)
                 let point = SIMD3(world.x, world.y, world.z)
                 guard point.x.isFinite, point.y.isFinite, point.z.isFinite else { continue }
                 points.append(point)
             }
-            planeBoundaries[plane.identifier] = points.count >= 3 ? points : nil
+            planeBoundaries[plane.identifier] = points.count >= 3
+                ? PlaneBoundary(points: points, firstSeen: previous?.firstSeen ?? now,
+                    lastUpdated: now, isCeiling: plane.classification == .ceiling) : nil
         }
     }
 
     private func projectPlaneOutlines(now: TimeInterval) {
-        guard now - lastOutlinePublication >= 0.2, let view = cameraView,
+        guard now - lastOutlinePublication >= 0.25, let view = cameraView,
+              let camera = view.session.currentFrame?.camera,
               view.bounds.width > 1, view.bounds.height > 1 else { return }
         lastOutlinePublication = now
-        let outlines = planeBoundaries.values.compactMap { points -> [CGPoint]? in
-            let projected = points.compactMap { view.project($0) }
-            // Do not fabricate a closed border if any corner is behind camera.
-            guard projected.count == points.count, projected.count >= 3,
-                  projected.allSatisfy({ $0.x.isFinite && $0.y.isFinite }) else { return nil }
-            return projected
+        let cameraPosition = SIMD3(camera.transform.columns.3.x, camera.transform.columns.3.y, camera.transform.columns.3.z)
+        let worldToCamera = simd_inverse(camera.transform)
+        let viewport = SIMD2<Float>(Float(view.bounds.width), Float(view.bounds.height))
+        // Only the three closest stable borders are useful guidance. Ceilings
+        // remain visible as filled recorded surfaces, without a line spiderweb.
+        let candidates = planeBoundaries.values.filter {
+            !$0.isCeiling && now - $0.firstSeen >= 0.8 &&
+                !($0.points.allSatisfy { $0.y > cameraPosition.y + 0.6 })
+        }.sorted {
+            simd_distance($0.points[0], cameraPosition) < simd_distance($1.points[0], cameraPosition)
+        }.prefix(3)
+        var outlines = [[CGPoint]]()
+        for boundary in candidates {
+            let cameraPoints = boundary.points.map { point -> SIMD3<Float> in
+                let value = worldToCamera * SIMD4(point.x, point.y, point.z, 1)
+                return SIMD3(value.x, value.y, value.z)
+            }
+            for (a, b) in LiDAROverlayGeometry.clipCameraBoundary(cameraPoints) {
+                guard simd_length(a) <= 6, simd_length(b) <= 6 else { continue }
+                let worldA = camera.transform * SIMD4(a.x, a.y, a.z, 1)
+                let worldB = camera.transform * SIMD4(b.x, b.y, b.z, 1)
+                guard let pa = view.project(SIMD3(worldA.x, worldA.y, worldA.z)),
+                      let pb = view.project(SIMD3(worldB.x, worldB.y, worldB.z)),
+                      let clipped = LiDAROverlayGeometry.clipScreenLine(
+                        from: SIMD2(Float(pa.x), Float(pa.y)), to: SIMD2(Float(pb.x), Float(pb.y)), viewport: viewport) else { continue }
+                let first = CGPoint(x: CGFloat(clipped.0.x), y: CGFloat(clipped.0.y))
+                let second = CGPoint(x: CGFloat(clipped.1.x), y: CGFloat(clipped.1.y))
+                guard hypot(first.x - second.x, first.y - second.y) >= 8 else { continue }
+                outlines.append([first, second])
+            }
         }
         if outlines != detectedPlaneOutlines { detectedPlaneOutlines = outlines }
     }
@@ -499,6 +572,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
         lastFrameAt = now
         receivedFrameCount += 1
         projectPlaneOutlines(now: now)
+        updateScanGuidance(frame, now: now)
         if !isCameraReady {
             isCameraReady = true
             cameraStatus = "Камера работает"
@@ -514,13 +588,168 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
         catch { pause(reason: error.localizedDescription) }
     }
 
-    private func resetCameraReadiness() {
+    private func resetCameraReadiness(clearRecordedSurfaces: Bool = false) {
         cameraWatchdog?.cancel(); cameraWatchdog = nil
         lastFrameAt = nil; receivedFrameCount = 0; lastFramePublication = 0
         cameraFrameCount = 0; isCameraReady = false; isTrackingNormal = false
         hadStableTracking = false; lastHealthCheck = 0
         planeBoundaries.removeAll(); detectedPlaneOutlines = []; lastOutlinePublication = 0
+        if clearRecordedSurfaces { clearSurfaceOverlays() }
+        surfaceDistanceMeters = nil; lastGuidancePublication = 0; previousCameraPose = nil
+        motionWarningUntil = 0; lastGeometryAt = 0; guidanceNeedsAttention = false
+        scanGuidance = "Покажите стену или предмет с расстояния 0,5–3 м"
         cameraStatus = "Ожидаем изображение с камеры…"
+    }
+
+    private func updateScanGuidance(_ frame: ARFrame, now: TimeInterval) {
+        let transform = frame.camera.transform
+        let position = SIMD3(transform.columns.3.x, transform.columns.3.y, transform.columns.3.z)
+        let forward = SIMD3(-transform.columns.2.x, -transform.columns.2.y, -transform.columns.2.z)
+        if let previous = previousCameraPose {
+            let interval = now - previous.time
+            if interval > 0.01, interval < 0.5 {
+                let speed = simd_distance(position, previous.position) / Float(interval)
+                let cosine = min(1, max(-1, simd_dot(forward, previous.forward)))
+                let turnRate = acos(cosine) / Float(interval)
+                if speed > 0.65 || turnRate > 1.2 { motionWarningUntil = now + 1.2 }
+            }
+        }
+        previousCameraPose = (position, forward, now)
+        guard now - lastGuidancePublication >= 0.5 else { return }
+        lastGuidancePublication = now
+        surfaceDistanceMeters = Self.centerDepth(frame.smoothedSceneDepth ?? frame.sceneDepth)
+        var attention = false
+        let guidance: String
+        if !isTrackingNormal {
+            guidance = trackingMessage; attention = true
+        } else if motionWarningUntil > now {
+            guidance = "Медленнее: ведите телефон плавно, без резких поворотов"; attention = true
+        } else if let distance = surfaceDistanceMeters, distance < 0.35 {
+            guidance = "Отойдите немного: поверхность слишком близко"; attention = true
+        } else if let distance = surfaceDistanceMeters, distance > 4 {
+            guidance = "Подойдите ближе: для деталей держите 0,5–3 м"; attention = true
+        } else if let light = frame.lightEstimate?.ambientIntensity, light < 300 {
+            guidance = "Добавьте света: камере нужны видимые детали"; attention = true
+        } else if state == .recording, lastGeometryAt > 0, now - lastGeometryAt > 4 {
+            guidance = "Сетка пока не обновляется. Сместитесь и покажите соседнюю поверхность"; attention = true
+        } else if state == .recording, lastCheckpoint != nil {
+            guidance = "Заливка — записанная сетка. Медленно покажите участки без заливки"
+        } else if state == .recording {
+            guidance = "Запись идёт. Медленно покажите пол, стены и затем потолок"
+        } else {
+            guidance = "Наведите на объект и нажмите запись. Предпросмотр ещё не сохраняет сетку"
+        }
+        if scanGuidance != guidance { scanGuidance = guidance }
+        if guidanceNeedsAttention != attention { guidanceNeedsAttention = attention }
+    }
+
+    /// A bounded 5×5 central sample measures the reticle surface, not a guessed
+    /// room dimension. Low-confidence depth is excluded when ARKit provides it.
+    private static func centerDepth(_ depth: ARDepthData?) -> Double? {
+        guard let depth else { return nil }
+        let map = depth.depthMap
+        guard CVPixelBufferGetPixelFormatType(map) == kCVPixelFormatType_DepthFloat32,
+              CVPixelBufferLockBaseAddress(map, .readOnly) == kCVReturnSuccess else { return nil }
+        defer { CVPixelBufferUnlockBaseAddress(map, .readOnly) }
+        guard let address = CVPixelBufferGetBaseAddress(map) else { return nil }
+        let width = CVPixelBufferGetWidth(map), height = CVPixelBufferGetHeight(map)
+        let rowBytes = CVPixelBufferGetBytesPerRow(map)
+        guard width >= 5, height >= 5, rowBytes >= width * 4 else { return nil }
+        let confidence = depth.confidenceMap
+        var confidenceAddress: UnsafeMutableRawPointer?
+        var confidenceRowBytes = 0
+        var confidenceLocked = false
+        if let confidence,
+           CVPixelBufferGetWidth(confidence) == width, CVPixelBufferGetHeight(confidence) == height,
+           CVPixelBufferLockBaseAddress(confidence, .readOnly) == kCVReturnSuccess {
+            confidenceLocked = true
+            confidenceAddress = CVPixelBufferGetBaseAddress(confidence)
+            confidenceRowBytes = CVPixelBufferGetBytesPerRow(confidence)
+        }
+        defer { if confidenceLocked, let confidence { CVPixelBufferUnlockBaseAddress(confidence, .readOnly) } }
+        var values = [Float](); values.reserveCapacity(25)
+        for y in (height / 2 - 2)...(height / 2 + 2) {
+            for x in (width / 2 - 2)...(width / 2 + 2) {
+                if let confidenceAddress, confidenceRowBytes >= width,
+                   confidenceAddress.load(fromByteOffset: y * confidenceRowBytes + x, as: UInt8.self) == 0 { continue }
+                let value = address.load(fromByteOffset: y * rowBytes + x * 4, as: Float.self)
+                if value.isFinite, value >= 0.1, value <= 8 { values.append(value) }
+            }
+        }
+        guard values.count >= 5 else { return nil }
+        values.sort()
+        return Double(values[values.count / 2])
+    }
+
+    private func clearSurfaceOverlays() {
+        if let root = recordedSurfaceRoot { cameraView?.scene.removeAnchor(root) }
+        recordedSurfaceRoot = nil; surfaceOverlays.removeAll()
+        overlayTriangleCount = 0; overlayAnchorCount = 0; overlayIssue = nil
+    }
+
+    private func publishOverlayMetrics() {
+        let triangles = surfaceOverlays.values.reduce(0) { $0 + $1.triangleCount }
+        if overlayTriangleCount != triangles { overlayTriangleCount = triangles }
+        if overlayAnchorCount != surfaceOverlays.count { overlayAnchorCount = surfaceOverlays.count }
+    }
+
+    /// Visualization is deliberately bounded independently of source storage.
+    /// It never deletes or decimates the durable OBJ/checkpoint geometry.
+    private func showCommittedSurface(_ overlay: MeshSurfaceOverlay, anchorID: UUID) {
+        guard let view = cameraView, view.window != nil,
+              UIApplication.shared.applicationState == .active, !overlay.groups.isEmpty else { return }
+        let position = view.session.currentFrame?.camera.transform.columns.3 ?? SIMD4<Float>(0, 0, 0, 1)
+        let camera = SIMD3(position.x, position.y, position.z)
+        guard simd_distance(overlay.center, camera) < 6 else { return }
+        let parent: AnchorEntity
+        if let root = recordedSurfaceRoot { parent = root }
+        else {
+            parent = AnchorEntity(world: SIMD3<Float>.zero)
+            parent.isEnabled = showRecordedSurfaces
+            view.scene.addAnchor(parent); recordedSurfaceRoot = parent
+        }
+        do {
+            let container = Entity()
+            for group in overlay.groups {
+                var descriptor = MeshDescriptor(name: "Recorded LiDAR surface")
+                descriptor.positions = MeshBuffers.Positions(group.positions)
+                descriptor.primitives = .triangles(group.indices)
+                let mesh = try MeshResource.generate(from: [descriptor])
+                var material = UnlitMaterial()
+                let color: UIColor
+                switch group.classification {
+                case .ceiling: color = UIColor(red: 0.45, green: 0.72, blue: 1, alpha: 1)
+                case .floor: color = UIColor(red: 0.15, green: 0.95, blue: 0.78, alpha: 1)
+                case .other: color = UIColor(red: 0.83, green: 1, blue: 0.24, alpha: 1)
+                }
+                material.color = .init(tint: color)
+                material.blending = .transparent(opacity: .init(floatLiteral: 0.55))
+                // A local depth mask prevents farther recorded walls showing
+                // through foreground surfaces. The translucent color sits 3 mm
+                // toward the camera to avoid coincident-depth flicker. Neither
+                // derivative transform is used by persistence/export.
+                container.addChild(ModelEntity(mesh: mesh, materials: [OcclusionMaterial()]))
+                let fill = ModelEntity(mesh: mesh, materials: [material])
+                let cameraDirection = camera - overlay.center
+                if simd_length(cameraDirection) > 0.01 { fill.position = simd_normalize(cameraDirection) * 0.003 }
+                container.addChild(fill)
+            }
+            surfaceOverlays.removeValue(forKey: anchorID)?.entity.removeFromParent()
+            parent.addChild(container)
+            surfaceOverlays[anchorID] = SurfaceOverlay(entity: container, center: overlay.center,
+                triangleCount: overlay.triangleCount, updatedAt: ProcessInfo.processInfo.systemUptime)
+            // Nearby surfaces explain the current view; distant geometry remains
+            // on disk and can return when ARKit updates that anchor again.
+            while surfaceOverlays.count > 36 || surfaceOverlays.values.reduce(0, { $0 + $1.triangleCount }) > 160_000 {
+                guard let farthest = surfaceOverlays.filter({ $0.key != anchorID }).max(by: {
+                    simd_distance($0.value.center, camera) < simd_distance($1.value.center, camera)
+                }) else { break }
+                surfaceOverlays.removeValue(forKey: farthest.key)?.entity.removeFromParent()
+            }
+            publishOverlayMetrics(); overlayIssue = nil
+        } catch {
+            overlayIssue = "Заливка временно недоступна. Исходная сетка записана: \(error.localizedDescription)"
+        }
     }
 
     private func beginCameraWatchdog() {
@@ -552,7 +781,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
         let now = ProcessInfo.processInfo.systemUptime
         let ticket = meshGeneration
         for anchor in anchors {
-            guard meshTasks.count < 8, let mesh = anchor as? ARMeshAnchor,
+            guard meshTasks.count < 4, let mesh = anchor as? ARMeshAnchor,
                   meshTasks[mesh.identifier] == nil else { continue }
             let interval: TimeInterval = ProcessInfo.processInfo.thermalState == .fair ? 1.5 : 0.75
             guard now - (lastSnapshotTimes[mesh.identifier] ?? -interval) >= interval,
@@ -564,6 +793,9 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
                 defer { self?.meshTasks[identifier] = nil }
                 guard let snapshot = await processor.process(raw), let self,
                       self.meshGeneration == ticket else { return }
+                let overlay = await processor.surfaceOverlay(snapshot, classifications: snapshot.classifications,
+                    floorCode: UInt8(ARMeshClassification.floor.rawValue), ceilingCode: UInt8(ARMeshClassification.ceiling.rawValue))
+                guard self.meshGeneration == ticket else { return }
                 let previousSnapshot = self.snapshots.updateValue(snapshot, forKey: identifier)
                 self.totalTriangles += snapshot.triangleCount - (previousSnapshot?.triangleCount ?? 0)
                 self.totalSurfaceArea += snapshot.areaSquareMeters - (previousSnapshot?.areaSquareMeters ?? 0)
@@ -573,6 +805,10 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
                     if let previous { await previous.value }
                     do {
                         try await writer.persist(snapshot)
+                        if let self, self.meshGeneration == ticket {
+                            self.lastGeometryAt = ProcessInfo.processInfo.systemUptime
+                            self.showCommittedSurface(overlay, anchorID: identifier)
+                        }
                         if let self, self.lastCheckpoint.map({ snapshot.updatedAt.timeIntervalSince($0) >= 1 }) ?? true {
                             self.lastCheckpoint = snapshot.updatedAt
                         }
@@ -583,7 +819,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
                     }
                 }
                 self.pendingWrite = save
-                // The eight-task limit includes file I/O: mesh processing cannot
+                // The four-task limit includes file I/O: mesh processing cannot
                 // build an unbounded backlog of encoded checkpoints in RAM.
                 await save.value
             }
@@ -746,7 +982,22 @@ private struct MeshCheckpoint: Codable, Sendable {
     /// UInt32 little-endian triangle indices, zero based.
     var indices: Data
     var areaSquareMeters: Double
+    /// Optional original ARMeshClassification bytes, one per source triangle.
+    /// Older checkpoints without semantic labels remain readable.
+    var classifications: Data? = nil
 
+}
+
+private struct MeshSurfaceOverlay: Sendable {
+    enum Classification: Sendable { case floor, ceiling, other }
+    struct Group: Sendable {
+        var classification: Classification
+        var positions: [SIMD3<Float>]
+        var indices: [UInt32]
+    }
+    var groups: [Group]
+    var center: SIMD3<Float>
+    var triangleCount: Int
 }
 
 /// Raw bytes leave ARKit immediately; no ARMeshAnchor or MTLBuffer crosses
@@ -762,6 +1013,7 @@ private struct MeshBufferSnapshot: Sendable {
     let bytesPerIndex: Int
     let faces: Data
     let transform: [Float]
+    var classifications: Data? = nil
 
     @MainActor static func copy(_ anchor: ARMeshAnchor, segmentID: UUID) -> Self? {
         let source = anchor.geometry.vertices
@@ -777,16 +1029,62 @@ private struct MeshBufferSnapshot: Sendable {
         guard vertexBytes <= 32 * 1_024 * 1_024 else { return nil }
         let matrix = anchor.transform
         let columns = [matrix.columns.0, matrix.columns.1, matrix.columns.2, matrix.columns.3]
-        return Self(anchorID: anchor.identifier, segmentID: segmentID, updatedAt: Date(),
+        var result = Self(anchorID: anchor.identifier, segmentID: segmentID, updatedAt: Date(),
             vertexCount: source.count, vertexStride: source.stride,
             vertices: Data(bytes: source.buffer.contents().advanced(by: source.offset), count: vertexBytes),
             triangleCount: faces.count, bytesPerIndex: faces.bytesPerIndex,
             faces: Data(bytes: faces.buffer.contents(), count: faces.count * 3 * faces.bytesPerIndex),
             transform: columns.flatMap { [$0.x, $0.y, $0.z, $0.w] })
+        if let classification = anchor.geometry.classification,
+           classification.format == .uchar, classification.componentsPerVector == 1,
+           classification.count >= faces.count, classification.stride == 1,
+           classification.offset >= 0, classification.offset + faces.count <= classification.buffer.length {
+            result.classifications = Data(bytes: classification.buffer.contents().advanced(by: classification.offset), count: faces.count)
+        }
+        return result
     }
 }
 
 private actor MeshCheckpointProcessor {
+    func surfaceOverlay(_ checkpoint: MeshCheckpoint, classifications: Data?, floorCode: UInt8, ceilingCode: UInt8) -> MeshSurfaceOverlay {
+        let points: [SIMD3<Float>] = checkpoint.positions.withUnsafeBytes { bytes in
+            (0..<checkpoint.vertexCount).map { index in
+                let offset = index * 12
+                return SIMD3(Float(bitPattern: UInt32(littleEndian: bytes.loadUnaligned(fromByteOffset: offset, as: UInt32.self))),
+                    Float(bitPattern: UInt32(littleEndian: bytes.loadUnaligned(fromByteOffset: offset + 4, as: UInt32.self))),
+                    Float(bitPattern: UInt32(littleEndian: bytes.loadUnaligned(fromByteOffset: offset + 8, as: UInt32.self))))
+            }
+        }
+        let indices: [UInt32] = checkpoint.indices.withUnsafeBytes { bytes in
+            (0..<(checkpoint.triangleCount * 3)).map { UInt32(littleEndian: bytes.loadUnaligned(fromByteOffset: $0 * 4, as: UInt32.self)) }
+        }
+        let triangles = LiDAROverlayGeometry.filteredTriangles(vertices: points, indices: indices,
+            triangleBudget: 8_000, maxEdgeLength: 0.75)
+        var byClass = [[Int]](repeating: [], count: 3)
+        for triangle in triangles {
+            let classification = classifications.flatMap { data in triangle.sourceFaceIndex < data.count ? data[triangle.sourceFaceIndex] : nil }
+            let group = classification == floorCode ? 0 : classification == ceilingCode ? 1 : 2
+            byClass[group].append(contentsOf: [Int(triangle.indices.x), Int(triangle.indices.y), Int(triangle.indices.z)])
+        }
+        var groups = [MeshSurfaceOverlay.Group]()
+        var minimum = SIMD3<Float>(repeating: .infinity), maximum = SIMD3<Float>(repeating: -.infinity)
+        for (index, original) in byClass.enumerated() where !original.isEmpty {
+            var positions = [SIMD3<Float>](), compactIndices = [UInt32](), remapping = [Int: UInt32]()
+            positions.reserveCapacity(min(original.count, points.count)); compactIndices.reserveCapacity(original.count)
+            for oldIndex in original {
+                if let existing = remapping[oldIndex] { compactIndices.append(existing); continue }
+                let next = UInt32(positions.count), point = points[oldIndex]
+                remapping[oldIndex] = next; positions.append(point); compactIndices.append(next)
+                minimum = SIMD3(min(minimum.x, point.x), min(minimum.y, point.y), min(minimum.z, point.z))
+                maximum = SIMD3(max(maximum.x, point.x), max(maximum.y, point.y), max(maximum.z, point.z))
+            }
+            groups.append(.init(classification: index == 0 ? .floor : index == 1 ? .ceiling : .other,
+                positions: positions, indices: compactIndices))
+        }
+        let center = groups.isEmpty ? SIMD3<Float>.zero : (minimum + maximum) * 0.5
+        return .init(groups: groups, center: center, triangleCount: triangles.count)
+    }
+
     func process(_ raw: MeshBufferSnapshot) -> MeshCheckpoint? {
         guard raw.vertexCount > 0, raw.vertexCount <= 500_000,
               raw.vertexStride >= 12, raw.vertexStride <= 256,
@@ -840,9 +1138,13 @@ private actor MeshCheckpointProcessor {
             return area.isFinite
         }
         guard validFaces else { return nil }
-        return MeshCheckpoint(anchorID: raw.anchorID, segmentID: raw.segmentID, updatedAt: raw.updatedAt,
+        var result = MeshCheckpoint(anchorID: raw.anchorID, segmentID: raw.segmentID, updatedAt: raw.updatedAt,
             vertexCount: raw.vertexCount, triangleCount: raw.triangleCount,
             positions: positions, indices: indices, areaSquareMeters: area)
+        if let classifications = raw.classifications, classifications.count == raw.triangleCount {
+            result.classifications = classifications
+        }
+        return result
     }
 }
 

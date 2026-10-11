@@ -262,7 +262,7 @@ actor FieldTransferAssembler {
                           device: FieldCaptureDevice, preparedBy: FieldCaptureOperator?) throws -> Data {
         struct CaptureHeader: Decodable {
             struct Segment: Decodable { var id: UUID; var endedAt: Date? }
-            var captureOperator: FieldCaptureOperator?; var segments: [Segment]?
+            var captureOperator: FieldCaptureOperator?; var segments: [Segment]?; var endedAt: Date?
         }
         let managed = assetDirectory.standardizedFileURL.resolvingSymlinksInPath()
         let prefix = "Projects/" + snapshot.project.id.uuidString + "/Captures/"
@@ -283,7 +283,7 @@ actor FieldTransferAssembler {
                     guard try fileSize(file) <= 2 * 1_024 * 1_024 else { throw FieldTransportError.tooLarge }
                     if let value = try? decoder.decode(CaptureHeader.self, from: Data(contentsOf: file)) {
                         author = value.captureOperator
-                        endedAt = value.segments?.first(where: { $0.id == scan.id })?.endedAt
+                        endedAt = value.segments?.first(where: { $0.id == scan.id })?.endedAt ?? value.endedAt
                     }
                 }
             }

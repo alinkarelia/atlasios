@@ -192,7 +192,7 @@ public extension AtlasExporter {
         }
         var warnings = ["Геометки обозначают положение съёмок. Локальные 3D-модели и планы не преобразованы в WGS84."]
         if missing > 0 { warnings.append("Съёмки без геометки пропущены: \(missing).") }
-        return ExportArtifact(fileName: "atlas-\(snapshot.project.id.uuidString.prefix(8).lowercased())-geotags.geojson",
+        return ExportArtifact(fileName: "terraview-\(snapshot.project.id.uuidString.prefix(8).lowercased())-geotags.geojson",
             contentType: "application/geo+json",
             data: try AtlasJSON.encode(GeoTagPointCollection(features: features), pretty: true), warnings: warnings)
     }

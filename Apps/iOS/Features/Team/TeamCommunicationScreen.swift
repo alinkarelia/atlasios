@@ -38,7 +38,7 @@ struct TeamCommunicationScreen: View {
                 Label("Откройте ваш архив или чат и приложите сохранённый комплект, если сервис поддерживает ZIP.", systemImage: "3.circle")
             }.font(.subheadline).listRowBackground(Color.atlasCard)
             Section {
-                Text("Эти ссылки открывают сторонние сервисы. Atlas не загружает туда файлы автоматически и не подтверждает получение вложений. Авторизация и доступ к архиву остаются в выбранном сервисе.")
+                Text("Эти ссылки открывают сторонние сервисы. \(AppBrand.displayName) не загружает туда файлы автоматически и не подтверждает получение вложений. Авторизация и доступ к архиву остаются в выбранном сервисе.")
                     .font(.footnote).foregroundStyle(Color.atlasMuted)
             }.listRowBackground(Color.atlasCard)
         }

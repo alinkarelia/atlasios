@@ -17,3 +17,9 @@ objects=("$build_path"/AtlasCore.build/*.swift.o)
   "$repo_root/Apps/iOS/Adapters/Tests/FieldAssemblerChecks.swift" \
   -lsqlite3 -o "$checks_dir/checks"
 "$checks_dir/checks"
+"$swift_compiler" -swift-version 6 -strict-concurrency=complete \
+  -I "$build_path/Modules" -I "$core_root/Sources/CSQLite" \
+  "${objects[@]}" "$repo_root/Apps/iOS/Adapters/CaptureCatalog.swift" \
+  "$repo_root/Apps/iOS/Adapters/Tests/CaptureCatalogChecks.swift" \
+  -lsqlite3 -o "$checks_dir/catalog-checks"
+"$checks_dir/catalog-checks"

@@ -152,6 +152,86 @@ final class AtlasUITests: XCTestCase {
     }
 
     @MainActor
+    func testFreeToolsUseTheSelectedProjectAndReturnFromCapture() {
+        let app = launch()
+        let name = createProject(in: app)
+        let tabs = app.tabBars.firstMatch
+        XCTAssertTrue(tabs.waitForExistence(timeout: 10))
+        XCTAssertFalse(tabs.buttons["Бизнес"].exists, "The retired Business tab must not be exposed")
+        XCTAssertFalse(tabs.buttons["Подписки"].exists, "Local tools must not have a subscription tab")
+
+        let profile = tabs.buttons["Профиль"]
+        XCTAssertTrue(profile.isHittable)
+        profile.tap()
+        XCTAssertTrue(app.staticTexts["TerraView"].waitForExistence(timeout: 10),
+                      "The profile must show the shipping display name")
+        XCTAssertTrue(app.buttons["Моя команда"].firstMatch.waitForExistence(timeout: 10),
+                      "The workspace links must be visible before checking their contents")
+        XCTAssertFalse(app.buttons["Тарифы и покупки"].exists,
+                       "The profile must not send users to a purchase storefront")
+
+        let tools = tabs.buttons["Съёмка"]
+        XCTAssertTrue(tools.isHittable)
+        tools.tap()
+        XCTAssertTrue(element("tools.project", in: app).waitForExistence(timeout: 10))
+        XCTAssertTrue(selectedProjectIsVisible(name, in: app),
+                      "The tools workspace must use the project that was just created")
+        XCTAssertTrue(element("tools.measurements", in: app).isEnabled,
+                      "Measurement tools must be available without a purchase or team account")
+        tap("tools.startCapture", in: app)
+        XCTAssertTrue(element("capture.unavailable", in: app).waitForExistence(timeout: 15),
+                      "Simulator capture must explain missing hardware")
+        XCTAssertTrue(app.staticTexts[name].firstMatch.exists,
+                      "Capture must receive the selected project's exact name")
+        tap("capture.close", in: app)
+        XCTAssertTrue(element("tools.startCapture", in: app).waitForExistence(timeout: 10),
+                      "Close must return to the tools workspace instead of trapping the user")
+        XCTAssertTrue(element("tools.startCapture", in: app).isHittable)
+        XCTAssertTrue(selectedProjectIsVisible(name, in: app),
+                      "Closing capture must preserve the selected project")
+        screenshot("14-free-tools", app: app)
+
+        tabs.buttons["Проекты"].tap()
+        XCTAssertTrue(element("projects.startCapture", in: app).waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts[name].firstMatch.exists)
+        tap("projects.openSelected", in: app)
+        // A new project has no plan geometry. Verify these export actions are
+        // reachable without claiming that an empty SVG is a valid floor plan.
+        for identifier in ["export.svg", "export.csv", "export.kml"] {
+            scrollTo(identifier, in: app)
+            XCTAssertTrue(element(identifier, in: app).isEnabled,
+                          "Export must be available without a subscription: \(identifier)")
+        }
+    }
+
+    @MainActor
+    private func selectedProjectIsVisible(_ name: String, in app: XCUIApplication) -> Bool {
+        let picker = element("tools.project", in: app)
+        return picker.label.contains(name) || (picker.value as? String)?.contains(name) == true ||
+            app.staticTexts[name].firstMatch.exists
+    }
+
+    @MainActor
+    func testGuidedObjectCaptureExplainsSimulatorSupportAndReturns() {
+        let app = launch()
+        let name = createProject(in: app)
+        tap("projects.openSelected", in: app)
+        scrollAndTap("projects.objectCapture", in: app)
+        let unavailable = element("objectCapture.unavailable", in: app)
+        XCTAssertTrue(unavailable.waitForExistence(timeout: 15),
+                      "Guided object capture must show the real hardware limitation in Simulator")
+        XCTAssertTrue(unavailable.isHittable, "The unsupported-device explanation must be visible")
+        XCTAssertTrue(element("objectCapture.close", in: app).isEnabled,
+                      "Unsupported hardware must not trap the user in the capture screen")
+        screenshot("15-object-unavailable", app: app)
+        tap("objectCapture.close", in: app)
+        XCTAssertTrue(element("projects.objectCapture", in: app).waitForExistence(timeout: 10),
+                      "Close must return to the same project")
+        XCTAssertTrue(app.navigationBars[name].firstMatch.exists,
+                      "Returning from object capture must preserve the current project")
+    }
+
+    @MainActor
     private func waitUntilEnabled(_ control: XCUIElement,
                                   file: StaticString = #filePath, line: UInt = #line) {
         let wait = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: control)
@@ -227,6 +307,103 @@ final class AtlasUITests: XCTestCase {
         XCTAssertTrue((surface.value as? String ?? "").contains("orbit"))
         assertVisibleGeometry(surface, app: app, stage: "reset-orbit")
         screenshot("09-viewer-reset", app: app)
+
+        guard let originalTriangles = triangleCount(surface.value as? String ?? "") else {
+            XCTFail("The real viewport must report its rendered triangle count")
+            return
+        }
+        XCTAssertGreaterThan(originalTriangles, 0)
+        tap("viewer.section", in: app)
+        waitForSection(surface, enabled: true, originalTriangles: originalTriangles)
+        XCTAssertTrue(element("viewer.section.height", in: app).waitForExistence(timeout: 10),
+                      "A section must expose its adjustable clipping height")
+        assertVisibleGeometry(surface, app: app, stage: "section-orbit")
+        screenshot("16-viewer-section", app: app)
+        tap("viewer.section", in: app)
+        waitForSection(surface, enabled: false, originalTriangles: originalTriangles)
+        assertVisibleGeometry(surface, app: app, stage: "section-restored-orbit")
+
+        tap("viewer.measure", in: app)
+        assertMeasuredSurfaceDistance(surface, app: app)
+        tap("viewer.measure", in: app)
+    }
+
+    private func triangleCount(_ pose: String) -> Int? {
+        guard let range = pose.range(of: "triangles:") else { return nil }
+        return Int(pose[range.upperBound...].split(separator: " ").first ?? "")
+    }
+
+    @MainActor
+    private func waitForSection(_ surface: XCUIElement, enabled: Bool, originalTriangles: Int,
+                                file: StaticString = #filePath, line: UInt = #line) {
+        let deadline = Date().addingTimeInterval(10)
+        repeat {
+            let pose = surface.value as? String ?? ""
+            if pose.contains(enabled ? "section:on" : "section:off"),
+               let count = triangleCount(pose), count > 0,
+               enabled ? count != originalTriangles : count == originalTriangles { return }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        } while Date() < deadline
+        XCTFail("Section must change the actual rendered mesh and restore its original triangles when disabled. "
+                + "Viewport: \(surface.value as? String ?? "missing"); source triangles: \(originalTriangles)",
+                file: file, line: line)
+    }
+
+    @MainActor
+    private func assertMeasuredSurfaceDistance(_ surface: XCUIElement, app: XCUIApplication,
+                                               file: StaticString = #filePath, line: UInt = #line) {
+        let result = element("viewer.measurementValue", in: app)
+        XCTAssertTrue(result.waitForExistence(timeout: 10), file: file, line: line)
+        // Find real ray hits on the synthetic room. This central grid excludes
+        // the top guidance and bottom reset control and tolerates viewport sizes.
+        let points = [CGVector(dx: 0.5, dy: 0.6), CGVector(dx: 0.65, dy: 0.6),
+                      CGVector(dx: 0.35, dy: 0.6), CGVector(dx: 0.5, dy: 0.5),
+                      CGVector(dx: 0.65, dy: 0.5), CGVector(dx: 0.35, dy: 0.5),
+                      CGVector(dx: 0.5, dy: 0.7), CGVector(dx: 0.65, dy: 0.7),
+                      CGVector(dx: 0.35, dy: 0.7)]
+        var firstHit: Int?
+        for (index, point) in points.enumerated() {
+            surface.coordinate(withNormalizedOffset: point).tap()
+            if waitForLabel(result, containing: "Первая точка", timeout: 1) {
+                firstHit = index
+                break
+            }
+        }
+        guard let firstHit else {
+            XCTFail("No first measurement ray hit the fixture's visible surface: \(result.label)", file: file, line: line)
+            return
+        }
+        var measured = false
+        for (index, point) in points.enumerated() where index != firstHit {
+            surface.coordinate(withNormalizedOffset: point).tap()
+            if waitForLabel(result, containing: "расстояние по прямой", timeout: 1) {
+                measured = true
+                break
+            }
+        }
+        XCTAssertTrue(measured, "A second real surface hit must calculate a distance: \(result.label)",
+                      file: file, line: line)
+        let label = result.label
+        let numeric = label.split(whereSeparator: { $0.isWhitespace }).first.map(String.init) ?? ""
+        let distance = Double(numeric.replacingOccurrences(of: ",", with: "."))
+        XCTAssertTrue(distance.map { $0 > 0.001 && $0 < 12 } ?? false,
+                      "Two distinct points within the 8 × 3 × 6 fixture must have a finite, nonzero distance: \(label)",
+                      file: file, line: line)
+        // Generic OBJ has no guaranteed unit metadata. An explicit unknown
+        // source unit is honest; the fixture must never gain a fake ARKit marker.
+        XCTAssertTrue(label.contains(" м ") || label.contains(" ед."),
+                      "Measurement must label metres or explicitly unknown source units: \(label)",
+                      file: file, line: line)
+    }
+
+    @MainActor
+    private func waitForLabel(_ control: XCUIElement, containing text: String, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if control.label.contains(text) { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        } while Date() < deadline
+        return control.label.contains(text)
     }
 
     @MainActor

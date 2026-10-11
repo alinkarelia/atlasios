@@ -45,7 +45,7 @@ struct TeamConnectionScreen: View {
                     Label("Архив, рабочий чат и встреча", systemImage: "bubble.left.and.bubble.right")
                 }.accessibilityIdentifier("team.communication")
             } header: { Text("Связь с командой") } footer: {
-                Text("Можно пользоваться вашим семейным архивом и чатом без сервера Atlas. Комплект ZIP с исходниками и метаданными создаётся из проекта.")
+                Text("Комплект ZIP с исходниками и метаданными можно передать в ваш архив или чат. Подключение рабочего сервера \(AppBrand.displayName) — дополнительный способ обмена.")
             }.listRowBackground(Color.atlasCard)
             if !service.connected, !model.projects.isEmpty {
                 Section {
@@ -72,7 +72,6 @@ struct TeamConnectionScreen: View {
                         Task {
                             await service.signOut()
                             await model.transfers.authenticationChanged()
-                            await model.configureCommerceAccount()
                         }
                     }.disabled(service.busy)
                 }.listRowBackground(Color.atlasCard)
@@ -102,13 +101,12 @@ struct TeamConnectionScreen: View {
                                 displayName: registering ? name : nil, organizationName: registering ? organizationName : nil)
                             if service.connected { password = "" }
                             await model.transfers.authenticationChanged()
-                            await model.configureCommerceAccount()
                             if let organization = service.selectedOrganization { await service.loadOrganization(organization) }
                         }
                     }.disabled(service.busy || !formReady)
                         .accessibilityIdentifier("team.connect")
-                } header: { Text("Сервер Atlas · дополнительно") } footer: {
-                    Text("У Atlas пока нет общего сервера по умолчанию. Укажите HTTPS-адрес, который выдал администратор организации. Без входа можно снимать и сохранять проекты на iPhone.")
+                } header: { Text("Сервер \(AppBrand.displayName) · дополнительно") } footer: {
+                    Text("Для рабочего сервера укажите HTTPS-адрес администратора организации. Все локальные инструменты, съёмка и экспорт доступны бесплатно без входа.")
                 }.listRowBackground(Color.atlasCard)
             }
             if service.busy { Section { ProgressView("Соединяемся с сервером…").tint(.atlasAccent) }.listRowBackground(Color.atlasCard) }
@@ -138,7 +136,6 @@ struct TeamConnectionScreen: View {
         .onChange(of: service.selectedOrganizationID) { _, _ in
             Task {
                 await model.transfers.authenticationChanged()
-                await model.configureCommerceAccount()
                 if let organization = service.selectedOrganization { await service.loadOrganization(organization) }
             }
         }

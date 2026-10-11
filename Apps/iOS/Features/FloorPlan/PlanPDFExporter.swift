@@ -82,7 +82,7 @@ enum PlanPDFExporter {
                 y += 52
             }
         }
-        let url = directory.appendingPathComponent("atlas-plan-\(plan.id.uuidString.prefix(8).lowercased()).pdf")
+        let url = directory.appendingPathComponent("TerraView-plan-\(plan.id.uuidString.prefix(8).lowercased()).pdf")
         try data.write(to: url, options: .atomic)
         return url
     }

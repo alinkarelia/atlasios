@@ -9,11 +9,9 @@ final class AtlasAppModel: ObservableObject {
     @Published var issue: String?
     @Published private(set) var ready = false
     @Published private(set) var storeAvailable = false
-    let purchases = PurchaseService()
     let team = TeamService()
     let directory: URL
     lazy var transfers = FieldTransferCoordinator(team: team, directory: directory)
-    let business: BusinessStore?
     private var measurementRepository: MeasurementRepository?
     private var store: AtlasStore?
     private var started = false
@@ -33,8 +31,6 @@ final class AtlasAppModel: ObservableObject {
             store = nil
             startupIssues.append("Не удалось открыть проекты: \(error.localizedDescription). Исходные файлы сохранены на устройстве.")
         }
-        do { business = try BusinessStore(directory: directory.appendingPathComponent("Business", isDirectory: true)) }
-        catch { business = nil; startupIssues.append("Бизнес-данные недоступны: \(error.localizedDescription). Проекты доступны независимо.") }
         do { measurementRepository = try MeasurementRepository(directory: directory.appendingPathComponent("Measurements", isDirectory: true)) }
         catch { startupIssues.append("Журнал измерений недоступен: \(error.localizedDescription). Проекты доступны независимо.") }
         issue = startupIssues.isEmpty ? nil : startupIssues.joined(separator: "\n")
@@ -48,9 +44,7 @@ final class AtlasAppModel: ObservableObject {
         await reload()
         await seedPreviewMeshIfRequested()
         ready = true
-        await purchases.startup()
         if team.connected { await team.refresh() }
-        await configureCommerceAccount()
         await transfers.refresh()
         transfers.sceneBecameActive()
     }
@@ -123,10 +117,6 @@ final class AtlasAppModel: ObservableObject {
         return saved
     }
 
-    func configureCommerceAccount() async {
-        await purchases.configureAccount(userID: team.user?.id, evidenceSink: team.purchaseSink())
-    }
-
     func snapshot(of project: AtlasProject) async -> AtlasProjectSnapshot? {
         do {
             guard var snapshot = try await store?.snapshot(projectID: project.id) else { return nil }
@@ -197,6 +187,23 @@ final class AtlasAppModel: ObservableObject {
             try artifact.data.write(to: url, options: .atomic)
             if !artifact.warnings.isEmpty { issue = artifact.warnings.joined(separator: "\n") }
             return url
+        } catch { issue = error.localizedDescription; return nil }
+    }
+
+    func exportMaterialTable(project: AtlasProject) async -> URL? {
+        guard let snapshot = await snapshot(of: project) else { return nil }
+        do {
+            let passportData = try await transfers.deliveryPassport(snapshot: snapshot, assetDirectory: directory)
+            let passport = try FieldTransferJSON.decode(FieldDeliveryPassport.self, from: passportData)
+            let artifact = try await Task.detached(priority: .utility) {
+                try AtlasExporter.exportMaterialMetadata(projectID: passport.projectID, projectName: passport.projectName,
+                    materials: passport.materials.map(\.source), assets: passport.assets)
+            }.value
+            let exports = directory.appendingPathComponent("Exports", isDirectory: true)
+            try FileManager.default.createDirectory(at: exports, withIntermediateDirectories: true)
+            let file = exports.appendingPathComponent(artifact.fileName)
+            try artifact.data.write(to: file, options: .atomic)
+            return file
         } catch { issue = error.localizedDescription; return nil }
     }
 
@@ -287,7 +294,7 @@ final class AtlasAppModel: ObservableObject {
             try await transfers.deliveryPassport(snapshot: snapshot, assetDirectory: directory)
                 .write(to: passport, options: .atomic)
             let captureRoot = captureDirectory(for: project)
-            let destination = exportDirectory.appendingPathComponent("Atlas-\(project.id.uuidString).zip")
+            let destination = exportDirectory.appendingPathComponent("TerraView-\(project.id.uuidString).zip")
             return try await Task.detached(priority: .utility) {
                 try Self.writeArchive(metadata: metadata, passport: passport, captureRoot: captureRoot, destination: destination)
             }.value

@@ -1,0 +1,146 @@
+name: Preview verification and publication controller
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/preview-control.yml
+      - .github/preview-command.json
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: preview-control-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  control:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Execute the reviewed preview command
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, re, subprocess, time
+          repository = os.environ['GITHUB_REPOSITORY']
+          controller_sha = os.environ['GITHUB_SHA']
+          command = json.loads(pathlib.Path('.github/preview-command.json').read_text())
+          if os.environ['GITHUB_REF'] != 'refs/heads/main' or not isinstance(command, dict):
+              raise SystemExit('Preview commands require the main branch and a JSON object.')
+          def api(path):
+              return json.loads(subprocess.check_output(['gh', 'api', path], text=True))
+          def current():
+              if api(f'repos/{repository}').get('private') is not True:
+                  raise SystemExit('Preview control requires a private repository.')
+              if api(f'repos/{repository}/git/ref/heads/main')['object']['sha'] != controller_sha:
+                  raise SystemExit('This command was superseded by a newer main commit.')
+          def run_id(value):
+              if isinstance(value, bool) or not re.fullmatch(r'[1-9][0-9]{0,19}', str(value)):
+                  raise SystemExit('Workflow run IDs must be positive decimal integers.')
+              return str(value)
+          def runtime_ids(value, count=None):
+              if not isinstance(value, list) or not 1 <= len(value) <= 2 or (count and len(value) != count):
+                  raise SystemExit('Provide one or two runtime IDs; publication requires both.')
+              ids = [run_id(item) for item in value]
+              if len(set(ids)) != len(ids):
+                  raise SystemExit('Runtime run IDs must be distinct.')
+              return ids
+          def checked(identifier, workflow, sha=None, require_success=True):
+              run = api(f'repos/{repository}/actions/runs/{run_id(identifier)}')
+              if (run.get('repository', {}).get('full_name') != repository
+                      or run.get('head_branch') != 'main'
+                      or run.get('path') != '.github/workflows/' + workflow
+                      or run.get('status') != 'completed'
+                      or (sha is not None and run.get('head_sha') != sha)
+                      or (require_success and run.get('conclusion') != 'success')
+                      or (not require_success and run.get('conclusion') not in ('success', 'failure', 'cancelled', 'timed_out'))):
+                  raise SystemExit(f'Run {identifier} does not satisfy the required source, workflow, and result.')
+              return run
+          def dispatch(workflow, inputs=None):
+              current()
+              endpoint = f'repos/{repository}/actions/workflows/{workflow}/runs?branch=main&event=workflow_dispatch&per_page=30'
+              previous = {run['id'] for run in api(endpoint)['workflow_runs']}
+              payload = json.dumps({'ref': 'main', 'inputs': inputs or {}})
+              subprocess.run(['gh', 'api', '--method', 'POST',
+                              f'repos/{repository}/actions/workflows/{workflow}/dispatches', '--input', '-'],
+                             input=payload, text=True, check=True)
+              deadline = time.monotonic() + 120
+              while time.monotonic() < deadline:
+                  matches = [run for run in api(endpoint)['workflow_runs']
+                             if run['id'] not in previous and run.get('head_sha') == controller_sha]
+                  if len(matches) > 1:
+                      raise SystemExit(f'Ambiguous dispatch for {workflow}; no publication will proceed.')
+                  if matches:
+                      identifier = str(matches[0]['id'])
+                      print(json.dumps({'workflow': workflow, 'run_id': identifier, 'controller_sha': controller_sha}), flush=True)
+                      with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+                          summary.write(f'- {workflow}: https://github.com/{repository}/actions/runs/{identifier}\n')
+                      return identifier
+                  time.sleep(3)
+              raise SystemExit(f'The dispatched {workflow} did not register in time.')
+          operation = command.get('operation')
+          allowed = {
+              'verify': {'operation', 'request_id'},
+              'evidence': {'operation', 'request_id', 'runtime_run_ids'},
+              'publish': {'operation', 'request_id', 'device_run_id', 'native_run_id',
+                          'runtime_run_ids', 'expected_source_sha', 'visual_review'},
+          }
+          if operation not in allowed or set(command) - allowed[operation]:
+              raise SystemExit('Unknown preview operation or command fields.')
+          if 'request_id' in command and not re.fullmatch(r'[A-Za-z0-9._-]{1,64}', str(command['request_id'])):
+              raise SystemExit('The optional request ID must be a short identifier.')
+          current()
+          if operation == 'verify':
+              # App pushes start native checks automatically; a command-only
+              # push is ignored by native.yml and still needs an exact-SHA run.
+              source_runs = api(f'repos/{repository}/actions/runs?head_sha={controller_sha}&per_page=100')['workflow_runs']
+              native_runs = [run for run in source_runs
+                             if run.get('head_sha') == controller_sha
+                             and run.get('head_branch') == 'main'
+                             and run.get('path') == '.github/workflows/native.yml']
+              if not native_runs:
+                  dispatch('native.yml')
+              else:
+                  print(json.dumps({'existing_native_run_ids': [str(run['id']) for run in native_runs],
+                                    'controller_sha': controller_sha}), flush=True)
+              dispatch('device-preview.yml')
+              dispatch('runtime-qa.yml', {'mode': 'full', 'toolchain': '16.4'})
+              dispatch('runtime-qa.yml', {'mode': 'full', 'toolchain': '26'})
+          elif operation == 'evidence':
+              for identifier in runtime_ids(command.get('runtime_run_ids')):
+                  checked(identifier, 'runtime-qa.yml', require_success=False)
+                  dispatch('publish-runtime-evidence.yml', {'source_run_id': identifier})
+          else:
+              source_sha = command.get('expected_source_sha', '')
+              if not isinstance(source_sha, str) or not re.fullmatch(r'[0-9a-f]{40}', source_sha):
+                  raise SystemExit('Publication requires the exact source commit SHA.')
+              if command.get('visual_review') is not True:
+                  raise SystemExit('Publication requires explicit manual review of the real runtime screenshots.')
+              device = run_id(command.get('device_run_id'))
+              native = run_id(command.get('native_run_id'))
+              runtimes = runtime_ids(command.get('runtime_run_ids'), count=2)
+              if len({device, native, *runtimes}) != 4:
+                  raise SystemExit('Publication requires four distinct successful source runs.')
+              checked(device, 'device-preview.yml', source_sha)
+              checked(native, 'native.yml', source_sha)
+              for identifier in runtimes:
+                  checked(identifier, 'runtime-qa.yml', source_sha)
+              print(json.dumps({'reviewed_source_sha': source_sha, 'device_run_id': device,
+                                'native_run_id': native, 'runtime_run_ids': runtimes}), flush=True)
+              publication = dispatch('publish-preview.yml', {'source_run_id': device})
+              deadline = time.monotonic() + 720
+              while time.monotonic() < deadline:
+                  run = api(f'repos/{repository}/actions/runs/{publication}')
+                  if run.get('status') == 'completed':
+                      checked(publication, 'publish-preview.yml', controller_sha)
+                      dispatch('publish-sources.yml')
+                      break
+                  time.sleep(5)
+              else:
+                  raise SystemExit('Preview publisher did not complete successfully in time; sources were not dispatched.')
+          PY

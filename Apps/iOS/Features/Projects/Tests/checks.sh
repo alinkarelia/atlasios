@@ -8,3 +8,7 @@ swift_compiler="${SWIFTC:-swiftc}"
   "$test_directory/../OBJPreviewLoader.swift" "$test_directory/OBJPreviewChecks.swift" \
   -o "$test_workspace/obj-checks"
 "$test_workspace/obj-checks"
+"$swift_compiler" -swift-version 6 \
+  "$test_directory/../OBJPreviewLoader.swift" "$test_directory/../MeshSectionProcessor.swift" \
+  "$test_directory/MeshSectionChecks.swift" -o "$test_workspace/section-checks"
+"$test_workspace/section-checks"

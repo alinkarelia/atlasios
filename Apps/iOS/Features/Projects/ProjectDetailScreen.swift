@@ -48,6 +48,12 @@ struct ProjectDetailScreen: View {
                 } label: { Label("Начать съёмку", systemImage: "viewfinder") }
                     .accessibilityIdentifier("projects.startCapture")
                 NavigationLink {
+                    ObjectCaptureScreen(project: project, directory: model.directory, onSaved: { manifest in
+                        Task { await model.registerCapture(manifest: manifest, project: project); await refresh() }
+                    })
+                } label: { Label("3D-объект по фотографиям", systemImage: "camera.viewfinder") }
+                    .accessibilityIdentifier("projects.objectCapture")
+                NavigationLink {
                     GeometryEditorScreen(model: model, project: project)
                 } label: { LabeledContent { Text("\(features.count)") } label: { Label("Полигоны и карточки", systemImage: "map") } }
                 NavigationLink {
@@ -111,11 +117,18 @@ struct ProjectDetailScreen: View {
                 exportButton("Метаданные проекта JSON", format: .projectJSON)
                 exportButton("План и полигоны DXF", format: .dxf)
                 exportButton("Географические объекты GeoJSON", format: .geoJSON)
+                exportButton("Векторный чертёж SVG", format: .svg)
+                exportButton("Таблица объектов и материалов CSV", format: .csv)
+                Button("Паспорт материалов CSV · время и геометки") {
+                    exporting = true
+                    Task { exportURL = await model.exportMaterialTable(project: project); exporting = false }
+                }.disabled(exporting).accessibilityIdentifier("export.materialsCSV")
+                exportButton("Геометки и полигоны KML", format: .kml)
                 if let exportURL {
                     ShareLink(item: exportURL) { Label("Сохранить файл в Файлы", systemImage: "square.and.arrow.up") }
                 }
             } header: { Text("Экспорт") } footer: {
-                Text("ZIP содержит карточки, планы и исходники съёмки. До 4 ГБ. Планы с независимой системой координат выгружаются в DXF по одному из редактора планов. GeoJSON доступен для WGS84.")
+                Text("ZIP содержит карточки, планы и исходники съёмки. До 4 ГБ. DXF и SVG сохраняют локальные метры; независимые планы экспортируются отдельно из редактора. GeoJSON и KML сохраняют географические координаты. Форматы 3D доступны в просмотре модели.")
             }.listRowBackground(Color.atlasCard)
         }
         .scrollContentBackground(.hidden).background(Color.atlasCanvas)
@@ -177,5 +190,6 @@ struct ProjectDetailScreen: View {
     }
     private func exportButton(_ title: String, format: ExportFormat) -> some View {
         Button(title) { Task { exportURL = await model.export(project: project, format: format) } }
+            .accessibilityIdentifier("export.\(format.rawValue)")
     }
 }

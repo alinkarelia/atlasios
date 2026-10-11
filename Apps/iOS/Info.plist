@@ -21,13 +21,15 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>CFBundleDisplayName</key>
-	<string>Atlas</string>
+	<string>TerraView</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Камера нужна для 3D-съёмки, AR-рулетки, обмеров и фотофиксации объекта.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Во время съёмки положение, время и точность автоматически сохраняются с геометкой сканов и фото. Метку можно исправить вручную.</string>
 	<key>NSMotionUsageDescription</key>
 	<string>Гироскоп и акселерометр используются для уровня и определения наклона устройства во время обмеров.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>По вашему выбору изображение 3D-модели можно сохранить в Фото через меню Поделиться.</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>

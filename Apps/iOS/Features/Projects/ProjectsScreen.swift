@@ -40,7 +40,7 @@ struct ProjectsScreen: View {
                 HStack(spacing: 12) {
                     HStack(spacing: 8) {
                         Image(systemName: "square.stack.3d.up.fill").foregroundStyle(Color.atlasAccent)
-                        Text("ATLAS").font(.caption.weight(.bold)).tracking(3)
+                        Text(AppBrand.displayName.uppercased()).font(.caption.weight(.bold)).tracking(2)
                     }.accessibilityElement(children: .combine)
                     Spacer()
                     NavigationLink {
@@ -92,7 +92,7 @@ struct ProjectsScreen: View {
                             Task { await model.registerCapture(manifest: manifest, project: project) }
                         }, onFloorPlan: { plan in
                             Task { await model.savePlan(plan) }
-                        })
+                        }, onEvidenceSaved: { model.fieldMaterialsDidChange(projectID: project.id) })
                     } label: {
                         Label("Начать съёмку", systemImage: "viewfinder")
                     }.buttonStyle(AtlasPrimaryButtonStyle())

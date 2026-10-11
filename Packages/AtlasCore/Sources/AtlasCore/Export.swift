@@ -1,6 +1,8 @@
 import Foundation
 
-public enum ExportFormat: String, Codable, CaseIterable, Sendable { case projectJSON, geoJSON, dxf }
+public enum ExportFormat: String, Codable, CaseIterable, Sendable {
+    case projectJSON, geoJSON, dxf, svg, csv, kml
+}
 
 public struct ExportArtifact: Sendable {
     public var fileName: String
@@ -17,13 +19,15 @@ public enum AtlasExportError: Error, LocalizedError, Equatable, Sendable {
     case requiresLocalMetricCoordinates
     case entityProjectMismatch
     case unsupportedSchema(Int)
+    case invalidDate
 
     public var errorDescription: String? {
         switch self {
-        case .requiresGeographicCoordinates: "Для GeoJSON нужны координаты WGS84. Локальные метры сначала необходимо привязать к карте; сейчас доступен DXF."
-        case .requiresLocalMetricCoordinates: "Для DXF нужны локальные метрические координаты. Географический проект можно экспортировать в GeoJSON."
+        case .requiresGeographicCoordinates: "Для географических контуров нужны координаты WGS84. KML также может выгрузить существующие достоверные геометки. Для локальных контуров доступны DXF и SVG; привязка к карте выполняется отдельно."
+        case .requiresLocalMetricCoordinates: "Для DXF/SVG нужны локальные метрические координаты. Географический проект можно экспортировать в GeoJSON или KML."
         case .entityProjectMismatch: "В экспорт попал объект другого проекта. Обновите проект и повторите операцию."
-        case .unsupportedSchema: "Формат проекта новее этой версии приложения. Обновите Atlas перед экспортом."
+        case .unsupportedSchema: "Формат проекта новее этой версии приложения. Обновите TerraView перед экспортом."
+        case .invalidDate: "В метаданных указана недопустимая дата. Проверьте исходную запись перед экспортом."
         }
     }
 }
@@ -48,7 +52,7 @@ public enum AtlasExporter {
             guard measurement.projectID == snapshot.project.id else { throw AtlasExportError.entityProjectMismatch }
             try MeasurementPolicy.validate(measurement)
         }
-        let name = "atlas-\(snapshot.project.id.uuidString.prefix(8).lowercased())"
+        let name = "terraview-\(snapshot.project.id.uuidString.prefix(8).lowercased())"
         switch format {
         case .projectJSON:
             return ExportArtifact(fileName: name + ".atlas.json", contentType: "application/json",
@@ -75,21 +79,28 @@ public enum AtlasExporter {
             }
             return ExportArtifact(fileName: name + ".dxf", contentType: "application/dxf",
                                   data: Data(dxf(snapshot).utf8), warnings: ["DXF содержит 2D-контуры в метрах, названия и линии стен."])
+        case .svg:
+            return try vectorSVG(snapshot, fileName: name + ".svg")
+        case .csv:
+            return try metadataCSV(snapshot, fileName: name + ".csv")
+        case .kml:
+            return try geographicKML(snapshot, fileName: name + ".kml")
         }
     }
 
     /// Export one independent session in its actual metric frame, without claiming registration.
-    public static func exportFloorPlan(_ plan: AtlasFloorPlan) throws -> ExportArtifact {
+    public static func exportFloorPlan(_ plan: AtlasFloorPlan, format: ExportFormat = .dxf) throws -> ExportArtifact {
         let reference = CoordinateReference.localMeters(frameID: plan.frameID)
         try PolygonGeometry.validate(plan, in: reference)
         let project = AtlasProject(id: plan.projectID, name: plan.name, kind: .building, coordinateReference: reference)
-        var artifact = try export(.init(project: project, floorPlans: [plan]), format: .dxf)
-        artifact.fileName = "atlas-plan-\(plan.id.uuidString.prefix(8).lowercased()).dxf"
-        artifact.warnings = ["Отдельный локальный обмер. Координаты DXF относятся к этой сессии; единицы — метры."]
+        var artifact = try export(.init(project: project, floorPlans: [plan]), format: format)
+        let suffix = artifact.fileName.firstIndex(of: ".").map { String(artifact.fileName[$0...]) } ?? ""
+        artifact.fileName = "terraview-plan-\(plan.id.uuidString.prefix(8).lowercased())" + suffix
+        artifact.warnings.append("Отдельный локальный обмер. Координаты относятся к этой сессии; единицы — метры.")
         return artifact
     }
 
-    private static func geographicRings(_ polygon: GeographicPolygon) -> [[[Double]]] {
+    static func geographicRings(_ polygon: GeographicPolygon) -> [[[Double]]] {
         ([polygon.vertices] + polygon.holes).enumerated().map { index, ring in
             let signedArea = PolygonGeometry.signedArea(ring.map { MetricPoint2D(x: $0.longitude, y: $0.latitude) })
             let shouldReverse = index == 0 ? signedArea < 0 : signedArea > 0
@@ -115,6 +126,7 @@ public enum AtlasExporter {
             pair(10, number(point.x)); pair(20, number(point.y)); pair(30, "0")
             pair(40, "0.15"); pair(1, dxfText(label)); pair(100, "AcDbText")
         }
+        pair(999, "TerraView - local metric 2D export")
         pair(0, "SECTION"); pair(2, "HEADER")
         pair(9, "$ACADVER"); pair(1, "AC1015")
         pair(9, "$DWGCODEPAGE"); pair(3, "ANSI_1252")

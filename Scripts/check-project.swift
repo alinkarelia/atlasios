@@ -72,6 +72,8 @@ func validateProject(at root: URL) throws {
     let expectedSources = Set(enumerator.compactMap { item -> String? in
         guard let url = item as? URL, url.pathExtension == "swift",
               !url.pathComponents.contains("Tests"), !url.pathComponents.contains("UITests"),
+              !url.pathComponents.contains("Business"), !url.pathComponents.contains("Subscription"),
+              url.lastPathComponent != "PurchaseService.swift",
               !url.pathComponents.contains(where: { $0.hasPrefix(".") }) else { return nil }
         return String(url.path.dropFirst(root.path.count + 1))
     })

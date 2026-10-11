@@ -67,6 +67,13 @@
 			"path" = "Apps/iOS/Adapters/LevelService.swift";
 			"sourceTree" = "SOURCE_ROOT";
 		};
+		"E714D3460B5BC6E1819E4AF5" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "LiDAROverlayGeometry.swift";
+			"path" = "Apps/iOS/Adapters/LiDAROverlayGeometry.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
 		"64CCE44C4246F42AD38FE123" = {
 			"isa" = "PBXFileReference";
 			"lastKnownFileType" = "sourcecode.swift";
@@ -79,6 +86,27 @@
 			"lastKnownFileType" = "sourcecode.swift";
 			"name" = "MeasurementCoordinator.swift";
 			"path" = "Apps/iOS/Adapters/MeasurementCoordinator.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"8D7CED31094217AC65381D0B" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "MeshExportService.swift";
+			"path" = "Apps/iOS/Adapters/MeshExportService.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"34D4ABD7AE8918CAA086BD0C" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "ObjectCaptureAdapter.swift";
+			"path" = "Apps/iOS/Adapters/ObjectCaptureAdapter.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"773702CDC7DD569631130511" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "ObjectCaptureManifest.swift";
+			"path" = "Apps/iOS/Adapters/ObjectCaptureManifest.swift";
 			"sourceTree" = "SOURCE_ROOT";
 		};
 		"AB8257AC00E5CEBAB73E3129" = {
@@ -95,13 +123,6 @@
 			"path" = "Apps/iOS/Adapters/PhotoGeoMetadata.swift";
 			"sourceTree" = "SOURCE_ROOT";
 		};
-		"A1A1D30FB09A1BB5A7E3B95A" = {
-			"isa" = "PBXFileReference";
-			"lastKnownFileType" = "sourcecode.swift";
-			"name" = "PurchaseService.swift";
-			"path" = "Apps/iOS/Adapters/PurchaseService.swift";
-			"sourceTree" = "SOURCE_ROOT";
-		};
 		"6E5F0AB3195C1CD45AD5EC46" = {
 			"isa" = "PBXFileReference";
 			"lastKnownFileType" = "sourcecode.swift";
@@ -114,6 +135,13 @@
 			"lastKnownFileType" = "sourcecode.swift";
 			"name" = "TeamService.swift";
 			"path" = "Apps/iOS/Adapters/TeamService.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"7F3DD05E5AC898943789812A" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "AppBrand.swift";
+			"path" = "Apps/iOS/App/AppBrand.swift";
 			"sourceTree" = "SOURCE_ROOT";
 		};
 		"5D86C3C183C90C96FC13B0C6" = {
@@ -144,27 +172,6 @@
 			"path" = "Apps/iOS/DesignSystem/AtlasTheme.swift";
 			"sourceTree" = "SOURCE_ROOT";
 		};
-		"427AD2C65CF8BE143F81552A" = {
-			"isa" = "PBXFileReference";
-			"lastKnownFileType" = "sourcecode.swift";
-			"name" = "BusinessEditors.swift";
-			"path" = "Apps/iOS/Features/Business/BusinessEditors.swift";
-			"sourceTree" = "SOURCE_ROOT";
-		};
-		"B9DECFF8F3089D00868C893B" = {
-			"isa" = "PBXFileReference";
-			"lastKnownFileType" = "sourcecode.swift";
-			"name" = "BusinessScreen.swift";
-			"path" = "Apps/iOS/Features/Business/BusinessScreen.swift";
-			"sourceTree" = "SOURCE_ROOT";
-		};
-		"7EC14B1AB0602CC8301C396D" = {
-			"isa" = "PBXFileReference";
-			"lastKnownFileType" = "sourcecode.swift";
-			"name" = "BusinessStore.swift";
-			"path" = "Apps/iOS/Features/Business/BusinessStore.swift";
-			"sourceTree" = "SOURCE_ROOT";
-		};
 		"8E909C9D8D63E384C585C4BD" = {
 			"isa" = "PBXFileReference";
 			"lastKnownFileType" = "sourcecode.swift";
@@ -177,6 +184,13 @@
 			"lastKnownFileType" = "sourcecode.swift";
 			"name" = "CaptureScreen.swift";
 			"path" = "Apps/iOS/Features/Capture/CaptureScreen.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"EF802B37F29A41F4DE61361A" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "ObjectCaptureScreen.swift";
+			"path" = "Apps/iOS/Features/Capture/ObjectCaptureScreen.swift";
 			"sourceTree" = "SOURCE_ROOT";
 		};
 		"DF3A8BFD510D4EF231408850" = {
@@ -256,6 +270,13 @@
 			"path" = "Apps/iOS/Features/Projects/MeshPreviewScreen.swift";
 			"sourceTree" = "SOURCE_ROOT";
 		};
+		"5785070A425F786921C2351E" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "MeshSectionProcessor.swift";
+			"path" = "Apps/iOS/Features/Projects/MeshSectionProcessor.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
 		"7A8D342BF39092F16010BACA" = {
 			"isa" = "PBXFileReference";
 			"lastKnownFileType" = "sourcecode.swift";
@@ -289,13 +310,6 @@
 			"lastKnownFileType" = "sourcecode.swift";
 			"name" = "SettingsScreen.swift";
 			"path" = "Apps/iOS/Features/Settings/SettingsScreen.swift";
-			"sourceTree" = "SOURCE_ROOT";
-		};
-		"F194A1D5CC54C9035F5DF637" = {
-			"isa" = "PBXFileReference";
-			"lastKnownFileType" = "sourcecode.swift";
-			"name" = "SubscriptionScreen.swift";
-			"path" = "Apps/iOS/Features/Subscription/SubscriptionScreen.swift";
 			"sourceTree" = "SOURCE_ROOT";
 		};
 		"42B03916889A3B84C248116B" = {
@@ -366,11 +380,14 @@
 				6EA5A53E9C181970C9EC02DA,
 				AE97DA6F0539F284EB2D8957,
 				E91AE07902E418EF38BA72DE,
+				E714D3460B5BC6E1819E4AF5,
 				64CCE44C4246F42AD38FE123,
 				6B4B175E97B30CF6176528B7,
+				8D7CED31094217AC65381D0B,
+				34D4ABD7AE8918CAA086BD0C,
+				773702CDC7DD569631130511,
 				AB8257AC00E5CEBAB73E3129,
 				0B6D8091408D6CB7C3191A27,
-				A1A1D30FB09A1BB5A7E3B95A,
 				6E5F0AB3195C1CD45AD5EC46,
 				5235D8F209013C15BCD141C9,
 			);
@@ -380,6 +397,7 @@
 		"508C3356CDD2B3CEBB0ECBA4" = {
 			"isa" = "PBXGroup";
 			"children" = (
+				7F3DD05E5AC898943789812A,
 				5D86C3C183C90C96FC13B0C6,
 				AAE8E07BB4BD2ADDACD5E69B,
 				9CF151FEC8F4908E4A2DACB0,
@@ -395,21 +413,12 @@
 			"name" = "DesignSystem";
 			"sourceTree" = "<group>";
 		};
-		"75A5F0E2BDC166895922AB56" = {
-			"isa" = "PBXGroup";
-			"children" = (
-				427AD2C65CF8BE143F81552A,
-				B9DECFF8F3089D00868C893B,
-				7EC14B1AB0602CC8301C396D,
-			);
-			"name" = "Business";
-			"sourceTree" = "<group>";
-		};
 		"D93FBB94D73E83EE0EF0E816" = {
 			"isa" = "PBXGroup";
 			"children" = (
 				8E909C9D8D63E384C585C4BD,
 				983D7AA768EEDC70DB4445EF,
+				EF802B37F29A41F4DE61361A,
 			);
 			"name" = "Capture";
 			"sourceTree" = "<group>";
@@ -449,6 +458,7 @@
 			"children" = (
 				2F0DAA2340AF86BF462C651F,
 				30C64DD91CE312BC35B264A0,
+				5785070A425F786921C2351E,
 				7A8D342BF39092F16010BACA,
 				A4E54F62088BBAD43B4E5E75,
 				BB1356227F3BBED84347BB76,
@@ -465,14 +475,6 @@
 			"name" = "Settings";
 			"sourceTree" = "<group>";
 		};
-		"2FCF272650E350496D60A7C2" = {
-			"isa" = "PBXGroup";
-			"children" = (
-				F194A1D5CC54C9035F5DF637,
-			);
-			"name" = "Subscription";
-			"sourceTree" = "<group>";
-		};
 		"B38E61C482FBE0EF078DDCF5" = {
 			"isa" = "PBXGroup";
 			"children" = (
@@ -487,14 +489,12 @@
 		"2C3E3BB76D05A7205FC5D24F" = {
 			"isa" = "PBXGroup";
 			"children" = (
-				75A5F0E2BDC166895922AB56,
 				D93FBB94D73E83EE0EF0E816,
 				897572B86CAD7DAD99A9990F,
 				F250A272F700DC5D933F3FF6,
 				1779450407248433C88D7B1D,
 				45E3D377CE2D52343E581309,
 				8CBBEC37B650FEBA0217BDD0,
-				2FCF272650E350496D60A7C2,
 				B38E61C482FBE0EF078DDCF5,
 			);
 			"name" = "Features";
@@ -611,6 +611,10 @@
 			"isa" = "PBXBuildFile";
 			"fileRef" = E91AE07902E418EF38BA72DE;
 		};
+		"81ABF2E66B63609997E286D0" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = E714D3460B5BC6E1819E4AF5;
+		};
 		"8DCEEC5645B81E8EB4D9429A" = {
 			"isa" = "PBXBuildFile";
 			"fileRef" = 64CCE44C4246F42AD38FE123;
@@ -618,6 +622,18 @@
 		"D0207E4C3D4A9E5D4459DEAD" = {
 			"isa" = "PBXBuildFile";
 			"fileRef" = 6B4B175E97B30CF6176528B7;
+		};
+		"2E8D5F81B1A4CAAE7582621D" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = 8D7CED31094217AC65381D0B;
+		};
+		"687B25D59E13C5F09F2F0844" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = 34D4ABD7AE8918CAA086BD0C;
+		};
+		"9FAD782BC76B1F49E8BCF85A" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = 773702CDC7DD569631130511;
 		};
 		"D50B4F37352FE5AD1FB19A3E" = {
 			"isa" = "PBXBuildFile";
@@ -627,10 +643,6 @@
 			"isa" = "PBXBuildFile";
 			"fileRef" = 0B6D8091408D6CB7C3191A27;
 		};
-		"8BFF342734D63D4536CABB2A" = {
-			"isa" = "PBXBuildFile";
-			"fileRef" = A1A1D30FB09A1BB5A7E3B95A;
-		};
 		"C9480A6326A3AEB4CDFF0AD0" = {
 			"isa" = "PBXBuildFile";
 			"fileRef" = 6E5F0AB3195C1CD45AD5EC46;
@@ -638,6 +650,10 @@
 		"330D79DBAC91458AFC5FD1B4" = {
 			"isa" = "PBXBuildFile";
 			"fileRef" = 5235D8F209013C15BCD141C9;
+		};
+		"952C2A44F3EE4F966800BE42" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = 7F3DD05E5AC898943789812A;
 		};
 		"89EC02D10EDDE8869B32EC07" = {
 			"isa" = "PBXBuildFile";
@@ -655,18 +671,6 @@
 			"isa" = "PBXBuildFile";
 			"fileRef" = 55B063F7320BE99D101D3871;
 		};
-		"03AE847635745D331A68FC4E" = {
-			"isa" = "PBXBuildFile";
-			"fileRef" = 427AD2C65CF8BE143F81552A;
-		};
-		"EB0DFAB568A1B06C266D7EFD" = {
-			"isa" = "PBXBuildFile";
-			"fileRef" = B9DECFF8F3089D00868C893B;
-		};
-		"3260F626061E01673365CFAA" = {
-			"isa" = "PBXBuildFile";
-			"fileRef" = 7EC14B1AB0602CC8301C396D;
-		};
 		"5D4162F9CD544E6C4F5B5CDA" = {
 			"isa" = "PBXBuildFile";
 			"fileRef" = 8E909C9D8D63E384C585C4BD;
@@ -674,6 +678,10 @@
 		"93F14CE9890A7BD3D21F89AB" = {
 			"isa" = "PBXBuildFile";
 			"fileRef" = 983D7AA768EEDC70DB4445EF;
+		};
+		"28220A97B2B36265FC0C4F04" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = EF802B37F29A41F4DE61361A;
 		};
 		"F7012ACAFC838BB2B947757D" = {
 			"isa" = "PBXBuildFile";
@@ -719,6 +727,10 @@
 			"isa" = "PBXBuildFile";
 			"fileRef" = 30C64DD91CE312BC35B264A0;
 		};
+		"FBF1AA11CB5078BDC014BE52" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = 5785070A425F786921C2351E;
+		};
 		"107D79E30A476E920E0084C8" = {
 			"isa" = "PBXBuildFile";
 			"fileRef" = 7A8D342BF39092F16010BACA;
@@ -738,10 +750,6 @@
 		"389C19D8B2F53E096A90C5A3" = {
 			"isa" = "PBXBuildFile";
 			"fileRef" = 63FCEA81289D0206D46FA5AC;
-		};
-		"07B1D928F7789DD67E097083" = {
-			"isa" = "PBXBuildFile";
-			"fileRef" = F194A1D5CC54C9035F5DF637;
 		};
 		"D8FC894ABB95583025BBD35F" = {
 			"isa" = "PBXBuildFile";
@@ -780,22 +788,24 @@
 				F255DE17689B1E92A71343CC,
 				77B52490110FE8EBF1788B6B,
 				2A0748C3ECE2F43F60C40519,
+				81ABF2E66B63609997E286D0,
 				8DCEEC5645B81E8EB4D9429A,
 				D0207E4C3D4A9E5D4459DEAD,
+				2E8D5F81B1A4CAAE7582621D,
+				687B25D59E13C5F09F2F0844,
+				9FAD782BC76B1F49E8BCF85A,
 				D50B4F37352FE5AD1FB19A3E,
 				89F780514FCFE843D5143C5F,
-				8BFF342734D63D4536CABB2A,
 				C9480A6326A3AEB4CDFF0AD0,
 				330D79DBAC91458AFC5FD1B4,
+				952C2A44F3EE4F966800BE42,
 				89EC02D10EDDE8869B32EC07,
 				6D0CC8C7463AE0FE0EEA2CF8,
 				2AC3462893EE1FBC0E3C4101,
 				A11BFA39DB56421AA794260B,
-				03AE847635745D331A68FC4E,
-				EB0DFAB568A1B06C266D7EFD,
-				3260F626061E01673365CFAA,
 				5D4162F9CD544E6C4F5B5CDA,
 				93F14CE9890A7BD3D21F89AB,
+				28220A97B2B36265FC0C4F04,
 				F7012ACAFC838BB2B947757D,
 				B19F08E12F31C28966E6F60B,
 				F2A88FD30C49A7367A115FD2,
@@ -807,12 +817,12 @@
 				E65D105A94173AA7DB7AE426,
 				B6DF75F0A1FC925310CA8CD9,
 				813ABA0386970328A95878B2,
+				FBF1AA11CB5078BDC014BE52,
 				107D79E30A476E920E0084C8,
 				2C5D7F06EFE9C649E589B77B,
 				6A2B3A987B183167994E9D73,
 				0521F6FC9190D086513A03F2,
 				389C19D8B2F53E096A90C5A3,
-				07B1D928F7789DD67E097083,
 				D8FC894ABB95583025BBD35F,
 				0E1DD8ADF551D84F7DFE9E6D,
 				0EE9DCF2C6D56DF1384278A9,
@@ -843,8 +853,8 @@
 				"SWIFT_VERSION" = "6.0";
 				"SWIFT_STRICT_CONCURRENCY" = "complete";
 				"IPHONEOS_DEPLOYMENT_TARGET" = "17.0";
-				"MARKETING_VERSION" = "0.4.1";
-				"CURRENT_PROJECT_VERSION" = "6";
+				"MARKETING_VERSION" = "0.5.0";
+				"CURRENT_PROJECT_VERSION" = "7";
 				"DEVELOPMENT_TEAM" = "";
 				"SDKROOT" = "iphoneos";
 				"CLANG_ENABLE_MODULES" = "YES";
@@ -890,8 +900,8 @@
 				"SWIFT_VERSION" = "6.0";
 				"SWIFT_STRICT_CONCURRENCY" = "complete";
 				"IPHONEOS_DEPLOYMENT_TARGET" = "17.0";
-				"MARKETING_VERSION" = "0.4.1";
-				"CURRENT_PROJECT_VERSION" = "6";
+				"MARKETING_VERSION" = "0.5.0";
+				"CURRENT_PROJECT_VERSION" = "7";
 				"DEVELOPMENT_TEAM" = "";
 				"SDKROOT" = "iphoneos";
 				"CLANG_ENABLE_MODULES" = "YES";

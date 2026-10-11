@@ -37,7 +37,7 @@ struct TeamProjectTransferScreen: View {
         } else if team.connected, team.selectedOrganization != nil {
             behavior = "Сохранённые материалы ставятся в очередь этого проекта. Без подходящей сети очередь сохраняется и продолжится при открытом приложении."
         } else {
-            behavior = "Это настройка отправки на сервер Atlas. Для её работы войдите в рабочий аккаунт и выберите организацию. Автоматическая загрузка в семейный архив или чат этим переключателем не подключается; используйте комплект ZIP."
+            behavior = "Автоматическая отправка применяется к дополнительному рабочему серверу \(AppBrand.displayName). Для неё войдите в рабочий аккаунт и выберите организацию. Комплект ZIP можно передать в архив или чат вручную."
         }
         return behavior + " Настройка сохраняется отдельно для каждого рабочего аккаунта и организации."
     }
@@ -108,7 +108,7 @@ struct TeamProjectTransferScreen: View {
                 Label(archiveIssue, systemImage: "exclamationmark.triangle")
                     .font(.footnote).foregroundStyle(Color.orange)
             }
-        } header: { Text("Передать без сервера Atlas") } footer: {
+        } header: { Text("Поделиться исходниками") } footer: {
             Text("ZIP содержит исходники и метаданные проекта. Его можно отправить в рабочий чат, сохранить в Файлы или загрузить в семейный архив. Выбор получателя и загрузка выполняются через меню iPhone.")
         }.listRowBackground(Color.atlasCard)
     }
@@ -122,7 +122,7 @@ struct TeamProjectTransferScreen: View {
                     .background(Color.atlasCanvas, in: RoundedRectangle(cornerRadius: 14))
                 VStack(alignment: .leading, spacing: 6) {
                     Text(project.name).font(.headline)
-                    Text("Исходники остаются на iPhone. Получение сервером подтверждается отдельно для каждого комплекта.")
+                    Text("Исходники и паспорт проекта остаются на iPhone. Подготовьте ZIP для передачи или выберите дополнительный рабочий сервер.")
                         .font(.subheadline).foregroundStyle(Color.atlasMuted)
                 }
             }.padding(.vertical, 4)
@@ -155,7 +155,7 @@ struct TeamProjectTransferScreen: View {
             ))
             .disabled(!settingsLoaded || changingSettings)
             .accessibilityIdentifier("transfer.wifiOnly")
-        } header: { Text("Отправка на сервер Atlas") } footer: {
+        } header: { Text("Рабочий сервер \(AppBrand.displayName) · дополнительно") } footer: {
             Text(deliveryExplanation)
         }.listRowBackground(Color.atlasCard)
     }
@@ -171,9 +171,9 @@ struct TeamProjectTransferScreen: View {
                     .font(.footnote).foregroundStyle(Color.atlasMuted)
                     .accessibilityIdentifier("transfer.connectionHint")
             } else {
-                Label("Команда ещё не подключена", systemImage: "externaldrive.badge.person.crop")
+                Label("Отправка на рабочий сервер", systemImage: "externaldrive.badge.person.crop")
                     .font(.subheadline.weight(.semibold))
-                Text("Для отправки через сервер Atlas войдите в рабочее пространство. Без подключения используйте комплект ZIP выше — материалы можно передать в ваш чат или архив.")
+                Text("Если ваша команда использует сервер \(AppBrand.displayName), подключите рабочий аккаунт. Комплект ZIP выше доступен без входа и передаётся через меню «Поделиться».")
                     .font(.footnote).foregroundStyle(Color.atlasMuted)
                     .accessibilityIdentifier("transfer.connectionHint")
                 NavigationLink {
@@ -208,7 +208,7 @@ struct TeamProjectTransferScreen: View {
             .accessibilityIdentifier("transfer.send")
             .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
         } footer: {
-            Text("Передаются сохранённые фото, модели, планы, карточки и метаданные. При обрыве сети загрузка продолжится с подтверждённого сервером места. Для продолжения держите Atlas открытым.")
+            Text("Передаются сохранённые фото, модели, планы, карточки и метаданные. При обрыве сети загрузка продолжится с подтверждённого сервером места. Для продолжения держите \(AppBrand.displayName) открытым.")
         }.listRowBackground(Color.atlasCard)
     }
 

@@ -58,7 +58,7 @@ final class FieldTransferCoordinator: ObservableObject {
             return "Команда не подключена. Исходники доступны на устройстве; выберите рабочее пространство для отправки."
         }
         switch network {
-        case .offline: return "Нет сети. Очередь сохранена и продолжится после подключения при открытом Atlas."
+        case .offline: return "Нет сети. Очередь сохранена и продолжится после подключения при открытом TerraView."
         case .wifi: return "Подключён Wi-Fi."
         case .cellular: return "Мобильная сеть. Комплекты с ограничением Wi-Fi ожидают подключения."
         case .other: return "Подключена сеть. Комплекты с ограничением Wi-Fi ожидают Wi-Fi."

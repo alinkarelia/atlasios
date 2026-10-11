@@ -116,6 +116,8 @@ struct CaptureRecoveryScreen: View {
                     manifest = try await CaptureCoordinator.recoverIncompleteCapture(at: item.manifest.deletingLastPathComponent())
                 case .room:
                     manifest = try await RoomCaptureAdapter.recoverIncompleteCapture(at: item.manifest.deletingLastPathComponent())
+                case .object:
+                    manifest = try await ObjectCaptureAdapter.recoverIncompleteCapture(at: item.manifest.deletingLastPathComponent())
                 }
             }
             // Registration validates paths, project identity and independent
@@ -151,6 +153,7 @@ struct CaptureRecoveryScreen: View {
             switch manifest.source {
             case "ARKit.sceneReconstruction": source = .lidar
             case "RoomPlan": source = .room
+            case "ObjectCapture": source = .object
             default: continue
             }
             result.append(RecoveryItem(manifest: url, source: source, createdAt: manifest.createdAt,
@@ -159,7 +162,7 @@ struct CaptureRecoveryScreen: View {
         return result.sorted { $0.createdAt > $1.createdAt }
     }
 
-    private enum RecoverySource: Sendable { case lidar, room }
+    private enum RecoverySource: Sendable { case lidar, room, object }
     private struct RecoveryItem: Identifiable, Sendable {
         var manifest: URL
         var source: RecoverySource
@@ -167,7 +170,13 @@ struct CaptureRecoveryScreen: View {
         var status: String
         var segmentCount: Int
         var id: String { manifest.path }
-        var title: String { source == .lidar ? "LiDAR · фрагментов: \(segmentCount)" : "Обмер RoomPlan" }
+        var title: String {
+            switch source {
+            case .lidar: "LiDAR · фрагментов: \(segmentCount)"
+            case .room: "Обмер RoomPlan"
+            case .object: "Объект · оригинальные фотографии"
+            }
+        }
         var statusLabel: String {
             switch status {
             case "recording": "Съёмка не завершена"

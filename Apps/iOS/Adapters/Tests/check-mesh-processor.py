@@ -29,6 +29,7 @@ while depth:
         depth -= 1
     end += 1
 processor = processor[:start] + processor[end:]
+overlay_geometry = (ROOT / "Apps/iOS/Adapters/LiDAROverlayGeometry.swift").read_text()
 
 if platform.system() == "Darwin":
     imports = "import Foundation\nimport simd\n"
@@ -128,6 +129,29 @@ TESTS = r'''
             faces:faceData([0,1,2],width:2),transform:identity)
         let truncated = await processor.process(short)
         expect(truncated == nil,"reject truncated vertex bytes without unsafe read")
+        // Colors are attached to original face IDs, not sampled triangle order.
+        // The compact render mesh is a derivative; checkpoints retain source.
+        let small = await processor.process(raw(points:[[0,0,0],[0.2,0,0],[0.2,0.2,0],[0,0.2,0]], faces:[0,1,2,0,2,3]))!
+        let colored = await processor.surfaceOverlay(small, classifications:Data([2,3]), floorCode:2, ceilingCode:3)
+        expect(colored.triangleCount == 2 && colored.groups.count == 2,"semantic floor and ceiling are separate overlay groups")
+        expect(colored.groups[0].classification == .floor && colored.groups[1].classification == .ceiling,"classification uses original source face")
+        expect(colored.groups.allSatisfy({ $0.positions.count == 3 && $0.indices == [0,1,2] }),"each overlay group compacts whole triplets")
+        expect(colored.groups[1].positions == [SIMD3<Float>(0,0,0),SIMD3<Float>(0.2,0.2,0),SIMD3<Float>(0,0.2,0)],"ceiling winding and vertices preserved")
+        expect(abs(colored.center.x - 0.1) < 1e-7 && abs(colored.center.y - 0.1) < 1e-7,"overlay camera-distance center")
+        let unclassified = await processor.surfaceOverlay(small, classifications:nil, floorCode:2, ceilingCode:3)
+        expect(unclassified.groups.count == 1 && unclassified.groups[0].classification == .other,"unclassified real mesh still visible")
+        let large = await processor.process(raw())!
+        let filtered = await processor.surfaceOverlay(large, classifications:Data([3]), floorCode:2, ceilingCode:3)
+        expect(filtered.triangleCount == 0 && large.triangleCount == 1 && large.areaSquareMeters == 0.5,"visual outliers never change stored geometry")
+        var labeled = raw(); labeled.classifications = Data([3])
+        let semanticCheckpoint = await processor.process(labeled)!
+        expect(semanticCheckpoint.classifications == Data([3]),"source semantic classification remains in durable checkpoint")
+        let restored = try! JSONDecoder().decode(MeshCheckpoint.self, from:JSONEncoder().encode(semanticCheckpoint))
+        expect(restored.classifications == Data([3]),"semantic checkpoint survives actual Codable round trip")
+        var oldObject = try! JSONSerialization.jsonObject(with:JSONEncoder().encode(semanticCheckpoint)) as! [String:Any]
+        oldObject.removeValue(forKey:"classifications")
+        let legacy = try! JSONDecoder().decode(MeshCheckpoint.self, from:JSONSerialization.data(withJSONObject:oldObject))
+        expect(legacy.classifications == nil && legacy.positions == semanticCheckpoint.positions,"legacy checkpoints without labels still decode unchanged")
         print("Mesh processor regression: \(count) checks passed")
     }
 }
@@ -137,7 +161,7 @@ with tempfile.TemporaryDirectory(prefix="atlas-mesh-check-") as directory:
     root = Path(directory)
     harness = root / "MeshProcessorChecks.swift"
     executable = root / "mesh-check"
-    harness.write_text(imports + processor + TESTS)
+    harness.write_text(imports + overlay_geometry + processor + TESTS)
     subprocess.run(compiler + ["-swift-version", "6", "-strict-concurrency=complete",
         "-parse-as-library", str(harness), "-o", str(executable)], check=True)
     subprocess.run([str(executable)], check=True)

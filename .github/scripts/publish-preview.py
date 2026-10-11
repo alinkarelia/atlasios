@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish one accepted Atlas preview using only the Actions job token."""
+"""Publish one accepted TerraView preview using only the Actions job token."""
 import argparse
 import collections
 import hashlib
@@ -20,17 +20,18 @@ import zipfile
 
 REPOSITORY = 'alinkarelia/atlasios'
 IPA_ARTIFACT = 'Atlas-unsigned-device-IPA-candidate'
-MINIMUM_UI_TESTS = 5
+MINIMUM_UI_TESTS = 7
 REQUIRED_VISUAL_STATES = {
     'initial_3D', 'orbit_rotated', 'foreground_return', 'walk_forward',
     'transfer_manual', 'transfer_automatic', 'transfer_restored_manual',
+    'free_tools', 'object_unavailable', 'viewer_section',
 }
 REQUIRED_SCREENSHOT_LABELS = {
     '01-project-created', '02-project-reopened', '03-capture-lidar-unavailable',
     '04-capture-room-unavailable', '05-capture-photo-unavailable', '06-viewer-orbit-initial',
     '07-viewer-orbit-rotated', '07b-viewer-foreground', '08-viewer-walk-forward',
     '09-viewer-reset', '11-transfer-manual-initial', '12-transfer-auto-wifi',
-    '13-transfer-restored-manual',
+    '13-transfer-restored-manual', '14-free-tools', '15-object-unavailable', '16-viewer-section',
 }
 EXPECTED_JOBS = {
     'Source project and Server',
@@ -156,7 +157,7 @@ def verify_context():
                 and REQUIRED_SCREENSHOT_LABELS <= set(runtime.get('screenshot_labels', []))
                 and isinstance(runtime.get('screenshots_archive_sha256'), str)
                 and re.fullmatch(r'[0-9a-f]{64}', runtime['screenshots_archive_sha256']) is not None,
-                'All thirteen actual runtime screenshot labels and their archive digest are required.')
+                'All sixteen actual runtime screenshot labels and their archive digest are required.')
         require(runtime.get('manual_visual_review') == 'passed'
                 and REQUIRED_VISUAL_STATES <= set(runtime.get('reviewed', [])),
                 'Incomplete actual 3D and project-transfer screenshot review.')
@@ -288,7 +289,7 @@ def validate_ipa(ipa, source_sha, record):
                         or name.endswith('/embedded.mobileprovision') for name in names),
                 'IPA includes signing resources or a provisioning profile.')
         info = plistlib.loads(archive.read(app + 'Info.plist'))
-        identity = {'CFBundleIdentifier': record['application_id'], 'CFBundleShortVersionString': version,
+        identity = {'CFBundleIdentifier': record['application_id'], 'CFBundleDisplayName': record['display_name'], 'CFBundleShortVersionString': version,
                     'CFBundleVersion': build, 'CFBundlePackageType': 'APPL',
                     'CFBundleSupportedPlatforms': ['iPhoneOS'], 'LSRequiresIPhoneOS': True}
         require(all(info.get(key) == value for key, value in identity.items())
@@ -431,7 +432,7 @@ def publish(source_sha, record):
     notes = (ROOT / '.github/release-notes.md').read_text()
     published = api('PATCH', f'/repos/{REPOSITORY}/releases/{release_id}',
                     {'draft': False, 'prerelease': True, 'body': notes,
-                     'name': f'Atlas {version} ({build}) — предварительная версия', 'make_latest': 'false'})
+                     'name': f'TerraView {version} ({build}) — предварительная версия', 'make_latest': 'false'})
     validate_release(published, source_sha, record)
     require(published.get('draft') is False, 'Release remains a draft.')
     verify_tag(source_sha, record)
@@ -440,7 +441,7 @@ def publish(source_sha, record):
     summary_path = os.environ.get('GITHUB_STEP_SUMMARY')
     if summary_path:
         with open(summary_path, 'a') as summary:
-            summary.write(f'Published [Atlas {version} ({build})]({url}) from `{source_sha}` after matching all five asset digests.\n')
+            summary.write(f'Published [TerraView {version} ({build})]({url}) from `{source_sha}` after matching all five asset digests.\n')
 
 
 def main():

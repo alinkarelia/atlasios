@@ -7,8 +7,8 @@ import AtlasCore
 @preconcurrency import RealityKit
 @preconcurrency import RoomPlan
 
-/// Native device screen: the mesh and room overlays come from Apple capture
-/// frameworks, while every statistic represents received geometry or files.
+/// One camera-first flow: a clear shutter, actionable guidance and overlays
+/// grounded in detected planes and locally committed capture geometry.
 @MainActor
 struct CaptureScreen: View {
     private enum Mode: String, CaseIterable {
@@ -160,6 +160,7 @@ struct CaptureScreen: View {
         HStack(spacing: 12) {
             Button { showTips = true } label: { Label("Советы", systemImage: "lightbulb") }
                 .buttonStyle(AtlasSecondaryButtonStyle())
+                .accessibilityIdentifier("capture.tips")
             Spacer()
             Text(project.name).font(.caption.weight(.medium)).lineLimit(1).foregroundStyle(Color.atlasMuted)
             Button {
@@ -201,13 +202,15 @@ struct CaptureScreen: View {
             if mode == .lidar && CaptureCoordinator.isSupported {
                 LiDARCameraView(coordinator: lidar)
                     .accessibilityLabel("Камера LiDAR")
-                // These dashed outlines are real detected AR planes projected
-                // in exactly the same viewport as the native renderer.
+                // Each pair is independently near/screen-clipped. Reconnecting
+                // clipped pieces would invent the ceiling lines users reported.
                 Canvas { context, _ in
-                    for vertices in lidar.detectedPlaneOutlines where vertices.count >= 3 {
-                        var path = Path(); path.addLines(vertices); path.closeSubpath()
-                        context.stroke(path, with: .color(lime.opacity(0.85)),
-                            style: StrokeStyle(lineWidth: 1.5, dash: [7, 5]))
+                    for vertices in lidar.detectedPlaneOutlines where vertices.count == 2 {
+                        var path = Path(); path.addLines(vertices)
+                        context.stroke(path, with: .color(.black.opacity(0.5)),
+                            style: StrokeStyle(lineWidth: 4, lineCap: .round, dash: [7, 5]))
+                        context.stroke(path, with: .color(.white.opacity(0.9)),
+                            style: StrokeStyle(lineWidth: 2, lineCap: .round, dash: [7, 5]))
                     }
                 }.allowsHitTesting(false).accessibilityHidden(true)
             } else if mode == .room && RoomCaptureAdapter.isSupported {
@@ -224,15 +227,26 @@ struct CaptureScreen: View {
                     .allowsHitTesting(false)
                 VStack(spacing: 12) {
                     if savedManifest == nil && !showsPhotoFallback {
-                        Text(guidanceText).font(.subheadline.weight(.medium)).multilineTextAlignment(.center)
-                            .foregroundStyle(Color.atlasInk).padding(14)
+                        cameraStatusStrip
+                            .padding(.horizontal, 16).padding(.top, 14)
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: mode == .lidar && lidar.guidanceNeedsAttention ? "exclamationmark.circle.fill" : "viewfinder")
+                                .foregroundStyle(mode == .lidar && lidar.guidanceNeedsAttention ? .orange : lime)
+                            Text(guidanceText).font(.subheadline.weight(.medium)).multilineTextAlignment(.leading)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }.foregroundStyle(.white).padding(14)
                             .frame(maxWidth: .infinity)
-                            .background(graphite.opacity(0.88), in: RoundedRectangle(cornerRadius: 16))
-                            .padding(16).accessibilityIdentifier("capture.status")
+                            .background(.black.opacity(0.78), in: RoundedRectangle(cornerRadius: 16))
+                            .padding(.horizontal, 16).accessibilityIdentifier("capture.status")
                     }
                     Spacer(minLength: 10)
                     if let savedManifest { savedCard(savedManifest).padding(16) }
-                    else if mode != .evidence && hasOpenCapture { metrics.padding(16) }
+                    else if mode != .evidence && hasOpenCapture {
+                        VStack(spacing: 8) {
+                            if mode == .lidar { recordedSurfaceLegend }
+                            metrics
+                        }.padding(14)
+                    }
                     else if mode == .evidence, let photo = evidence.latestEvidence {
                         Button { showGallery = true } label: {
                             Label("Фото сохранено · \(evidence.photos.count)", systemImage: "checkmark.circle.fill")
@@ -244,9 +258,70 @@ struct CaptureScreen: View {
                             .padding(.bottom, 16).accessibilityIdentifier("evidence.count")
                     }
                 }
+                if (savedManifest == nil && !showsPhotoFallback && !hasOpenCapture) || (mode == .lidar && lidar.state == .recording) {
+                    cameraReticle.allowsHitTesting(false).accessibilityHidden(true)
+                }
             }
         }.frame(maxWidth: .infinity, maxHeight: .infinity).frame(minHeight: 200)
-            .clipped().clipShape(RoundedRectangle(cornerRadius: 24)).padding(.horizontal, 8)
+            .clipped().clipShape(RoundedRectangle(cornerRadius: 20))
+    }
+
+    private var cameraStatusStrip: some View {
+        HStack(spacing: 8) {
+            let recording = mode == .lidar ? lidar.state == .recording : mode == .room ? room.state == .recording : false
+            Circle().fill(recording ? Color.red : .white.opacity(0.65)).frame(width: 7, height: 7)
+            Text(recording ? "ЗАПИСЬ" : hasOpenCapture ? "ПАУЗА / ОБРАБОТКА" : "ПРЕДПРОСМОТР")
+                .font(.caption2.weight(.bold)).tracking(1)
+            Spacer(minLength: 4)
+            if mode == .lidar {
+                Button { lidar.showRecordedSurfaces.toggle() } label: {
+                    Label(lidar.showRecordedSurfaces ? "Заливка" : "Камера", systemImage: lidar.showRecordedSurfaces ? "cube.transparent.fill" : "eye")
+                        .font(.caption.weight(.medium)).padding(.horizontal, 12).frame(minHeight: 44)
+                        .background(.black.opacity(0.65), in: Capsule())
+                }.foregroundStyle(.white)
+                    .accessibilityLabel(lidar.showRecordedSurfaces ? "Скрыть заливку записанной сетки" : "Показать заливку записанной сетки")
+                    .accessibilityIdentifier("capture.overlay.toggle")
+            }
+        }.foregroundStyle(.white).accessibilityElement(children: .contain)
+            .accessibilityIdentifier("capture.recordingState")
+    }
+
+    private var cameraReticle: some View {
+        ZStack {
+            ZStack {
+                Circle().stroke(.black.opacity(0.55), lineWidth: 4).frame(width: 22, height: 22)
+                Circle().stroke(.white.opacity(0.9), lineWidth: 1.5).frame(width: 22, height: 22)
+                Circle().fill(.white).frame(width: 3, height: 3)
+            }
+            if mode == .lidar, let distance = lidar.surfaceDistanceMeters {
+                Text("≈ " + distance.formatted(.number.precision(.fractionLength(1))) + " м")
+                    .font(.caption2.weight(.semibold)).monospacedDigit()
+                    .padding(.horizontal, 8).padding(.vertical, 5)
+                    .background(.black.opacity(0.7), in: Capsule()).offset(y: 31)
+            }
+        }
+    }
+
+    private var recordedSurfaceLegend: some View {
+        VStack(spacing: 6) {
+            HStack(spacing: 12) {
+                legendItem("Стены / предметы", color: lime)
+                legendItem("Пол", color: Color(red: 0.15, green: 0.95, blue: 0.78))
+                legendItem("Потолок", color: Color(red: 0.45, green: 0.72, blue: 1))
+            }
+            Text(lidar.overlayTriangleCount > 0 ? "Цвет — локально записанная сетка · пунктир — найденная плоскость"
+                                               : "Получаем сетку · пунктир — найденная плоскость")
+                .font(.caption2).foregroundStyle(.white.opacity(0.85)).multilineTextAlignment(.center)
+        }.padding(10).frame(maxWidth: .infinity)
+            .background(.black.opacity(0.76), in: RoundedRectangle(cornerRadius: 14))
+            .accessibilityIdentifier("capture.coverage.legend")
+    }
+
+    private func legendItem(_ title: String, color: Color) -> some View {
+        HStack(spacing: 4) {
+            Circle().fill(color).frame(width: 7, height: 7)
+            Text(title).font(.system(size: 10, weight: .medium)).lineLimit(1).minimumScaleFactor(0.85)
+        }
     }
 
     private var guidanceText: String {
@@ -261,8 +336,9 @@ struct CaptureScreen: View {
             if room.state == .captured { return "Обмер готов. Сохраните модель и проверьте план." }
             return room.isCameraReady ? "Покажите комнату и нажмите запись. Затем медленно обойдите все стены." : room.cameraStatus
         }
-        if lidar.state == .recording || lidar.state == .paused || lidar.state == .interrupted { return lidar.trackingMessage }
-        return lidar.isCameraReady ? "Наведите камеру на объект и нажмите запись. Пунктир показывает обнаруженные поверхности." : lidar.cameraStatus
+        if lidar.state == .paused || lidar.state == .interrupted { return lidar.trackingMessage }
+        if lidar.state == .recording || lidar.isCameraReady { return lidar.scanGuidance }
+        return lidar.cameraStatus
     }
 
     private func cameraFallback(title: String, message: String) -> some View {
@@ -343,13 +419,13 @@ struct CaptureScreen: View {
                 Spacer(minLength: 0)
                 Button { primaryAction() } label: {
                     ZStack {
-                        Circle().stroke(lime, lineWidth: 2).frame(width: 74, height: 74)
+                        Circle().stroke(hasOpenCapture || savedManifest != nil ? lime : .white, lineWidth: 2).frame(width: 80, height: 80)
                         if working { ProgressView().tint(lime) }
                         else if savedManifest != nil || mode == .room && room.state == .captured {
                             Image(systemName: primarySymbol).font(.title).foregroundStyle(lime)
                         } else if hasOpenCapture {
                             RoundedRectangle(cornerRadius: 8).fill(lime).frame(width: 30, height: 30)
-                        } else { Circle().fill(lime).frame(width: 60, height: 60) }
+                        } else { Circle().fill(.white).frame(width: 65, height: 65) }
                     }
                 }.disabled(!shutterEnabled)
                     .opacity(shutterEnabled ? 1 : 0.4)
@@ -404,8 +480,12 @@ struct CaptureScreen: View {
                 VStack(alignment: .leading, spacing: 22) {
                     Label("Медленно, с перекрытием", systemImage: "figure.walk").font(.title2.bold())
                     Text("Двигайте телефон плавно. Держите соседние поверхности в кадре; резкие повороты и однотонные стены затрудняют трекинг.")
-                    Label("Контуры — обнаруженные поверхности", systemImage: "square.dashed").font(.headline)
-                    Text("Пунктир в LiDAR появляется по данным камеры. Он помогает видеть найденные плоскости, но не показывает процент полноты. В плане помещения RoomPlan рисует стены, двери и окна.")
+                    Label("Цвет показывает записанную сетку", systemImage: "cube.transparent.fill").font(.headline)
+                    Text("Яркая заливка появляется после локального сохранения сетки: зелёный — стены и предметы, бирюзовый — пол, синий — потолок, если LiDAR распознал тип поверхности. Заливку можно скрыть, чтобы рассмотреть исходную камеру.")
+                    Label("Пунктир помогает ориентироваться", systemImage: "square.dashed").font(.headline)
+                    Text("Белый пунктир — ближайшие обнаруженные плоскости. Это подсказка, а не процент полноты модели. Проведите камерой по местам без заливки и осмотрите результат после сохранения.")
+                    Label("Расстояние и движение", systemImage: "arrow.left.and.right").font(.headline)
+                    Text("Держите 0,5–3 м до поверхности. Число у прицела — приблизительная глубина под центром кадра. Подсказки предупредят, если вы слишком близко, далеко, быстро поворачиваете телефон или недостаточно света.")
                     Label("Свет и материал", systemImage: "sun.max").font(.headline)
                     Text("Нужен ровный свет. Зеркала, стекло, движущиеся люди и блестящие поверхности могут оставлять пробелы. Осмотрите модель после сохранения.")
                     Label("Геометка и точность", systemImage: "location").font(.headline)
@@ -426,6 +506,13 @@ struct CaptureScreen: View {
                 }
                 LabeledContent("iOS", value: UIDevice.current.systemVersion)
                 LabeledContent("LiDAR", value: CaptureCoordinator.isSupported ? "Доступен" : "Недоступен")
+                if mode == .lidar {
+                    LabeledContent("Заливка", value: "\(lidar.overlayAnchorCount) областей · \(lidar.overlayTriangleCount) треугольников")
+                    if let checkpoint = lidar.lastCheckpoint { LabeledContent("Записано на устройство", value: checkpoint.formatted(date: .omitted, time: .standard)) }
+                    if let issue = lidar.overlayIssue { Text(issue).foregroundStyle(.orange) }
+                    Text("Заливка показывает ближайшую записанную геометрию. Полный исходный объём сохраняется независимо от неё.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Section("Геометка") { locationStatus }
                 if mode == .lidar && lidar.segmentCount > 1 {
                     Text("Фрагменты имеют отдельные координаты. Для общей модели требуется совмещение.")

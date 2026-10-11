@@ -12,8 +12,8 @@ settings:
     SWIFT_VERSION: "6.0"
     SWIFT_STRICT_CONCURRENCY: complete
     IPHONEOS_DEPLOYMENT_TARGET: "17.0"
-    MARKETING_VERSION: "0.4.1"
-    CURRENT_PROJECT_VERSION: "6"
+    MARKETING_VERSION: "0.5.0"
+    CURRENT_PROJECT_VERSION: "7"
     DEVELOPMENT_TEAM: ""
 targets:
   Atlas:
@@ -28,15 +28,19 @@ targets:
           - Features/Projects/Tests
           - Adapters/Tests
           - UITests
+          - Adapters/PurchaseService.swift
+          - Features/Subscription
+          - Features/Business
     resources:
       - Apps/iOS/Resources/PrivacyInfo.xcprivacy
     info:
       path: Apps/iOS/Info.plist
       properties:
-        CFBundleDisplayName: Atlas
+        CFBundleDisplayName: TerraView
         NSCameraUsageDescription: "Камера нужна для 3D-съёмки, AR-рулетки, обмеров и фотофиксации объекта."
         NSLocationWhenInUseUsageDescription: "Во время съёмки положение, время и точность автоматически сохраняются с геометкой сканов и фото. Метку можно исправить вручную."
         NSMotionUsageDescription: "Гироскоп и акселерометр используются для уровня и определения наклона устройства во время обмеров."
+        NSPhotoLibraryAddUsageDescription: "По вашему выбору изображение 3D-модели можно сохранить в Фото через меню Поделиться."
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait

@@ -52,15 +52,18 @@ struct MeshPreviewScreen: View {
         controller?.stopMoving()
         isLoading = true; issue = nil; controller = nil
         let sourceURL = url
-        let worker = Task.detached(priority: .userInitiated) { try OBJPreviewLoader.load(sourceURL) }
+        let worker = Task.detached(priority: .userInitiated) {
+            let mesh = try OBJPreviewLoader.load(sourceURL)
+            return (mesh, try MeshSectionProcessor.surfaceArea(mesh))
+        }
         await withTaskCancellationHandler {
             do {
-                let payload = try await worker.value
+                let (payload, area) = try await worker.value
                 try Task.checkCancellation()
                 // Parsing, world transforms and normal generation already ran
                 // off the UI actor. SceneKit only receives three data buffers.
                 await Task.yield()
-                controller = MeshPreviewController(mesh: payload, isActive: scenePhase == .active)
+                controller = MeshPreviewController(mesh: payload, sourceURL: sourceURL, surfaceArea: area, isActive: scenePhase == .active)
                 isLoading = false
             } catch is CancellationError {
                 // Leaving the screen cancels the read/normal worker.
@@ -76,6 +79,13 @@ private struct MeshPreviewContent: View {
     @ObservedObject var controller: MeshPreviewController
     let url: URL
     @State private var showsInfo = false
+    @State private var sharedURL: URL?
+    @State private var exportIssue: String?
+    @State private var exporting = false
+
+    private var exportDirectory: URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("TerraViewExports", isDirectory: true)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -125,6 +135,44 @@ private struct MeshPreviewContent: View {
                     .accessibilityLabel(controller.isWireframe ? "Показать поверхность" : "Показать рёбра сетки")
                     .accessibilityIdentifier("viewer.wireframe")
                 }
+                HStack(spacing: 8) {
+                    Button { controller.toggleMeasurement() } label: {
+                        Label("Размер", systemImage: "ruler").frame(maxWidth: .infinity).frame(height: 44)
+                    }
+                    .background(controller.isMeasuring ? Color.atlasAccent.opacity(0.2) : Color.atlasLine.opacity(0.14), in: RoundedRectangle(cornerRadius: 12))
+                    .accessibilityIdentifier("viewer.measure")
+                    .accessibilityAddTraits(controller.isMeasuring ? .isSelected : [])
+                    Button { controller.toggleSection() } label: {
+                        Label("Срез", systemImage: "square.3.layers.3d.slash").frame(maxWidth: .infinity).frame(height: 44)
+                    }
+                    .background(controller.isSectioned ? Color.atlasAccent.opacity(0.2) : Color.atlasLine.opacity(0.14), in: RoundedRectangle(cornerRadius: 12))
+                    .accessibilityIdentifier("viewer.section")
+                    .accessibilityAddTraits(controller.isSectioned ? .isSelected : [])
+                    Button {
+                        do { sharedURL = try controller.saveSnapshot(to: exportDirectory) }
+                        catch { exportIssue = error.localizedDescription }
+                    } label: { Image(systemName: "camera").frame(width: 44, height: 44) }
+                    .accessibilityIdentifier("viewer.snapshot").accessibilityLabel("Сохранить изображение текущего ракурса PNG")
+                }.font(.subheadline.weight(.semibold))
+                if controller.isMeasuring {
+                    HStack {
+                        Text(controller.measurementLabel).font(.subheadline.monospacedDigit())
+                            .accessibilityIdentifier("viewer.measurementValue")
+                        Spacer()
+                        Button("Сброс") { controller.clearMeasurement() }
+                    }
+                }
+                if controller.isSectioned {
+                    HStack {
+                        Text("Высота среза").font(.caption)
+                        Slider(value: Binding(get: { controller.sectionFraction }, set: { controller.setSectionFraction($0) }), in: 0.01...1)
+                            .accessibilityIdentifier("viewer.section.height")
+                        if controller.sectionBusy { ProgressView().controlSize(.small) }
+                    }
+                    Text("Верх скрыт только в просмотре. Исходная модель сохраняется полностью.")
+                        .font(.caption).foregroundStyle(Color.atlasMuted)
+                }
+                if let issue = controller.toolIssue { Text(issue).font(.caption).foregroundStyle(.orange) }
                 if controller.mode == .walk {
                     movementControls
                     Text("Свободное перемещение в границах модели. Стены не останавливают камеру.")
@@ -136,8 +184,17 @@ private struct MeshPreviewContent: View {
                     Spacer()
                     Button { showsInfo.toggle() } label: { Image(systemName: "info.circle") }
                         .accessibilityLabel("Информация о модели")
-                    ShareLink(item: url) { Image(systemName: "square.and.arrow.up") }
-                        .accessibilityLabel("Выгрузить исходную модель")
+                    Menu {
+                        ShareLink(item: url) { Label("Исходный \(url.pathExtension.uppercased())", systemImage: "doc") }
+                        ForEach(MeshExportFormat.allCases) { format in
+                            Button(format.title) { exportModel(format) }
+                                .accessibilityIdentifier("viewer.export.\(format.rawValue)")
+                        }
+                    } label: {
+                        if exporting { ProgressView() }
+                        else { Image(systemName: "square.and.arrow.up") }
+                    }.disabled(exporting).accessibilityIdentifier("viewer.export")
+                        .accessibilityLabel("Форматы экспорта 3D-модели")
                 }
             }
             .padding(16).background(Color.atlasCanvas)
@@ -148,6 +205,9 @@ private struct MeshPreviewContent: View {
                     LabeledContent("Вершины", value: controller.vertexCount.formatted())
                     LabeledContent("Треугольники", value: controller.triangleCount.formatted())
                     LabeledContent("Формат", value: url.pathExtension.uppercased())
+                    LabeledContent("Габариты", value: controller.dimensionsLabel)
+                    LabeledContent("Площадь сетки", value: controller.areaLabel)
+                    Text("Площадь рассчитана по треугольникам исходной сетки. Перекрывающиеся поверхности и пропуски влияют на результат.")
                     Text(controller.isAtlasCapture ? "Измеренная LiDAR-сетка · локальные метры." : "Масштаб и единицы исходной модели.")
                     Text("Поверхность показана с чёткими гранями, без фототекстуры. Исходный файл выгружается полностью. Открытые края и пропуски могут быть частью съёмки.")
                     Text("Прогулка — ручной просмотр модели, без распознавания пола или проверки столкновений со стенами.")
@@ -155,6 +215,24 @@ private struct MeshPreviewContent: View {
                 .navigationTitle("О модели").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Готово") { showsInfo = false } } }
             }.presentationDetents([.medium, .large])
+        }
+        .sheet(isPresented: Binding(get: { sharedURL != nil }, set: { if !$0 { sharedURL = nil } })) {
+            if let sharedURL { MeshFileShareSheet(url: sharedURL) }
+        }
+        .alert("Экспорт", isPresented: Binding(get: { exportIssue != nil }, set: { if !$0 { exportIssue = nil } })) {
+            Button("Готово", role: .cancel) { exportIssue = nil }
+        } message: { Text(exportIssue ?? "") }
+    }
+
+    private func exportModel(_ format: MeshExportFormat) {
+        exporting = true
+        let source = url, destination = exportDirectory
+        Task {
+            defer { exporting = false }
+            do { sharedURL = try await Task.detached(priority: .utility) {
+                try MeshExportService.export(source: source, format: format, outputDirectory: destination)
+            }.value }
+            catch { exportIssue = error.localizedDescription }
         }
     }
 
@@ -221,6 +299,22 @@ private struct MeshPreviewContent: View {
     let triangleCount: Int
     let isAtlasCapture: Bool
     let bounds: MeshNavigationBounds
+    let originalMesh: OBJPreviewPayload
+    let sourceURL: URL
+    let surfaceArea: Double
+    private let meshNode = SCNNode()
+    private let measurementNode = SCNNode()
+    private var measurementPoints: [SIMD3<Float>] = []
+    weak var renderView: SCNView?
+    @Published private(set) var isMeasuring = false
+    @Published private(set) var isSectioned = false
+    @Published private(set) var sectionFraction: Double = 0.65
+    @Published private(set) var sectionBusy = false
+    @Published private(set) var toolIssue: String?
+    @Published private(set) var measurementLabel = "Выберите две точки на поверхности"
+    @Published private(set) var visibleTriangleCount: Int
+    private var sectionTask: Task<Void, Never>?
+    private var sectionTicket = UUID()
     @Published private(set) var mode: Mode = .orbit
     @Published private(set) var isWireframe = false
     @Published private(set) var revision = 0
@@ -238,7 +332,9 @@ private struct MeshPreviewContent: View {
     private var movementTask: Task<Void, Never>?
     private var movingDirection: Direction?
 
-    init(mesh: OBJPreviewPayload, isActive: Bool) {
+    init(mesh: OBJPreviewPayload, sourceURL: URL, surfaceArea: Double, isActive: Bool) {
+        self.originalMesh = mesh; self.sourceURL = sourceURL; self.surfaceArea = surfaceArea
+        self.visibleTriangleCount = mesh.triangleCount
         self.isActive = isActive
         vertexCount = mesh.sourceVertexCount; triangleCount = mesh.triangleCount; isAtlasCapture = mesh.isAtlasCapture
         bounds = MeshNavigationBounds(minimum: mesh.minimum, maximum: mesh.maximum)
@@ -256,9 +352,10 @@ private struct MeshPreviewContent: View {
         material.isDoubleSided = true
         geometry.materials = [material]
         let center = (mesh.minimum + mesh.maximum) / 2
-        let meshNode = SCNNode(geometry: geometry)
+        meshNode.geometry = geometry
         meshNode.position = SCNVector3(-center.x, -center.y, -center.z)
         scene.rootNode.addChildNode(meshNode)
+        scene.rootNode.addChildNode(measurementNode)
         scene.background.contents = UIColor(Color.atlasGraphite)
         camera.camera = SCNCamera()
         camera.camera?.fieldOfView = 60
@@ -279,10 +376,120 @@ private struct MeshPreviewContent: View {
         updateCamera()
     }
 
+    private var meterScale: Bool {
+        isAtlasCapture || ["room.usdz", "object.usdz"].contains(sourceURL.lastPathComponent)
+    }
+    var dimensionsLabel: String {
+        let extent = bounds.halfExtent * 2
+        return String(format: "%.2f × %.2f × %.2f %@", extent.x, extent.y, extent.z, meterScale ? "м" : "ед.")
+    }
+    var areaLabel: String { String(format: "%.2f %@", surfaceArea, meterScale ? "м²" : "ед.²") }
+
+    func toggleMeasurement() {
+        isMeasuring.toggle()
+        if !isMeasuring { clearMeasurement() }
+    }
+
+    func clearMeasurement() {
+        measurementPoints.removeAll()
+        measurementNode.childNodes.forEach { $0.removeFromParentNode() }
+        measurementLabel = "Выберите две точки на поверхности"
+        revision &+= 1
+    }
+
+    func pick(at position: CGPoint, in view: SCNView) {
+        guard isMeasuring else { return }
+        let hits = view.hitTest(position, options: [.searchMode: SCNHitTestSearchMode.all.rawValue])
+        guard let hit = hits.first(where: { $0.node === meshNode }) else {
+            measurementLabel = "Точка вне поверхности — коснитесь сетки"
+            return
+        }
+        if measurementPoints.count == 2 { clearMeasurement() }
+        let point = SIMD3<Float>(hit.worldCoordinates.x, hit.worldCoordinates.y, hit.worldCoordinates.z)
+        measurementPoints.append(point)
+        let radius = CGFloat(max(0.008, bounds.diagonal * 0.003))
+        let marker = SCNNode(geometry: SCNSphere(radius: radius))
+        marker.geometry?.firstMaterial?.diffuse.contents = UIColor(Color.atlasAccent)
+        marker.geometry?.firstMaterial?.lightingModel = .constant
+        marker.simdPosition = point
+        measurementNode.addChildNode(marker)
+        if measurementPoints.count == 2 {
+            let delta = measurementPoints[1] - measurementPoints[0]
+            let length = simd_length(delta)
+            let rod = SCNNode(geometry: SCNCylinder(radius: radius * 0.45, height: CGFloat(length)))
+            rod.geometry?.firstMaterial?.diffuse.contents = UIColor(Color.atlasAccent)
+            rod.geometry?.firstMaterial?.lightingModel = .constant
+            rod.simdPosition = (measurementPoints[0] + measurementPoints[1]) / 2
+            if length > 0.00001 { rod.simdOrientation = simd_quatf(from: SIMD3<Float>(0, 1, 0), to: delta / length) }
+            measurementNode.addChildNode(rod)
+            measurementLabel = String(format: "%.3f %@ · расстояние по прямой", length, meterScale ? "м" : "ед.")
+        } else { measurementLabel = "Первая точка отмечена — выберите вторую" }
+        revision &+= 1
+    }
+
+    func toggleSection() {
+        isSectioned.toggle()
+        clearMeasurement()
+        if isSectioned { setSectionFraction(sectionFraction) }
+        else {
+            sectionTask?.cancel(); sectionTicket = UUID(); sectionBusy = false
+            installGeometry(originalMesh)
+        }
+    }
+
+    func setSectionFraction(_ value: Double) {
+        sectionFraction = value
+        guard isSectioned else { return }
+        sectionTask?.cancel()
+        let ticket = UUID(); sectionTicket = ticket
+        let payload = originalMesh
+        let height = payload.minimum.y + Float(value) * (payload.maximum.y - payload.minimum.y)
+        sectionBusy = true; toolIssue = nil
+        sectionTask = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(150)) } catch { return }
+            let worker = Task.detached(priority: .userInitiated) { try MeshSectionProcessor.clipped(payload, belowY: height) }
+            await withTaskCancellationHandler {
+                do {
+                    let cut = try await worker.value
+                    guard let self, !Task.isCancelled, self.sectionTicket == ticket else { return }
+                    self.installGeometry(cut); self.sectionBusy = false
+                } catch {
+                    guard let self, !Task.isCancelled, self.sectionTicket == ticket else { return }
+                    self.sectionBusy = false; self.toolIssue = error.localizedDescription
+                }
+            } onCancel: { worker.cancel() }
+        }
+    }
+
+    private func installGeometry(_ mesh: OBJPreviewPayload) {
+        let positions = SCNGeometrySource(data: mesh.positions, semantic: .vertex, vectorCount: mesh.vertexCount,
+            usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: 4, dataOffset: 0, dataStride: 12)
+        let normals = SCNGeometrySource(data: mesh.normals, semantic: .normal, vectorCount: mesh.vertexCount,
+            usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: 4, dataOffset: 0, dataStride: 12)
+        let triangles = SCNGeometryElement(data: mesh.indices, primitiveType: .triangles,
+            primitiveCount: mesh.triangleCount, bytesPerIndex: 4)
+        let geometry = SCNGeometry(sources: [positions, normals], elements: [triangles])
+        geometry.materials = [material]
+        meshNode.geometry = geometry
+        visibleTriangleCount = mesh.triangleCount
+        revision &+= 1
+    }
+
+    func saveSnapshot(to directory: URL) throws -> URL {
+        guard let view = renderView, hasRendered else { throw OBJPreviewError.noGeometry }
+        let image = view.snapshot()
+        guard let data = image.pngData() else { throw OBJPreviewError.invalidMesh }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let output = directory.appendingPathComponent("TerraView-view-\(UUID().uuidString).png")
+        try data.write(to: output, options: .atomic)
+        return output
+    }
+
     var accessibilityPose: String {
         let position = camera.position
-        return String(format: "%@ %@ x:%.3f y:%.3f z:%.3f yaw:%.3f pitch:%.3f", mode == .orbit ? "orbit" : "walk", hasRendered ? "rendered" : "preparing", position.x, position.y, position.z,
-                      mode == .orbit ? orbitYaw : walkYaw, mode == .orbit ? orbitPitch : walkPitch)
+        return String(format: "%@ %@ x:%.3f y:%.3f z:%.3f yaw:%.3f pitch:%.3f section:%@ triangles:%d", mode == .orbit ? "orbit" : "walk", hasRendered ? "rendered" : "preparing", position.x, position.y, position.z,
+                      mode == .orbit ? orbitYaw : walkYaw, mode == .orbit ? orbitPitch : walkPitch,
+                      isSectioned ? "on" : "off", visibleTriangleCount)
     }
 
     func setMode(_ mode: Mode) {
@@ -358,8 +565,11 @@ private struct MeshPreviewContent: View {
     }
 
     func setActive(_ active: Bool) {
-        if !active { stopMoving() }
+        if !active {
+            stopMoving(); sectionTask?.cancel(); sectionTicket = UUID(); sectionBusy = false
+        }
         isActive = active
+        if active, isSectioned { setSectionFraction(sectionFraction) }
     }
 
     func updateViewport(_ size: CGSize) {
@@ -416,6 +626,7 @@ private struct MeshSceneSurface: UIViewRepresentable {
         view.rendersContinuously = controller.isActive
         view.delegate = context.coordinator
         context.coordinator.view = view
+        controller.renderView = view
         view.viewportChanged = { [weak controller] size in controller?.updateViewport(size) }
         view.isAccessibilityElement = true
         view.accessibilityIdentifier = "viewer.scene"
@@ -423,7 +634,9 @@ private struct MeshSceneSurface: UIViewRepresentable {
         view.accessibilityTraits = [.allowsDirectInteraction]
         let pan = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.pan(_:)))
         let pinch = UIPinchGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.pinch(_:)))
-        view.addGestureRecognizer(pan); view.addGestureRecognizer(pinch)
+        let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.tap(_:)))
+        tap.require(toFail: pan)
+        view.addGestureRecognizer(pan); view.addGestureRecognizer(pinch); view.addGestureRecognizer(tap)
         return view
     }
 
@@ -461,6 +674,10 @@ private struct MeshSceneSurface: UIViewRepresentable {
                 view.delegate = nil
                 self.controller.markRendered()
             }
+        }
+        @objc func tap(_ recognizer: UITapGestureRecognizer) {
+            guard let view else { return }
+            controller.pick(at: recognizer.location(in: view), in: view)
         }
         @objc func pan(_ recognizer: UIPanGestureRecognizer) {
             let delta = recognizer.translation(in: recognizer.view)
@@ -533,4 +750,12 @@ private struct MeshMovementButton: UIViewRepresentable {
         @objc func up() { controller.finishMoving(direction) }
         @objc func cancel() { controller.stopMoving() }
     }
+}
+
+private struct MeshFileShareSheet: UIViewControllerRepresentable {
+    let url: URL
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [url], applicationActivities: nil)
+    }
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }

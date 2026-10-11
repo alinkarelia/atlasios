@@ -15,7 +15,7 @@ struct SettingsScreen: View {
                         .foregroundStyle(Color.atlasAccentInk).frame(width: 60, height: 60)
                         .background(Color.atlasAccent, in: RoundedRectangle(cornerRadius: 16))
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Atlas").font(.title.bold())
+                        Text(AppBrand.displayName).font(.title.bold())
                         Text("Съёмка · Планы · Территории").font(.subheadline).foregroundStyle(Color.atlasMuted)
                     }
                 }.padding(.vertical, 10)
@@ -23,7 +23,6 @@ struct SettingsScreen: View {
             Section("Рабочее пространство") {
                 NavigationLink { TeamConnectionScreen(model: model) } label: { Label("Моя команда", systemImage: "person.2") }
                 NavigationLink { TeamCommunicationScreen() } label: { Label("Архив, чат и встречи", systemImage: "bubble.left.and.bubble.right") }
-                NavigationLink { SubscriptionScreen(purchases: model.purchases) } label: { Label("Тарифы и покупки", systemImage: "creditcard") }
             }.listRowBackground(Color.atlasCard)
             Section("Устройство") {
                 LabeledContent("LiDAR", value: ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) ? "Поддерживается" : "Недоступен")
@@ -34,7 +33,7 @@ struct SettingsScreen: View {
             Section {
                 if let project = model.selectedProject {
                     Button {
-                        busy = true
+                        busy = true; backupURL = nil
                         Task { backupURL = await model.exportArchive(project: project); busy = false }
                     } label: {
                         if busy { ProgressView("Собираем архив…") }
@@ -50,6 +49,8 @@ struct SettingsScreen: View {
             }.listRowBackground(Color.atlasCard)
             Section("О приложении") {
                 LabeledContent("Версия", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.2.0")
+                Text("Съёмка, планы, полигоны, измерения и экспорт доступны бесплатно. Проекты можно вести на устройстве без аккаунта.")
+                    .font(.footnote).foregroundStyle(Color.atlasMuted)
                 Text("При потере отслеживания фрагменты съёмки сохраняют отдельные координаты. Геопривязка и объединение фрагментов требуют контрольных точек.")
                     .font(.footnote).foregroundStyle(Color.atlasMuted)
             }.listRowBackground(Color.atlasCard)
@@ -66,14 +67,14 @@ struct DataInformationScreen: View {
     var body: some View {
         List {
             Section("На устройстве") {
-                Text("Проекты, исходники, фото и бизнес-записи сохраняются в приложении. Для полевой работы аккаунт не нужен. По умолчанию выбран ручной режим отправки. Автоматический режим включается отдельно для подключённого общего проекта.")
+                Text("Проекты, исходники, фото и ранее сохранённые записи остаются на устройстве. Для полевой работы аккаунт не нужен. По умолчанию выбран ручной режим отправки. Автоматический режим включается отдельно для подключённого общего проекта.")
             }
             Section("Работа команды") {
                 Text("После входа сервер хранит имя, почту, идентификатор аккаунта и членство в организации. В разделе «Материалы и отправка» можно передать исходники, планы, карточки и паспорт выбранного проекта. Выберите ручную или автоматическую отправку и допустимую сеть. Получение всех файлов подтверждается сервером отдельно от проверки специалистом.")
-                Text("Без сервера комплект ZIP можно передать через меню «Поделиться». Ссылки на «Живую память», рабочий чат и Телемост открываются в выбранном сервисе; вложение архива выполняется вручную. Пароли сторонних сервисов Atlas не запрашивает.")
+                Text("Без сервера комплект ZIP можно передать через меню «Поделиться». Ссылки на «Живую память», рабочий чат и Телемост открываются в выбранном сервисе; вложение архива выполняется вручную. Пароли сторонних сервисов \(AppBrand.displayName) не запрашивает.")
             }
-            Section("Подписки") {
-                Text("Покупки оформляет App Store. Для командного тарифа подписанное подтверждение покупки проверяется сервером. После завершения подписки свои локальные данные можно открыть и выгрузить.")
+            Section("Бесплатные инструменты") {
+                Text("Все инструменты приложения доступны бесплатно. Дополнительный сервер команды настраивает администратор организации; он не нужен для съёмки, редактирования или экспорта локальных проектов.")
             }
             Section("Фото и надписи") {
                 Text("Фотофиксация и распознавание текста выполняются на устройстве. Распознанный текст является черновиком; сведения о захоронении и границах подтверждает специалист по источникам.")

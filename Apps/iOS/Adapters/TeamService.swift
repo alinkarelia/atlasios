@@ -136,12 +136,6 @@ final class TeamService: ObservableObject {
     var serverAddress: String { stored?.baseURL.absoluteString ?? "" }
     var selectedOrganization: RemoteOrganization? { organizations.first { $0.id == selectedOrganizationID } }
 
-    func purchaseSink() -> (any StoreKitEvidenceSink)? {
-        guard let stored, let organizationID = selectedOrganizationID else { return nil }
-        return TeamPurchaseSink(baseURL: stored.baseURL, token: stored.session.token,
-            userID: stored.session.user.id, organizationID: organizationID)
-    }
-
     func authenticate(server: String, email: String, password: String, displayName: String?, organizationName: String?) async {
         guard !busy else { return }
         sessionGeneration &+= 1
@@ -511,46 +505,5 @@ final class TeamService: ObservableObject {
     private static func keychainDelete(key: String) {
         SecItemDelete([kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: "com.atlasfield.session", kSecAttrAccount as String: key] as CFDictionary)
-    }
-}
-
-/// Authentication context is immutable: an old in-flight purchase never moves
-/// to a different account or organization when the user switches workspaces.
-private struct TeamPurchaseSink: StoreKitEvidenceSink {
-    let baseURL: URL
-    let token: String
-    let userID: UUID
-    let organizationID: UUID
-
-    func acceptedStoreKitGrant(_ evidence: VerifiedPurchaseEvidence) async throws -> EntitlementSnapshot {
-        guard evidence.appAccountToken == userID else { throw TeamError.rejected("Покупка принадлежит другому аккаунту.") }
-        struct Payload: Encodable { var signedTransaction: String }
-        struct Response: Decodable { var verifiedEntitlement: EntitlementSnapshot? }
-        var request = URLRequest(url: baseURL.appendingPathComponent("v1/organizations/\(organizationID.uuidString)/billing/apple/verify"))
-        request.httpMethod = "POST"; request.timeoutInterval = 30
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(Payload(signedTransaction: evidence.signedTransactionJWS))
-        let (data, response) = try await TeamHTTP.session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw TeamError.rejected("Сервер не подтвердил командную подписку. Персональные права Apple доступны независимо.")
-        }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .custom { decoder in
-            let value = try decoder.singleValueContainer().decode(String.self)
-            let formatter = ISO8601DateFormatter()
-            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            if let date = formatter.date(from: value) { return date }
-            formatter.formatOptions = [.withInternetDateTime]
-            guard let date = formatter.date(from: value) else {
-                throw DecodingError.dataCorruptedError(in: try decoder.singleValueContainer(), debugDescription: "Invalid server date")
-            }
-            return date
-        }
-        guard let entitlement = try decoder.decode(Response.self, from: data).verifiedEntitlement,
-              entitlement.source == .serverVerified, entitlement.scope == .organization(organizationID) else {
-            throw TeamError.rejected("Сервер не подтвердил права выбранной организации.")
-        }
-        return entitlement
     }
 }
