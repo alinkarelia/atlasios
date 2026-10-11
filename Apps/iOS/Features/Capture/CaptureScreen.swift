@@ -53,6 +53,12 @@ struct CaptureScreen: View {
     @State private var isSaving = false
     @State private var continuations: [CaptureContinuationRecord] = []
     @State private var showContinuations = false
+    @State private var fragmentPrompt: CaptureFragmentPolicy.Recommendation?
+    @State private var continuationSaveTicket: UUID?
+    @State private var sharedManifest: URL?
+    @State private var preparingShares = false
+    @State private var shareTask: Task<Void, Never>?
+    @State private var shareGeneration = UUID()
 
     private let lime = Color.atlasAccent
     private let graphite = Color.atlasCanvas
@@ -104,6 +110,7 @@ struct CaptureScreen: View {
         }
         .onDisappear {
             cancelPreview(); stopLocation(); cancelStart()
+            shareGeneration = UUID(); shareTask?.cancel(); shareTask = nil; preparingShares = false
             photoCamera.stop(); lidar.suspendForDismissal(); room.suspendForDismissal()
         }
         .onChange(of: savedManifest) { _, _ in refreshLocationActivity() }
@@ -114,6 +121,10 @@ struct CaptureScreen: View {
         .onChange(of: lidar.state) { _, state in
             if state == .recording { lidar.updateAutomaticLocation(location.currentFix) }
         }
+        .onChange(of: actionableFragmentRecommendation) { _, recommendation in
+            fragmentPrompt = recommendation
+        }
+        .onChange(of: lidar.currentFragmentID) { _, _ in fragmentPrompt = nil }
         .onChange(of: selectedPhoto) { _, item in
             guard let item else { return }
             Task {
@@ -181,6 +192,18 @@ struct CaptureScreen: View {
                     .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Закрыть") { showContinuations = false } } }
             }
         }
+        .confirmationDialog("Сохранить фрагмент обследования?", isPresented: Binding(
+            get: { fragmentPrompt != nil }, set: { if !$0 { fragmentPrompt = nil } }), titleVisibility: .visible) {
+            Button("Сохранить и продолжить") { fragmentPrompt = nil; Task { await saveAndContinueLiDAR() } }
+            Button("Сохранить и завершить") { fragmentPrompt = nil; Task { await saveLiDAR() } }
+            Button("Напомнить через 5 минут съёмки", role: .cancel) {
+                lidar.deferFragmentRecommendation(for: 300); fragmentPrompt = nil
+            }
+        } message: {
+            Text(fragmentPrompt == .lowStorage
+                 ? "Свободного места осталось меньше 2 ГБ. Сохраните фрагмент. Записанные материалы останутся в проекте; продолжение потребует места для новых файлов."
+                 : "Этот фрагмент снимается уже 10 минут. Сохранение упростит выгрузку и восстановление. Следующий фрагмент останется в этом обследовании, со своей системой координат.")
+        }
 
     }
 
@@ -205,7 +228,8 @@ struct CaptureScreen: View {
             ForEach(lidarOnly ? [.lidar] : Mode.allCases, id: \.self) { value in
                 Button {
                     guard !hasOpenCapture, !isStarting, !isSaving else { return }
-                    mode = value; savedManifest = nil; shareableAssets = []
+                    shareGeneration = UUID(); shareTask?.cancel(); shareTask = nil; preparingShares = false
+                    mode = value; savedManifest = nil; shareableAssets = []; sharedManifest = nil
                 } label: {
                     VStack(spacing: 5) {
                         Image(systemName: value.symbol).font(.body)
@@ -492,6 +516,16 @@ struct CaptureScreen: View {
                 }
             }
             Text(primaryTitle).font(.caption.weight(.medium)).foregroundStyle(Color.atlasMuted)
+            if mode == .lidar && hasOpenCapture {
+                Button("Сохранить фрагмент и продолжить", systemImage: "square.and.arrow.down.on.square") {
+                    Task { await saveAndContinueLiDAR() }
+                }.font(.caption).foregroundStyle(lime).disabled(working)
+                    .accessibilityIdentifier("capture.saveAndContinue")
+                if lidar.videoEnabled, let estimate = CaptureFragmentPolicy.estimatedVideoBytes(activeSeconds: lidar.fragmentElapsedSeconds) {
+                    Text("Видео: ориентир " + ByteCountFormatter.string(fromByteCount: estimate, countStyle: .file) + " · сетки и фото дополнительно")
+                        .font(.caption2).foregroundStyle(Color.atlasMuted)
+                }
+            }
             if mode == .lidar && !hasOpenCapture && savedManifest == nil && !continuations.isEmpty {
                 Button("Продолжить сохранённую съёмку", systemImage: "clock.arrow.circlepath") { showContinuations = true }
                     .font(.caption).foregroundStyle(lime).disabled(working)
@@ -630,7 +664,12 @@ struct CaptureScreen: View {
                     Label(asset.lastPathComponent, systemImage: "square.and.arrow.up").font(.subheadline).foregroundStyle(lime)
                 }
             }
-            ShareLink(item: manifest) { Label("Метаданные съёмки", systemImage: "doc.text").font(.caption).foregroundStyle(.white.opacity(0.6)) }
+            if preparingShares { ProgressView("Готовим именованные файлы для отправки").font(.caption) }
+            if let sharedManifest {
+                ShareLink(item: sharedManifest) { Label("Метаданные съёмки", systemImage: "doc.text").font(.caption).foregroundStyle(.white.opacity(0.6)) }
+            } else if !preparingShares {
+                ShareLink(item: manifest) { Label("Метаданные съёмки", systemImage: "doc.text").font(.caption).foregroundStyle(.white.opacity(0.6)) }
+            }
         }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
             .background(graphite.opacity(0.94), in: RoundedRectangle(cornerRadius: 22))
     }
@@ -647,6 +686,11 @@ struct CaptureScreen: View {
     }
 
     private var supported: Bool { mode == .evidence || (mode == .room ? RoomCaptureAdapter.isSupported : CaptureCoordinator.isSupported) }
+    private var actionableFragmentRecommendation: CaptureFragmentPolicy.Recommendation? {
+        guard mode == .lidar, lidar.state == .recording, scenePhase == .active, !working,
+              lidar.triangleCount > 0 || lidar.videoIsRecording else { return nil }
+        return lidar.fragmentRecommendation
+    }
     private var trackingGood: Bool { mode == .room ? room.state == .captured || room.state == .saved : lidar.isTrackingNormal || lidar.state == .saved }
     private var working: Bool {
         isStarting || isSaving || evidence.isProcessing || photoCamera.state == .capturing || (mode == .room ? [.preparing, .processing, .exporting].contains(room.state) : [.preparing, .exporting].contains(lidar.state))
@@ -701,6 +745,44 @@ struct CaptureScreen: View {
         defer { isSaving = false }
         do { captureSaved(try await lidar.finish()) }
         catch { failure = error.localizedDescription; exitAfterSave = false }
+    }
+
+    private func saveAndContinueLiDAR() async {
+        guard mode == .lidar, !working, hasOpenCapture else { return }
+        let generation = UUID(); startGeneration = generation
+        continuationSaveTicket = generation
+        isSaving = true; isStarting = true
+        let task = Task { @MainActor in
+            defer {
+                if continuationSaveTicket == generation { continuationSaveTicket = nil; isSaving = false }
+                if startGeneration == generation { isSaving = false; isStarting = false; startTask = nil }
+            }
+            do {
+                let url = try await lidar.finish()
+                // A durable finished fragment is registered even if navigation
+                // cancels the optional next camera session.
+                savedManifest = url; shareableAssets = exportedAssets(from: url)
+                onSaved(url)
+                guard !Task.isCancelled, startGeneration == generation else { return }
+                try await lidar.restoreForContinuation(at: url, projectID: project.id, outputDirectory: outputDirectory)
+                guard !Task.isCancelled, startGeneration == generation else { return }
+                await lidar.resume()
+                guard !Task.isCancelled, startGeneration == generation else { return }
+                if lidar.state == .recording {
+                    savedManifest = nil; shareableAssets = []
+                    lidar.updateAutomaticLocation(location.currentFix)
+                    refreshLocationActivity()
+                } else {
+                    failure = lidar.errorMessage ?? "Фрагмент сохранён. Камера ещё не запустилась; нажмите «Продолжить» или завершите обследование."
+                }
+            } catch is CancellationError { }
+            catch {
+                guard !Task.isCancelled, startGeneration == generation else { return }
+                failure = error.localizedDescription
+            }
+        }
+        startTask = task
+        await task.value
     }
 
     private func restoreCapture(_ record: CaptureContinuationRecord) async {
@@ -832,14 +914,59 @@ struct CaptureScreen: View {
     private func cancelStart() {
         startGeneration = UUID()
         startTask?.cancel(); startTask = nil; isStarting = false
+        if continuationSaveTicket != nil { continuationSaveTicket = nil; isSaving = false }
         lidar.cancelPendingStart(); room.cancelPendingStart()
     }
 
     private func captureSaved(_ url: URL) {
         savedManifest = url
-        shareableAssets = exportedAssets(from: url)
+        shareableAssets = []; sharedManifest = nil
         onSaved(url)
         if exitAfterSave { dismiss() }
+        else { prepareSharedExports(for: url) }
+    }
+
+    private func prepareSharedExports(for manifest: URL) {
+        shareTask?.cancel()
+        let generation = UUID(); shareGeneration = generation; preparingShares = true
+        let originalAssets = exportedAssets(from: manifest)
+        shareTask = Task { @MainActor in
+            defer {
+                if shareGeneration == generation { preparingShares = false; shareTask = nil }
+            }
+            do {
+                let values = try manifest.resourceValues(forKeys: [.fileSizeKey])
+                guard let size = values.fileSize, size > 0, size <= 2 * 1_024 * 1_024,
+                      let header = try JSONSerialization.jsonObject(with: Data(contentsOf: manifest)) as? [String: Any],
+                      let id = (header["id"] as? String).flatMap(UUID.init(uuidString:)) else {
+                    throw TeamError.rejected("Метаданные съёмки неполны. Исходники сохранены.")
+                }
+                let dates = ISO8601DateFormatter()
+                let capturedAt = (header["createdAt"] as? String).flatMap(dates.date(from:))
+                let segments = header["segments"] as? [[String: Any]] ?? []
+                let exporter = NamedSourceExport()
+                var prepared: [URL] = []
+                for asset in originalAssets {
+                    try Task.checkCancellation()
+                    let parentID = UUID(uuidString: asset.deletingLastPathComponent().lastPathComponent)
+                    let segment = segments.first { ($0["id"] as? String).flatMap(UUID.init(uuidString:)) == parentID }
+                    let segmentTime = (segment?["startedAt"] as? String).flatMap(dates.date(from:))
+                    let files = try await exporter.prepare(sources: [asset], captureRoot: outputDirectory,
+                        projectName: project.name, projectID: project.id, sourceID: parentID ?? id,
+                        capturedAt: segmentTime ?? capturedAt)
+                    prepared.append(contentsOf: files)
+                }
+                let metadata = try await exporter.prepare(sources: [manifest], captureRoot: outputDirectory,
+                    projectName: project.name, projectID: project.id, sourceID: id, capturedAt: capturedAt)
+                guard !Task.isCancelled, shareGeneration == generation else { return }
+                shareableAssets = prepared; sharedManifest = metadata.first
+            } catch is CancellationError { }
+            catch {
+                guard shareGeneration == generation else { return }
+                shareableAssets = originalAssets
+                failure = "Не удалось подготовить именованные экспорты: \(error.localizedDescription). Оригиналы доступны в сохранённой съёмке."
+            }
+        }
     }
 
     private func exportedAssets(from manifest: URL) -> [URL] {

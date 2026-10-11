@@ -70,6 +70,7 @@ struct BurialPhotoDetailScreen: View {
     @Environment(\.dismiss) private var dismiss
     @State private var image: UIImage?
     @State private var originalURL: URL?
+    @State private var sharedURL: URL?
     @State private var issue: String?
     var body: some View {
         NavigationStack {
@@ -108,7 +109,7 @@ struct BurialPhotoDetailScreen: View {
                         Text("Сверьте буквы и даты с оригиналом. Распознавание не подтверждает личность и не заполняет людей автоматически.")
                             .font(.footnote).foregroundStyle(Color.atlasMuted)
                     } else { Text(photo.recognitionIssue ?? "Читаемый текст не найден. Надпись можно вписать вручную.").foregroundStyle(Color.atlasMuted) }
-                    if let originalURL { ShareLink(item: originalURL) { Label("Поделиться оригиналом", systemImage: "square.and.arrow.up") } }
+                    if let originalURL { ShareLink(item: sharedURL ?? originalURL) { Label("Поделиться оригиналом", systemImage: "square.and.arrow.up") } }
                 }.padding()
             }
             .navigationTitle("Оригинальная фотография")
@@ -118,6 +119,14 @@ struct BurialPhotoDetailScreen: View {
                     originalURL = try await service.photoURL(photo, captureDirectory: directory)
                     let data = try await service.thumbnail(photo, captureDirectory: directory, maxPixelSize: 1_200)
                     try Task.checkCancellation(); image = UIImage(data: data)
+                    if let originalURL {
+                        do {
+                            let files = try await NamedSourceExport().prepare(sources: [originalURL], captureRoot: directory,
+                                projectName: "Фото", projectID: photo.projectID, sourceID: photo.id, capturedAt: photo.capturedAt)
+                            try Task.checkCancellation(); sharedURL = files.first
+                        } catch is CancellationError { }
+                        catch { issue = "Именованная копия недоступна: \(error.localizedDescription). Оригинал доступен для отправки." }
+                    }
                 } catch is CancellationError { }
                 catch { issue = error.localizedDescription; originalURL = nil }
             }

@@ -103,6 +103,16 @@ import AtlasCore
         let videoOnly = try records()
         precondition(videoOnly.count == 1 && videoOnly[0].id == segmentID && videoOnly[0].status == .ready)
         precondition(videoOnly[0].assets.contains { $0.kind == .video } && !videoOnly[0].assets.contains { $0.kind == .mesh })
+        object["status"] = "recording"
+        object["segments"] = [["id": segmentID.uuidString, "frameID": frame.uuidString,
+            "startedAt": ISO8601DateFormatter().string(from: identity.startedAt), "endedAt": "2026-10-11T12:00:00Z"],
+            ["id": UUID().uuidString, "frameID": UUID().uuidString, "startedAt": "2026-10-11T12:01:00Z"]]
+        let continued = try records()
+        precondition(continued.count == 2 && continued[0].status == .ready && continued[1].status == .recording,
+            "Sealed original remains usable while the next independent fragment records")
+        object["status"] = "ready"
+        object["segments"] = [["id": segmentID.uuidString, "frameID": frame.uuidString,
+            "startedAt": ISO8601DateFormatter().string(from: identity.startedAt)]]
         try rejects { object["completedAssets"] = [videoRelative + "video.mov"] }
         try rejects { object["completedAssets"] = [videoRelative + "video.json"] }
         try rejects { object["projectID"] = UUID().uuidString }
@@ -110,6 +120,6 @@ import AtlasCore
         do { _ = try records(); preconditionFailure("Partial video accepted as ready") } catch { }
         videoDocument.status = .ready; videoDocument.keyframes = []; try writeVideo()
         do { _ = try records(); preconditionFailure("Video without source poses accepted") } catch { }
-        print("CaptureCatalog: 29 dataset readiness, original/derivative/video identity and path isolation checks passed.")
+        print("CaptureCatalog: 30 dataset readiness, original/derivative/video identity and path isolation checks passed.")
     }
 }

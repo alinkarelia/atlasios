@@ -122,7 +122,7 @@ def release_configuration(record):
             'Unexpected reviewed application identity or platform.')
     required_tests = record.get('required_ui_tests')
     require(type(required_tests) is int and required_tests >= MINIMUM_UI_TESTS,
-            'The review record must require all twelve UI tests, including offline fieldwork and designer flows.')
+            'The review record must require all thirteen UI tests, including offline fieldwork and designer flows.')
     return tag, release_id, version, build, required_tests
 
 

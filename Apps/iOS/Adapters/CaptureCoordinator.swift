@@ -48,6 +48,8 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
     @Published private(set) var videoIsRecording = false
     @Published private(set) var videoStatus = "Видео выключено"
     @Published private(set) var videoIssue: String?
+    @Published private(set) var fragmentElapsedSeconds: TimeInterval = 0
+    @Published private(set) var currentFragmentID: UUID?
 
     // State objects can coexist, but only the visible mode allocates a camera
     // renderer. Suspending another mode must never create a second AR session.
@@ -86,6 +88,8 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
     private var isPreviewing = false
     private var isPreparingPreview = false
     private var isResuming = false
+    private var fragmentClock = CaptureFragmentActiveClock()
+    private var fragmentMinimumTimestamp: TimeInterval?
     private var cameraWatchdog: Task<Void, Never>?
     private var lastFrameAt: TimeInterval?
     private var receivedFrameCount = 0
@@ -217,6 +221,21 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
             ((state == .paused || state == .interrupted) && needsNewFrame && videoRecorder == nil)
     }
 
+    var fragmentRecommendation: CaptureFragmentPolicy.Recommendation? {
+        guard state == .recording else { return nil }
+        return fragmentClock.recommendation(availableDiskBytes: availableDiskBytes)
+    }
+
+    func deferFragmentRecommendation(for activeSeconds: TimeInterval = CaptureFragmentPolicy.recommendationDeferralSeconds) {
+        fragmentClock.deferRecommendation(for: activeSeconds)
+        fragmentElapsedSeconds = fragmentClock.elapsedSeconds
+    }
+
+    private func resetFragmentClock(id: UUID?) {
+        fragmentClock.reset(); fragmentElapsedSeconds = 0; currentFragmentID = id
+        fragmentMinimumTimestamp = id == nil ? nil : ProcessInfo.processInfo.systemUptime
+    }
+
     static func continuableCaptures(in outputDirectory: URL, projectID: UUID) async -> [CaptureContinuationRecord] {
         await CaptureContinuationStore().records(in: outputDirectory, projectID: projectID)
     }
@@ -250,6 +269,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
             pendingWrite = nil; checkpointError = nil; lastCheckpoint = nil
             anchorCount = 0; triangleCount = 0; observedSurfaceArea = 0
             segmentCount = restored.segments.count; needsNewFrame = true
+            resetFragmentClock(id: nil)
             resetCameraReadiness(clearRecordedSurfaces: true)
             errorMessage = nil; state = .paused
             cameraStatus = "Готово к продолжению. Нажмите «Продолжить»"
@@ -310,6 +330,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
             checkpointError = nil
             anchorCount = 0; triangleCount = 0; observedSurfaceArea = 0
             segmentCount = 1
+            resetFragmentClock(id: segment.id)
             needsNewFrame = false
             isPreviewing = false
             resetCameraReadiness(clearRecordedSurfaces: true)
@@ -352,6 +373,8 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
         guard state == .recording else { return }
         cameraView?.session.pause()
         cameraWatchdog?.cancel(); cameraWatchdog = nil
+        fragmentClock.pause()
+        fragmentElapsedSeconds = fragmentClock.elapsedSeconds
         state = .paused
         isCameraReady = false
         cameraStatus = "Камера на паузе"
@@ -409,10 +432,12 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
                 totalTriangles = 0; totalSurfaceArea = 0; lastMetricPublication = 0
                 anchorCount = 0; triangleCount = 0; observedSurfaceArea = 0
                 segmentCount = current.segments.count
+                resetFragmentClock(id: newSegment.id)
                 arView.session.run(configuration(), options: [.resetTracking, .removeExistingAnchors])
                 provisionalSegmentID = nil
                 trackingMessage = "Новый фрагмент. Его координаты требуют отдельного совмещения"
             } else {
+                fragmentMinimumTimestamp = ProcessInfo.processInfo.systemUptime
                 arView.session.run(configuration())
                 trackingMessage = "Восстановление трекинга"
             }
@@ -457,6 +482,8 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
         startGeneration = UUID()
         cameraView?.session.pause()
         cameraWatchdog?.cancel(); cameraWatchdog = nil
+        fragmentClock.pause()
+        fragmentElapsedSeconds = fragmentClock.elapsedSeconds
         closeVideo(reason: "userFinished")
         needsNewFrame = true
         if !current.segments.isEmpty && current.segments[current.segments.count - 1].endedAt == nil {
@@ -542,6 +569,8 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
         guard state == .recording || state == .paused else { return }
         cameraView?.session.pause()
         cameraWatchdog?.cancel(); cameraWatchdog = nil
+        fragmentClock.pause()
+        fragmentElapsedSeconds = fragmentClock.elapsedSeconds
         closeVideo(reason: reason)
         state = .interrupted
         isCameraReady = false
@@ -697,6 +726,9 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
         guard now - frame.timestamp < 1.5 else { return }
         lastFrameAt = now
         receivedFrameCount += 1
+        if state == .recording, let fragmentMinimumTimestamp, frame.timestamp >= fragmentMinimumTimestamp {
+            fragmentClock.observe(arTimestamp: frame.timestamp)
+        }
         if state == .recording, let videoRecorder {
             let transform = frame.camera.transform, intrinsics = frame.camera.intrinsics
             let orientation: UIInterfaceOrientation
@@ -734,6 +766,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
         }
         if now - lastFramePublication > 0.5 {
             cameraFrameCount = receivedFrameCount
+            if state == .recording { fragmentElapsedSeconds = fragmentClock.elapsedSeconds }
             lastFramePublication = now
         }
         guard state == .recording, frame.timestamp - lastHealthCheck > 8 else { return }

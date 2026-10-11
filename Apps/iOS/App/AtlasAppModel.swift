@@ -192,7 +192,10 @@ final class AtlasAppModel: ObservableObject {
             let artifact = try AtlasExporter.export(snapshot, format: format)
             let exportDirectory = directory.appendingPathComponent("Exports", isDirectory: true)
             try FileManager.default.createDirectory(at: exportDirectory, withIntermediateDirectories: true)
-            let url = exportDirectory.appendingPathComponent(artifact.fileName)
+            let suffix = artifact.fileName.hasSuffix(".atlas.json") ? "atlas.json" : URL(fileURLWithPath: artifact.fileName).pathExtension
+            let name = try ExportFileNaming.project(projectName: project.name, projectID: project.id,
+                role: format.rawValue, fileExtension: suffix)
+            let url = exportDirectory.appendingPathComponent(name)
             try artifact.data.write(to: url, options: .atomic)
             if !artifact.warnings.isEmpty { issue = artifact.warnings.joined(separator: "\n") }
             return url
@@ -210,7 +213,9 @@ final class AtlasAppModel: ObservableObject {
             }.value
             let exports = directory.appendingPathComponent("Exports", isDirectory: true)
             try FileManager.default.createDirectory(at: exports, withIntermediateDirectories: true)
-            let file = exports.appendingPathComponent(artifact.fileName)
+            let name = try ExportFileNaming.project(projectName: project.name, projectID: project.id,
+                role: "materials", fileExtension: "csv")
+            let file = exports.appendingPathComponent(name)
             try artifact.data.write(to: file, options: .atomic)
             return file
         } catch { issue = error.localizedDescription; return nil }
@@ -323,7 +328,9 @@ final class AtlasAppModel: ObservableObject {
             }
             let retainedHistories = histories
             let captureRoot = captureDirectory(for: project)
-            let destination = exportDirectory.appendingPathComponent("TerraView-\(project.id.uuidString).zip")
+            let name = try ExportFileNaming.project(projectName: project.name, projectID: project.id,
+                role: "full-project", fileExtension: "zip")
+            let destination = exportDirectory.appendingPathComponent(name)
             return try await Task.detached(priority: .utility) {
                 let files = try AssistantProjectPackage.prepare(snapshot: snapshot, passportData: passportData,
                     histories: retainedHistories, staging: staging)

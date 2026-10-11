@@ -56,7 +56,11 @@ enum CaptureCatalog {
                 assets += meshes.map { asset($0, kind: .mesh, namespace: segment.id, root: managedRoot) }
                 assets += try photoAssets(projectID: manifest.projectID, frameID: segment.frameID,
                     captureRoot: captureRoot, namespace: segment.id, root: managedRoot)
-                let segmentStatus: ScanStatus = status == .ready && completed[modelPath] == nil && completed[videoPath] == nil ? .interrupted : status
+                let hasCompletedSource = completed[modelPath] != nil || completed[videoPath] != nil
+                // A new fragment may be recording while yesterday's originals
+                // are sealed. Preserve their independent ready status.
+                let segmentStatus: ScanStatus = hasCompletedSource && (status == .ready || segment.endedAt != nil)
+                    ? .ready : (status == .ready ? .interrupted : status)
                 return ScanRecord(id: segment.id, projectID: manifest.projectID, source: .liDAR,
                     status: segmentStatus, frameID: segment.frameID, assets: assets,
                     createdAt: segment.startedAt, revision: 0, geoTag: segment.geoTag)
@@ -215,7 +219,7 @@ enum CaptureCatalog {
     private struct FileReference { var url: URL; var byteCount: Int64 }
     private struct Header: Decodable { var schemaVersion: Int; var source: String; var status: String }
     private struct LiDARManifest: Decodable {
-        struct Segment: Decodable { var id: UUID; var frameID: UUID; var startedAt: Date; var geoTag: GeoTag? }
+        struct Segment: Decodable { var id: UUID; var frameID: UUID; var startedAt: Date; var endedAt: Date?; var geoTag: GeoTag? }
         var id: UUID
         var projectID: UUID
         var segments: [Segment]

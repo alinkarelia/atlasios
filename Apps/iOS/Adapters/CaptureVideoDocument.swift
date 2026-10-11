@@ -48,6 +48,8 @@ struct CaptureVideoCounts: Codable, Sendable, Equatable {
 }
 
 struct CaptureVideoDocument: Codable, Sendable {
+    static let targetVideoBitrateBitsPerSecond = 6_000_000
+    static let targetVideoFramesPerSecond = 15
     enum Status: String, Codable, Sendable { case recording, ready, failed }
     var schemaVersion = 1
     var source = "ARKit.capturedImage"
@@ -60,7 +62,7 @@ struct CaptureVideoDocument: Codable, Sendable {
     var encodedWidth = 0
     var encodedHeight = 0
     var normalizedImageToDisplayTransform: [Float]?
-    var targetFramesPerSecond = 15
+    var targetFramesPerSecond = Self.targetVideoFramesPerSecond
     var durationSeconds: Double = 0
     var counts = CaptureVideoCounts()
     var keyframes: [CaptureVideoKeyframe] = []
@@ -145,7 +147,7 @@ final class CaptureVideoAdmission: @unchecked Sendable {
         counts.sourceFrames += 1
         guard timestamp.isFinite, timestamp >= 0 else { counts.droppedFrames += 1; return false }
         if let lastTimestamp, timestamp <= lastTimestamp { counts.droppedFrames += 1; return false }
-        if let lastTimestamp, timestamp - lastTimestamp < 1.0 / 15.0 - 0.000_001 {
+        if let lastTimestamp, timestamp - lastTimestamp < 1.0 / Double(CaptureVideoDocument.targetVideoFramesPerSecond) - 0.000_001 {
             counts.rateLimitedFrames += 1; return false
         }
         guard pending < 2 else { counts.droppedFrames += 1; return false }

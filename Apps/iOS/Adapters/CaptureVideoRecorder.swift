@@ -117,8 +117,9 @@ final class CaptureVideoRecorder: @unchecked Sendable {
             AVVideoCodecKey: AVVideoCodecType.h264,
             AVVideoWidthKey: dimensions.width,
             AVVideoHeightKey: dimensions.height,
-            AVVideoCompressionPropertiesKey: [AVVideoAverageBitRateKey: 6_000_000,
-                AVVideoExpectedSourceFrameRateKey: 15, AVVideoMaxKeyFrameIntervalKey: 30,
+            AVVideoCompressionPropertiesKey: [AVVideoAverageBitRateKey: CaptureVideoDocument.targetVideoBitrateBitsPerSecond,
+                AVVideoExpectedSourceFrameRateKey: CaptureVideoDocument.targetVideoFramesPerSecond,
+                AVVideoMaxKeyFrameIntervalKey: CaptureVideoDocument.targetVideoFramesPerSecond * 2,
                 AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel]
         ]
         let track = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
@@ -179,7 +180,7 @@ final class CaptureVideoRecorder: @unchecked Sendable {
         }
         lastVideoTime = seconds
         document.counts.encodedFrames += 1
-        document.durationSeconds = seconds + 1.0 / 15.0
+        document.durationSeconds = seconds + 1.0 / Double(CaptureVideoDocument.targetVideoFramesPerSecond)
         if seconds - lastKeyframeTime >= 1 || document.keyframes.isEmpty {
             document.keyframes.append(.init(videoSeconds: seconds, frame: lease.descriptor))
             lastKeyframeTime = seconds

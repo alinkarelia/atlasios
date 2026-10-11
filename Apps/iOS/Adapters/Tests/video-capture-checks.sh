@@ -12,6 +12,10 @@ swift_compiler="${SWIFTC:-swiftc}"
   "$test_directory/../CaptureContinuation.swift" "$test_directory/CaptureContinuationChecks.swift" \
   -o "$test_workspace/capture-continuation"
 "$test_workspace/capture-continuation"
+"$swift_compiler" -swift-version 6 -strict-concurrency=complete \
+  "$test_directory/../CaptureVideoDocument.swift" "$test_directory/../CaptureFragmentPolicy.swift" \
+  "$test_directory/CaptureFragmentPolicyChecks.swift" -o "$test_workspace/capture-fragments"
+"$test_workspace/capture-fragments"
 if [[ "$(uname -s)" == "Darwin" ]]; then
   "$swift_compiler" -swift-version 6 -strict-concurrency=complete \
     "$test_directory/../CaptureVideoDocument.swift" "$test_directory/../CaptureVideoRecorder.swift" \
