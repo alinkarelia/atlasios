@@ -61,9 +61,9 @@ struct TourPhotoViewer: View {
                         if !station.annotations.isEmpty { Text("Для контуров и карточек откройте исходный панорамный снимок.").font(.caption).padding(10).background(.ultraThinMaterial,in:RoundedRectangle(cornerRadius:12)) }
                     }.padding().allowsHitTesting(false)
                 } else {
-                    TourAnnotatedImage(image:image,annotations:station.annotations,selectedFeatureID:focusedFeature?.id) { annotation in
+                    TourAnnotatedImage(image:image,annotations:station.annotations,selectedFeatureID:focusedFeature?.id,onSelect: { annotation in
                         focusedFeature = annotation.flatMap { value in features.first { $0.id == value.featureID } }
-                    }
+                    })
                 }
             } else if let issue { Text(issue).foregroundStyle(.white).multilineTextAlignment(.center).padding() }
             else { ProgressView("Проверяем исходное фото").tint(.white).foregroundStyle(.white) }

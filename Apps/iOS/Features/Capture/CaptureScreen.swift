@@ -305,7 +305,7 @@ struct CaptureScreen: View {
                 if lidar.canChangeVideoSelection && savedManifest == nil {
                     Toggle(isOn: Binding(get: { lidar.videoEnabled }, set: { lidar.setVideoEnabled($0) })) {
                         Label("Видео", systemImage: "video")
-                    }.labelsHidden().tint(lime)
+                    }.tint(lime)
                         .accessibilityLabel("Записывать видео вместе с LiDAR")
                         .accessibilityIdentifier("capture.video.toggle")
                         .disabled(working || !lidar.canChangeVideoSelection)

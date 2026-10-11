@@ -38,7 +38,20 @@ struct CaptureContinuationChecks {
         let metadataAfter = try Data(contentsOf: manifest), originalAfter = try Data(contentsOf: model)
         check(metadataBefore == metadataAfter && originalAfter == original, "Listing and validation cannot mutate original sources")
         let records = await CaptureContinuationStore().records(in: managed, projectID: project)
-        check(records.count == 1 && records.first?.manifestURL == manifest, "Only valid managed capture is listed")
+        print("Continuation listing diagnostic: count=\(records.count), matchingID=\(records.first?.id == id), matchingFile=\(records.first?.manifestURL.resolvingSymlinksInPath().path == manifest.resolvingSymlinksInPath().path)")
+        check(records.count == 1 && records.first?.id == id &&
+            records.first?.manifestURL.resolvingSymlinksInPath().path == manifest.resolvingSymlinksInPath().path,
+            "Only valid managed capture source identity and actual file are listed")
+        let listedBytes = try Data(contentsOf: records[0].manifestURL)
+        check(listedBytes == metadataBefore, "Enumerated source is the exact original file")
+        let alias = base.appendingPathComponent("CapturesAlias")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: managed)
+        let aliasManifest = alias.appendingPathComponent("lidar-\(id.uuidString)/manifest.json")
+        let aliasRecord = try CaptureContinuationPolicy.validate(at: aliasManifest, projectID: project, outputDirectory: alias)
+        check(aliasRecord.id == id && aliasRecord.manifestURL.path == manifest.resolvingSymlinksInPath().path,
+              "Filesystem aliases return one canonical source identity")
+        let aliasBytes = try Data(contentsOf: aliasRecord.manifestURL)
+        check(aliasBytes == metadataBefore, "Canonical alias opens the exact original without copying or mutation")
         let otherRecords = await CaptureContinuationStore().records(in: managed, projectID: UUID())
         check(otherRecords.isEmpty, "Other projects' scans are not offered")
         check((try? CaptureContinuationPolicy.validate(at: manifest, projectID: project, outputDirectory: base)) == nil, "Nested or external folders are not managed captures")

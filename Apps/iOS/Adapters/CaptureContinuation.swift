@@ -108,7 +108,10 @@ enum CaptureContinuationPolicy {
                 }
             }
         }
-        return CaptureContinuationRecord(id: index.id, manifestURL: manifestURL, name: index.projectName,
+        // Directory enumeration on Darwin may resolve /var to /private/var.
+        // Stable file identity must not depend on the caller's URL spelling.
+        let canonicalManifest = manifestURL.absoluteURL.standardizedFileURL.resolvingSymlinksInPath()
+        return CaptureContinuationRecord(id: index.id, manifestURL: canonicalManifest, name: index.projectName,
             updatedAt: index.updatedAt, segmentCount: index.segments.count, status: index.status)
     }
 
