@@ -453,7 +453,8 @@ private enum ObjectPhotogrammetryWorker {
                     if let stage = info.processingStage { await update(.stage(stageText(stage))) }
                 case .requestComplete(_, let result):
                     if case .modelFile(let actual) = result {
-                        guard actual.standardizedFileURL == output.standardizedFileURL else {
+                        guard actual.standardizedFileURL.resolvingSymlinksInPath().path ==
+                              output.standardizedFileURL.resolvingSymlinksInPath().path else {
                             throw ObjectCaptureStorageError.invalidModel
                         }
                         receivedModel = actual

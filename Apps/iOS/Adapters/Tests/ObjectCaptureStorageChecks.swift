@@ -72,15 +72,21 @@ import AtlasCore
             fatalError("A link outside the capture folder must not become a source asset")
         } catch ObjectCaptureStorageError.unsafePath {} // 11
         try FileManager.default.removeItem(at: root.appendingPathComponent("Images/link.png"))
-        note("resolve trusted managed-root alias, preserve source containment")
+        note("construct writer through trusted alias before capture folder exists")
         let alias = managed.deletingLastPathComponent()
             .appendingPathComponent("atlas-object-alias-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: alias) }
         try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: managed)
+        var aliasMetadata = metadata
+        aliasMetadata.id = UUID(); aliasMetadata.frameID = UUID()
         let aliasedRoot = alias.appendingPathComponent(
-            "Projects/\(project.uuidString)/Captures/Object-\(capture.uuidString)", isDirectory: true)
+            "Projects/\(project.uuidString)/Captures/Object-\(aliasMetadata.id.uuidString)", isDirectory: true)
         let aliasedWriter = ObjectCaptureDatasetWriter(root: aliasedRoot, managedRoot: alias)
-        let aliased = try await aliasedWriter.completeDataset(restored)
+        try await aliasedWriter.create(aliasMetadata)
+        try png.write(to: aliasedRoot.appendingPathComponent("Images/original.png"))
+        try sidecar.write(to: aliasedRoot.appendingPathComponent("Images/original.depth"))
+        note("finalize real originals written through aliased root after creation")
+        let aliased = try await aliasedWriter.completeDataset(aliasMetadata)
         precondition(aliased.images[0].sha256 == complete.images[0].sha256 &&
                      aliased.completedAssets == complete.completedAssets,
                      "A trusted /var-style managed-root alias must resolve without relaxing source containment") // 12

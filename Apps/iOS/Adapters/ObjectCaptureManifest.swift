@@ -69,10 +69,26 @@ enum ObjectCaptureStorageError: Error, LocalizedError, Sendable {
 /// Directory enumeration, ImageIO inspection and streaming SHA never run on
 /// the camera/UI actor. Only small, Sendable manifest values cross the boundary.
 actor ObjectCaptureDatasetWriter {
-    let root: URL
+    private let requestedRoot: URL
+    /// Foundation may leave an entire path unresolved when its final child
+    /// does not yet exist. Resolve its existing ancestor first, then rebuild
+    /// the missing suffix. All filesystem inspection stays on this writer.
+    private var root: URL {
+        var ancestor = requestedRoot
+        var suffix: [String] = []
+        while !FileManager.default.fileExists(atPath: ancestor.path), ancestor.path != "/" {
+            suffix.append(ancestor.lastPathComponent)
+            ancestor.deleteLastPathComponent()
+        }
+        var canonical = ancestor.standardizedFileURL.resolvingSymlinksInPath()
+        for component in suffix.reversed() {
+            canonical.appendPathComponent(component, isDirectory: true)
+        }
+        return canonical.standardizedFileURL
+    }
     private let managedRoot: URL
     init(root: URL, managedRoot: URL) {
-        self.root = root.standardizedFileURL.resolvingSymlinksInPath()
+        self.requestedRoot = root.standardizedFileURL
         self.managedRoot = managedRoot.standardizedFileURL.resolvingSymlinksInPath()
     }
 
@@ -112,7 +128,11 @@ actor ObjectCaptureDatasetWriter {
 
     func completeDataset(_ original: ObjectCaptureManifest) throws -> ObjectCaptureManifest {
         var manifest = original
-        let imageRoot = try FieldTransferPaths.resolve(relativePath: manifest.imagesDirectory, root: root)
+        // The constructor may run before this directory exists. Darwin can
+        // resolve /var to /private/var differently once files are present, so
+        // containment must use current canonical paths on both sides.
+        let canonicalRoot = root.standardizedFileURL.resolvingSymlinksInPath()
+        let imageRoot = try FieldTransferPaths.resolve(relativePath: manifest.imagesDirectory, root: canonicalRoot)
         guard let enumerator = FileManager.default.enumerator(at: imageRoot,
             includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey],
             options: [.skipsHiddenFiles]) else { throw ObjectCaptureStorageError.emptyDataset }
@@ -124,11 +144,12 @@ actor ObjectCaptureDatasetWriter {
             let values = try file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
             guard values.isSymbolicLink != true else { throw ObjectCaptureStorageError.unsafePath }
             guard values.isRegularFile == true else { continue }
-            let prefix = root.path + "/"
-            guard file.path.hasPrefix(prefix) else { throw ObjectCaptureStorageError.unsafePath }
-            let relative = String(file.path.dropFirst(prefix.count))
-            let safe = try FieldTransferPaths.resolve(relativePath: relative, root: root)
-            guard safe.path == file.standardizedFileURL.resolvingSymlinksInPath().path,
+            let prefix = canonicalRoot.path.hasSuffix("/") ? canonicalRoot.path : canonicalRoot.path + "/"
+            let canonicalFile = file.standardizedFileURL.resolvingSymlinksInPath()
+            guard canonicalFile.path.hasPrefix(prefix) else { throw ObjectCaptureStorageError.unsafePath }
+            let relative = String(canonicalFile.path.dropFirst(prefix.count))
+            let safe = try FieldTransferPaths.resolve(relativePath: relative, root: canonicalRoot)
+            guard safe.path == canonicalFile.path,
                   let size = values.fileSize, size >= 0 else {
                 throw ObjectCaptureStorageError.unsafePath
             }
