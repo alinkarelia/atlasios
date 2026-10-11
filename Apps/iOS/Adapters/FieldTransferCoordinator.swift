@@ -100,8 +100,11 @@ final class FieldTransferCoordinator: ObservableObject {
     /// Called after a durable local save. There is no network requirement for
     /// saving a capture, and preparing a manual package never starts an upload.
     @discardableResult
-    func prepare(snapshot: AtlasProjectSnapshot, assetDirectory: URL) async -> Bool {
-        guard let queue, let context = try? team.transferContext() else { return false }
+    func prepare(snapshot: AtlasProjectSnapshot, assetDirectory: URL,
+                 expectedContext: TeamTransferContext? = nil) async -> Bool {
+        guard let queue, let context = expectedContext ?? (try? team.transferContext()) else { return false }
+        do { try Task.checkCancellation(); try team.requireCurrentTransfer(context) }
+        catch { return false }
         guard preparingProjects.insert(snapshot.project.id).inserted else {
             pendingPreparations[snapshot.project.id] = (snapshot, assetDirectory, context)
             return false
@@ -114,20 +117,22 @@ final class FieldTransferCoordinator: ObservableObject {
                     guard let self else { return }
                     do { try self.team.requireCurrentTransfer(pending.2) }
                     catch { return }
-                    _ = await self.prepare(snapshot: pending.0, assetDirectory: pending.1)
+                    _ = await self.prepare(snapshot: pending.0, assetDirectory: pending.1, expectedContext: pending.2)
                 }
             }
         }
         do {
             let existing = try await queue.records(projectID: snapshot.project.id, scope: context.scope,
                 limit: FieldTransferQueue.maximumRecords)
+            try Task.checkCancellation(); try team.requireCurrentTransfer(context)
             let prepared = try await assembler.prepare(snapshot: snapshot, assetDirectory: assetDirectory,
                 scope: context.scope, device: Self.device(), previous: existing.map(\.manifest))
             try Task.checkCancellation(); try team.requireCurrentTransfer(context)
             for package in prepared {
-                try Task.checkCancellation()
+                try Task.checkCancellation(); try team.requireCurrentTransfer(context)
                 _ = try await queue.register(manifest: package.manifest, scope: context.scope)
             }
+            try Task.checkCancellation(); try team.requireCurrentTransfer(context)
             let skipped = snapshot.scans.filter { $0.status != .ready }.count
             if skipped > 0 {
                 issue = "В очередь вошли завершённые материалы. Незавершённых съёмок: \(skipped). Завершите или восстановите их для отправки."
@@ -137,16 +142,20 @@ final class FieldTransferCoordinator: ObservableObject {
         } catch is CancellationError { return false }
         catch { issue = error.localizedDescription; return false }
     }
-    func send(projectID: UUID) async {
+    func send(projectID: UUID, expectedContext: TeamTransferContext? = nil) async {
         guard let queue else { return }
         do {
-            let context = try team.transferContext()
+            let context = try expectedContext ?? team.transferContext()
+            try Task.checkCancellation(); try team.requireCurrentTransfer(context)
             try await queue.requestSend(projectID: projectID, scope: context.scope)
             try team.requireCurrentTransfer(context)
             issue = nil; await refresh(); resume()
-        } catch { issue = error.localizedDescription }
+        } catch is CancellationError { }
+        catch { issue = error.localizedDescription }
     }
-    func requestSend(projectID: UUID) async { await send(projectID: projectID) }
+    func requestSend(projectID: UUID, expectedContext: TeamTransferContext? = nil) async {
+        await send(projectID: projectID, expectedContext: expectedContext)
+    }
 
     func retry(id: UUID) async {
         guard let queue else { return }
@@ -228,9 +237,15 @@ final class FieldTransferCoordinator: ObservableObject {
             await self.run(context: context, queue: queue, generation: runGeneration)
             self.worker = nil; self.isSending = false; self.activePackageID = nil
             await self.refresh()
-            if self.active, self.network != .offline,
-               let pending = try? await queue.pending(scope: context.scope, network: self.network,
-                   now: Date().addingTimeInterval(301), limit: 1), !pending.isEmpty {
+            // An old worker may finish after a workspace/account switch.
+            // Wake eligible work in the current destination, not the cancelled
+            // worker's scope; every actual request still captures a fresh context.
+            if self.active, self.network != .offline, self.worker == nil,
+               let current = try? self.team.transferContext(),
+               let pending = try? await queue.pending(scope: current.scope, network: self.network,
+                   now: Date().addingTimeInterval(301), limit: 1), !pending.isEmpty,
+               (try? self.team.requireCurrentTransfer(current)) != nil,
+               self.active, self.network != .offline, self.worker == nil {
                 self.scheduleRetry()
             }
         }

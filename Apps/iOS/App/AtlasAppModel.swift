@@ -209,29 +209,42 @@ final class AtlasAppModel: ObservableObject {
         transferPreparationTickets[projectID] = ticket
         transferPreparationTasks[projectID] = Task { [weak self] in
             do { try await Task.sleep(for: .milliseconds(800)) } catch { return }
-            guard let self, !Task.isCancelled, self.team.connected,
+            guard let self else { return }
+            defer {
+                if self.transferPreparationTickets[projectID] == ticket {
+                    self.transferPreparationTasks[projectID] = nil
+                    self.transferPreparationTickets[projectID] = nil
+                }
+            }
+            guard !Task.isCancelled, self.team.connected,
                   let project = self.projects.first(where: { $0.id == projectID }) else { return }
             do { try self.team.requireCurrentTransfer(originalContext) } catch { return }
-            _ = await self.prepareFieldTransfer(project: project)
-            if self.transferPreparationTickets[projectID] == ticket {
-                self.transferPreparationTasks[projectID] = nil
-                self.transferPreparationTickets[projectID] = nil
-            }
+            // Manual delivery stages the reviewed snapshot when the operator
+            // sends it, avoiding file copies and intermediate drafts on every edit.
+            let preferences = await self.transfers.settings(projectID: projectID)
+            guard !Task.isCancelled else { return }
+            do { try self.team.requireCurrentTransfer(originalContext) } catch { return }
+            guard preferences.policy == .automatic else { return }
+            _ = await self.prepareFieldTransfer(project: project, expectedContext: originalContext)
         }
     }
 
     @discardableResult
-    func prepareFieldTransfer(project: AtlasProject) async -> Bool {
+    func prepareFieldTransfer(project: AtlasProject, expectedContext: TeamTransferContext? = nil) async -> Bool {
+        guard let context = expectedContext ?? (try? team.transferContext()) else { return false }
         guard let snapshot = await snapshot(of: project) else { return false }
-        return await transfers.prepare(snapshot: snapshot, assetDirectory: directory)
+        do { try team.requireCurrentTransfer(context) } catch { return false }
+        return await transfers.prepare(snapshot: snapshot, assetDirectory: directory, expectedContext: context)
     }
 
     func sendFieldMaterials(project: AtlasProject) async {
+        guard let context = try? team.transferContext() else { return }
         transferPreparationTasks[project.id]?.cancel()
         transferPreparationTasks[project.id] = nil
         transferPreparationTickets[project.id] = nil
-        guard await prepareFieldTransfer(project: project) else { return }
-        await transfers.send(projectID: project.id)
+        guard await prepareFieldTransfer(project: project, expectedContext: context) else { return }
+        do { try team.requireCurrentTransfer(context) } catch { return }
+        await transfers.send(projectID: project.id, expectedContext: context)
     }
 
     func openSharedProject(_ remote: RemoteProject) async -> AtlasProject? {
