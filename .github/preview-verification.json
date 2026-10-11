@@ -1,15 +1,15 @@
 {
   "repository": "alinkarelia/atlasios",
   "release_tag": "v0.5.0-preview.7",
-  "release_id": null,
-  "source_sha": null,
-  "run_id": null,
-  "run_url": null,
-  "artifact_id": null,
-  "artifact_digest": null,
+  "release_id": 409902085,
+  "source_sha": "0764ba0bd4551c429c1a5273e598b88234b1234e",
+  "run_id": 38170400797,
+  "run_url": "https://github.com/alinkarelia/atlasios/actions/runs/38170400797",
+  "artifact_id": 11713533790,
+  "artifact_digest": "sha256:e8ed714f5e605b6d75adc2134772e47be693df6dab0386dd0c8a28cd2a808b9b",
   "ipa_file": "Atlas-unsigned.ipa",
-  "ipa_bytes": null,
-  "ipa_sha256": null,
+  "ipa_bytes": 8390460,
+  "ipa_sha256": "c66b07df266c8e656f87bc78ddbf6686e36fb9924b36ccbcc924ed07b9c04c2c",
   "application_id": "com.atlasfield.app",
   "display_name": "TerraView",
   "version": "0.5.0",
@@ -17,30 +17,58 @@
   "minimum_iOS": "17.0",
   "platform": "iPhoneOS",
   "architecture": "arm64",
-  "SDK": null,
-  "Xcode": null,
+  "SDK": "iphoneos18.5",
+  "Xcode": "16.4 (16F6)",
   "required_ui_tests": 7,
   "personally_signed": false,
   "physical_camera_LiDAR_tested": false,
-  "all_CI_checks": "pending",
-  "manual_current_screenshot_review": "pending",
+  "all_CI_checks": "success",
+  "manual_current_screenshot_review": "passed",
   "runtime_iOS18": {
-    "iOS": "18",
-    "build": null,
+    "iOS": "18.5",
+    "build": "22F77",
     "device": "iPhone 16 Pro",
-    "Xcode": null,
-    "Swift": null,
-    "tests": 0,
-    "passed": 0,
+    "Xcode": "16.4 (16F6)",
+    "Swift": "Apple Swift version 6.1.2 (swiftlang-6.1.2.1.2 clang-1700.0.13.5)",
+    "tests": 7,
+    "passed": 7,
     "failed": 0,
     "skipped": 0,
     "expected_failures": 0,
-    "manual_visual_review": "pending",
-    "reviewed": [],
-    "screenshots_artifact": null,
-    "screenshots_archive_sha256": null,
-    "screenshots_count": 0,
-    "screenshot_labels": [],
+    "manual_visual_review": "passed",
+    "reviewed": [
+      "initial_3D",
+      "orbit_rotated",
+      "foreground_return",
+      "walk_forward",
+      "transfer_manual",
+      "transfer_automatic",
+      "transfer_restored_manual",
+      "free_tools",
+      "object_unavailable",
+      "viewer_section"
+    ],
+    "screenshots_artifact": 11714044396,
+    "screenshots_archive_sha256": "8b82c673f28d513ca39b007b2a2d562230028c0b1bb1284ba12757cca330558d",
+    "screenshots_count": 16,
+    "screenshot_labels": [
+      "01-project-created",
+      "02-project-reopened",
+      "03-capture-lidar-unavailable",
+      "04-capture-room-unavailable",
+      "05-capture-photo-unavailable",
+      "06-viewer-orbit-initial",
+      "07-viewer-orbit-rotated",
+      "07b-viewer-foreground",
+      "08-viewer-walk-forward",
+      "09-viewer-reset",
+      "11-transfer-manual-initial",
+      "12-transfer-auto-wifi",
+      "13-transfer-restored-manual",
+      "14-free-tools",
+      "15-object-unavailable",
+      "16-viewer-section"
+    ],
     "required_screenshot_labels": [
       "01-project-created",
       "02-project-reopened",
@@ -59,25 +87,74 @@
       "15-object-unavailable",
       "16-viewer-section"
     ],
-    "synthetic_test_room": true
+    "synthetic_test_room": true,
+    "review_method": "Personally viewed all four fresh contact sheets, then original09 PNG; all16 mandatory images inspected.",
+    "screenshots_archive_bytes": 11897551,
+    "total_original_PNGs": 18,
+    "screenshot_sha256": {
+      "01-project-created": "40bc2accd7c4e5d0311787689a8019d6d2a7f7d04003b0c2a2c3b360a9b0668d",
+      "02-project-reopened": "9515b926a76674d137deefd58dde9c10f9a15635357424dfa6c98150cf555d62",
+      "03-capture-lidar-unavailable": "eac4cd586f16a74f22384a792cc463d21d81e683f6e4d813fa54bae8a70fa36d",
+      "04-capture-room-unavailable": "200d1926bfe05968bdb326529a19b1ec73081889eefb061f950c1270c40a1a5f",
+      "05-capture-photo-unavailable": "6c58cdc517424bd0234ff0be499fb363b0fc4a639834410886ad9a58ecc9f6d2",
+      "06-viewer-orbit-initial": "fdf618058662aeedb6449032e8f9d83ee5bc0641cf269b4b5bbdc3b52d451b5d",
+      "07-viewer-orbit-rotated": "0bc35007a9959ae71ae2d36c00c0dd39b86babe926d8fda1f0f2e19bbb5a0fcb",
+      "07b-viewer-foreground": "0bc35007a9959ae71ae2d36c00c0dd39b86babe926d8fda1f0f2e19bbb5a0fcb",
+      "08-viewer-walk-forward": "446e8d6486938d51a83738f08d4f9c11262f3bc58b6e5c4610fe07474b3843b7",
+      "09-viewer-reset": "fdf618058662aeedb6449032e8f9d83ee5bc0641cf269b4b5bbdc3b52d451b5d",
+      "11-transfer-manual-initial": "630cb6df44aa1aece58f7dbb9c32242dfba3c0cd08eee73d540a805d4479f101",
+      "12-transfer-auto-wifi": "eb94de517164d5fa85076b130a7ed187a0c1cc7836c0d427759dd96addb994a0",
+      "13-transfer-restored-manual": "630cb6df44aa1aece58f7dbb9c32242dfba3c0cd08eee73d540a805d4479f101",
+      "14-free-tools": "a5a689fdbdfac4ee68df92073c7a7507a5f22cc0ffab4db19576439b40205f7d",
+      "15-object-unavailable": "2355227f762a8a8bd159a253d69088b6f05cd1f396164877f72c29f45c318edf",
+      "16-viewer-section": "635f147ef4c2ccdbae1c2a1072a3323656bffb714833afd1d7b311aeb5f6750b"
+    }
   },
   "runtime_iOS26": {
-    "iOS": "26",
-    "build": null,
+    "iOS": "26.2",
+    "build": "23C54",
     "device": "iPhone 16 Pro",
-    "Xcode": null,
-    "Swift": null,
-    "tests": 0,
-    "passed": 0,
+    "Xcode": "26.3 (17C529)",
+    "Swift": "6.2.4 (swiftlang-6.2.4.1.4 clang-1700.6.4.2)",
+    "tests": 7,
+    "passed": 7,
     "failed": 0,
     "skipped": 0,
     "expected_failures": 0,
-    "manual_visual_review": "pending",
-    "reviewed": [],
-    "screenshots_artifact": null,
-    "screenshots_archive_sha256": null,
-    "screenshots_count": 0,
-    "screenshot_labels": [],
+    "manual_visual_review": "passed",
+    "reviewed": [
+      "initial_3D",
+      "orbit_rotated",
+      "foreground_return",
+      "walk_forward",
+      "transfer_manual",
+      "transfer_automatic",
+      "transfer_restored_manual",
+      "free_tools",
+      "object_unavailable",
+      "viewer_section"
+    ],
+    "screenshots_artifact": 11714420775,
+    "screenshots_archive_sha256": "e28eb7855aa4c2f82a6e2d43555b7f9082184458724f2b36c194aec4e7bc06df",
+    "screenshots_count": 16,
+    "screenshot_labels": [
+      "01-project-created",
+      "02-project-reopened",
+      "03-capture-lidar-unavailable",
+      "04-capture-room-unavailable",
+      "05-capture-photo-unavailable",
+      "06-viewer-orbit-initial",
+      "07-viewer-orbit-rotated",
+      "07b-viewer-foreground",
+      "08-viewer-walk-forward",
+      "09-viewer-reset",
+      "11-transfer-manual-initial",
+      "12-transfer-auto-wifi",
+      "13-transfer-restored-manual",
+      "14-free-tools",
+      "15-object-unavailable",
+      "16-viewer-section"
+    ],
     "required_screenshot_labels": [
       "01-project-created",
       "02-project-reopened",
@@ -96,11 +173,112 @@
       "15-object-unavailable",
       "16-viewer-section"
     ],
-    "synthetic_test_room": true
+    "synthetic_test_room": true,
+    "review_method": "Personally viewed all four fresh contact sheets, then original09 PNG; all16 mandatory images inspected.",
+    "screenshots_archive_bytes": 12675921,
+    "total_original_PNGs": 18,
+    "screenshot_sha256": {
+      "05-capture-photo-unavailable": "7265cd16810c2525c2ea73f66b2e57cd8297e4e1838aaa53ccf6487823928fce",
+      "04-capture-room-unavailable": "d9ca37dd47d00ba2d3953a9408c5c45247bd473deb867a066fbd5393eb5bf652",
+      "03-capture-lidar-unavailable": "285e17df341c79013d1d4bc170c918b9bb6b3c50f4f316c7d620cb37ab531f21",
+      "13-transfer-restored-manual": "1a1f2c530d29970c185f7a495b65a3978ed2c2d70375f73549b63f5c9711c563",
+      "12-transfer-auto-wifi": "c54a3c83552bc0f3539b2dee0243b7807d19113c2fbb8b12ad169676826e7401",
+      "11-transfer-manual-initial": "fa9933ab3a8cae280b863c5d81b356b9a85e655b31ad5f6f0d700cec60859ffc",
+      "14-free-tools": "27d9730f3c0dfdfb05f42c14b7b21950888d546fe0eda7b179659e3f74dcf87a",
+      "15-object-unavailable": "e6eb2a893e0f7a93a8fb20027c146d2744acebb795cd365b5300004f914f5154",
+      "02-project-reopened": "7fb6d852a806b2bb290984ba49ed40d3c61a4a72c12b4017452455c2b5889be1",
+      "01-project-created": "1a4083ee4578da973cc66c8c204f79f8c5be3c8941f1c8e135871156c0fdb280",
+      "16-viewer-section": "7f85425f29b76322ca76230b0fc8bd1cc12b81dc4c03f7396db5f787d2e9097d",
+      "09-viewer-reset": "0c7643ea1c9a0b41f9fb555be86f882e418e78b1132b1164c7808728f5cd6987",
+      "08-viewer-walk-forward": "2b60ca9f871161b03e72124d3a04daae48bbecf0f1dc0a9798989eff70086054",
+      "07b-viewer-foreground": "da8236867ab14c66c285d06f5811bb6cf91eeff4325746400e84c4eaeb07c279",
+      "07-viewer-orbit-rotated": "f2bd35c35f0263dedde9839e68f7a99718378f4a2dd82d348b62913559fdd373",
+      "06-viewer-orbit-initial": "0c7643ea1c9a0b41f9fb555be86f882e418e78b1132b1164c7808728f5cd6987"
+    }
   },
-  "portable_checks": {},
-  "source_archive_sha256": null,
-  "jobs": [],
+  "portable_checks": {
+    "AtlasCore": {
+      "XCTest": 7,
+      "SwiftTesting": 99,
+      "total": 106,
+      "status": "passed"
+    },
+    "Server": {
+      "tests": 61,
+      "passed": 61,
+      "failed": 0,
+      "status": "passed"
+    },
+    "MeshExports": {
+      "exports": 15,
+      "status": "passed"
+    },
+    "ObjectCaptureStorage": {
+      "checks": 12,
+      "status": "passed"
+    },
+    "MeshSection": {
+      "checks": 13,
+      "status": "passed"
+    },
+    "PhotoGeoMetadata": {
+      "checks": 41,
+      "status": "passed"
+    },
+    "MeshProcessing": {
+      "checks": 56,
+      "status": "passed"
+    },
+    "LiDAROverlay": {
+      "checks": 56,
+      "status": "passed"
+    },
+    "CaptureCatalog": {
+      "checks": 14,
+      "status": "passed"
+    },
+    "OBJPreview": "passed",
+    "FieldTransferAssembler": "passed"
+  },
+  "source_archive_sha256": "44a6cd66ca307af51b79474e8326e7a52fb6fc4e5de34680e159a4443b864a28",
+  "jobs": [
+    {
+      "id": 114561627460,
+      "name": "Source project and Server",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 114561699649,
+      "name": "Unsigned arm64 iPhone candidate",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 114561699651,
+      "name": "Swift 6 core and native SDK",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 114561699679,
+      "name": "Full UI tests (Xcode 26, iOS 26)",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 114561699682,
+      "name": "Full UI tests (Xcode 16.4, iOS 18)",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 114566115632,
+      "name": "All checks passed; visual review required",
+      "status": "completed",
+      "conclusion": "success"
+    }
+  ],
   "app_icon": {
     "asset_name": "AppIcon",
     "source_pixels": [
@@ -108,7 +286,32 @@
       1024
     ],
     "opaque_RGB": true,
-    "packaged_icon_validation": "pending"
+    "packaged_icon_validation": "passed",
+    "packaged_resources": {
+      "asset": "AppIcon",
+      "catalog": "Assets.car",
+      "iPhone_PNGs": {
+        "AppIcon60x60@2x.png": [
+          120,
+          120
+        ]
+      },
+      "iPad_PNGs": {
+        "AppIcon60x60@2x.png": [
+          120,
+          120
+        ],
+        "AppIcon76x76@2x~ipad.png": [
+          152,
+          152
+        ]
+      }
+    },
+    "catalog_sha256": "5626083be4eca4f7b42388fa4ea8146d0a746ff5cd7ac0471981785a0300a38e"
   },
-  "note": "Pending TerraView 0.5.0 (7) native verification, guided Object Capture fallback, section/measurement UI, free tools, real mesh export and LiDAR overlay checks. Hardware camera/LiDAR quality remains a physical iPhone check."
+  "note": "TerraView 0.5.0 (7): all six exact-source CI jobs passed; root personally reviewed all32 current named screenshots, including both original reset frames. Physical iPhone camera/LiDAR/RoomPlan/Photogrammetry/GPS and sustained performance remain untested; no personal signing or full Polycam parity claim. x0 and family-archive API integration are deferred.",
+  "source_archive_bytes": 5353169,
+  "source_archive_prefix": "atlas-source/",
+  "source_archive_verified_files": 148,
+  "source_run_completed_at": "2026-10-11T20:22:21Z"
 }

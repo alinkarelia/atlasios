@@ -1,160 +1,65 @@
-name: Publish existing iPhone preview
+name: Publish manually reviewed iPhone preview
 
 on:
   workflow_dispatch:
     inputs:
       source_run_id:
-        description: Successful unsigned iPhone preview run to publish
+        description: 'Successful full verification run with the reviewed source and IPA'
         required: true
         type: string
+      visual_review:
+        description: 'Both actual runtime screenshot sets have been reviewed and accepted'
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   actions: read
   contents: write
 
 concurrency:
-  group: publish-preview-${{ github.repository }}
+  group: atlas-preview-publication
   cancel-in-progress: false
 
 jobs:
-  publish-preview:
+  publish:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
       GH_TOKEN: ${{ github.token }}
-      SOURCE_RUN_ID: ${{ inputs.source_run_id }}
-      RELEASE_TAG: v0.3.1-preview.4
+      ATLAS_SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+      ATLAS_VISUAL_REVIEW: ${{ inputs.visual_review }}
     steps:
       - uses: actions/checkout@v4
-      - name: Verify private repository and successful source build
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify accepted source run, review record, and IPA provenance
         id: source
-        run: |
-          python3 - <<'PY'
-          import json, os, re, subprocess
-          repository = os.environ['GITHUB_REPOSITORY']
-          run_id = os.environ['SOURCE_RUN_ID']
-          if not re.fullmatch(r'[0-9]{1,20}', run_id):
-              raise SystemExit('Source run ID must be a decimal integer.')
-          if os.environ['GITHUB_REF'] != 'refs/heads/main':
-              raise SystemExit('Publish this preview from the main branch.')
-          def api(path):
-              return json.loads(subprocess.check_output(['gh', 'api', path]))
-          if api(f'repos/{repository}').get('private') is not True:
-              raise SystemExit('The preview release requires a private repository.')
-          run = api(f'repos/{repository}/actions/runs/{run_id}')
-          if (run.get('status') != 'completed' or run.get('conclusion') != 'success'
-                  or run.get('name') != 'Build unsigned iPhone preview'
-                  or run.get('head_branch') != 'main'
-                  or run.get('path') != '.github/workflows/device-preview.yml'
-                  or run.get('repository', {}).get('full_name') != repository):
-              raise SystemExit('Source run is not a successful main-branch device preview build.')
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
-              output.write(f"source_sha={run['head_sha']}\n")
-          print(json.dumps({'source_run_id': run_id, 'source_sha': run['head_sha'], 'private': True}))
-          PY
-      - name: Download the existing verified device IPA
+        run: python3 .github/scripts/publish-preview.py prepare
+      - name: Download only the verified run's exact IPA candidate
         uses: actions/download-artifact@v4
         with:
-          name: Atlas-unsigned-device-IPA
-          path: artifacts/release-preview
           github-token: ${{ github.token }}
-          run-id: ${{ inputs.source_run_id }}
-      - name: Validate IPA and publish private prerelease
-        env:
-          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
-        run: |
-          python3 - <<'PY'
-          import hashlib, json, os, pathlib, plistlib, struct, subprocess, zipfile
-          repository = os.environ['GITHUB_REPOSITORY']
-          tag = os.environ['RELEASE_TAG']
-          target = os.environ['SOURCE_SHA']
-          ipa = pathlib.Path('artifacts/release-preview/Atlas-unsigned.ipa')
-          if not ipa.is_file() or ipa.is_symlink():
-              raise SystemExit('The source artifact has no regular IPA file.')
-          with zipfile.ZipFile(ipa) as archive:
-              names = archive.namelist()
-              if len(names) != len(set(names)) or archive.testzip() is not None:
-                  raise SystemExit('IPA ZIP integrity validation failed.')
-              info = plistlib.loads(archive.read('Payload/Atlas.app/Info.plist'))
-              expected = {'CFBundleIdentifier': 'com.atlasfield.app',
-                          'CFBundleShortVersionString': '0.3.1', 'CFBundleVersion': '4',
-                          'CFBundlePackageType': 'APPL', 'CFBundleSupportedPlatforms': ['iPhoneOS']}
-              if any(info.get(key) != value for key, value in expected.items()):
-                  raise SystemExit('IPA identity, version, or device platform differs from this preview.')
-              executable = info.get('CFBundleExecutable')
-              if not isinstance(executable, str) or not executable or executable in ('.', '..') or '/' in executable or '\\' in executable:
-                  raise SystemExit('IPA has an invalid executable name.')
-              binary = archive.read(f'Payload/Atlas.app/{executable}')
-              if len(binary) < 32:
-                  raise SystemExit('IPA executable has no Mach-O header.')
-              magic, cpu, subtype, kind, count, command_bytes, flags, reserved = struct.unpack_from('<IiiIIIII', binary)
-              if magic != 0xfeedfacf or cpu != 0x0100000c or kind != 2:
-                  raise SystemExit('IPA executable must be an arm64 MH_EXECUTE device binary.')
-              offset = 32
-              end = offset + command_bytes
-              if end > len(binary):
-                  raise SystemExit('Mach-O command table is truncated.')
-              ios_platform = False
-              for _ in range(count):
-                  if offset + 8 > end:
-                      raise SystemExit('Mach-O load command is truncated.')
-                  command, size = struct.unpack_from('<II', binary, offset)
-                  if size < 8 or offset + size > end:
-                      raise SystemExit('Mach-O load command has invalid bounds.')
-                  if command == 0x32:
-                      if size < 24 or struct.unpack_from('<I', binary, offset + 8)[0] != 2:
-                          raise SystemExit('Executable build platform is not iOS.')
-                      ios_platform = True
-                  offset += size
-              if offset != end or not ios_platform:
-                  raise SystemExit('Executable has no valid iOS build platform.')
-          digest = hashlib.sha256(ipa.read_bytes()).hexdigest()
-          checksum = ipa.with_name(ipa.name + '.sha256')
-          checksum.write_text(f'{digest}  {ipa.name}\n', encoding='ascii')
-          notes = pathlib.Path('docs/release-preview-notes.md')
-          if not notes.is_file() or notes.is_symlink():
-              raise SystemExit('Checked-in preview release notes are missing.')
-          def call(*arguments):
-              return subprocess.check_output(['gh', *arguments], text=True)
-          if json.loads(call('api', f'repos/{repository}')).get('private') is not True:
-              raise SystemExit('Repository privacy changed; publication stopped.')
-          refs = json.loads(call('api', f'repos/{repository}/git/matching-refs/tags/{tag}'))
-          tag_refs = [ref for ref in refs if ref.get('ref') == f'refs/tags/{tag}']
-          if len(tag_refs) > 1:
-              raise SystemExit('Git tag is ambiguous.')
-          if tag_refs:
-              obj = tag_refs[0]['object']
-              for _ in range(8):
-                  if obj.get('type') != 'tag':
-                      break
-                  obj = json.loads(call('api', f"repos/{repository}/git/tags/{obj['sha']}"))['object']
-              if obj.get('type') != 'commit' or obj.get('sha') != target:
-                  raise SystemExit('Existing Git tag points to a different commit.')
-          # Listing releases avoids treating an authentication or network failure as a missing tag.
-          pages = json.loads(call('api', '--paginate', '--slurp', f'repos/{repository}/releases?per_page=100'))
-          releases = [release for page in pages for release in page if release.get('tag_name') == tag]
-          if len(releases) > 1:
-              raise SystemExit('Release tag is ambiguous.')
-          if releases:
-              release = releases[0]
-              if release.get('draft') or release.get('prerelease') is not True or release.get('target_commitish') != target:
-                  raise SystemExit('Existing tag is not this workflow commit\'s preview prerelease.')
-          else:
-              call('release', 'create', tag, '--repo', repository, '--target', target,
-                   '--prerelease', '--title', 'Atlas 0.3.1 — guided capture and verified 3D rendering', '--notes-file', str(notes))
-              release = json.loads(call('api', f'repos/{repository}/releases/tags/{tag}'))
-          if release.get('tag_name') != tag or release.get('draft') or release.get('prerelease') is not True:
-              raise SystemExit('Unexpected release state; asset upload stopped.')
-          assets = {asset['name']: asset for asset in release.get('assets', [])}
-          for file in (ipa, checksum):
-              file_digest = hashlib.sha256(file.read_bytes()).hexdigest()
-              if file.name in assets:
-                  if assets[file.name].get('digest') != f'sha256:{file_digest}':
-                      raise SystemExit(f'Existing asset {file.name} differs; refusing to replace it.')
-              else:
-                  call('release', 'upload', tag, str(file), '--repo', repository)
-          print(json.dumps({'release_url': release['html_url'], 'source_run_id': os.environ['SOURCE_RUN_ID'],
-                            'source_sha': os.environ['SOURCE_SHA'], 'file': ipa.name, 'bytes': ipa.stat().st_size,
-                            'sha256': digest, 'bundle_id': info['CFBundleIdentifier'], 'version': '0.3.1',
-                            'build': '4', 'platform': 'iPhoneOS', 'architecture': 'arm64', 'signed': False}))
-          PY
+          repository: alinkarelia/atlasios
+          run-id: ${{ steps.source.outputs.source_run_id }}
+          name: Atlas-unsigned-device-IPA-candidate
+          path: artifacts/publish/candidate
+      - name: Check out the exact verified source for the source archive
+        uses: actions/checkout@v4
+        with:
+          repository: alinkarelia/atlasios
+          ref: ${{ steps.source.outputs.source_sha }}
+          path: verified-source
+          persist-credentials: false
+      - name: Validate files and publish the complete reviewed prerelease
+        run: python3 .github/scripts/publish-preview.py publish
+      - name: Retain downloaded candidate and staged files on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reviewed-preview-publication-files
+          path: artifacts/publish/
+          if-no-files-found: ignore
+          retention-days: 14
