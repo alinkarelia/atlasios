@@ -204,6 +204,65 @@ def verify_context():
     return run_id, source_sha, record
 
 
+def validate_app_icons(archive, app, info):
+    """Check processed plist declarations against the actual packaged PNGs."""
+    members = set(archive.namelist())
+    catalog = app + 'Assets.car'
+    require(catalog in members and archive.getinfo(catalog).file_size > 0,
+            'Packaged application is missing its compiled Assets.car.')
+    pngs = {name[len(app):]: name for name in members
+            if name.startswith(app) and '/' not in name[len(app):] and name.endswith('.png')}
+
+    def png_dimensions(name):
+        require(0 < archive.getinfo(name).file_size <= 8 * 1024 * 1024,
+                'Packaged AppIcon PNG has an invalid file size.')
+        data = archive.read(name)
+        require(data[:8] == b'\x89PNG\r\n\x1a\n', 'Packaged AppIcon resource is not a PNG.')
+        offset = 8
+        # Xcode can prefix an optimized iOS PNG with Apple's CgBI chunk.
+        while offset + 12 <= len(data):
+            length = struct.unpack_from('>I', data, offset)[0]
+            kind = data[offset + 4:offset + 8]
+            require(offset + 12 + length <= len(data), 'Truncated packaged AppIcon PNG chunk.')
+            if kind == b'IHDR':
+                require(length == 13, 'Invalid packaged AppIcon PNG dimensions header.')
+                width, height = struct.unpack_from('>II', data, offset + 8)
+                require(width > 0 and width == height, 'Packaged AppIcon PNG must be square.')
+                return width, height
+            require(kind == b'CgBI', 'Packaged AppIcon PNG is missing its dimensions header.')
+            offset += length + 12
+        raise SystemExit('Packaged AppIcon PNG is missing its dimensions header.')
+
+    def primary_icons(key, idiom):
+        icons = info.get(key)
+        primary = icons.get('CFBundlePrimaryIcon') if isinstance(icons, dict) else None
+        require(isinstance(primary, dict) and primary.get('CFBundleIconName') == 'AppIcon',
+                f'Packaged application has no primary AppIcon declarations for {idiom}.')
+        declared = primary.get('CFBundleIconFiles')
+        require(isinstance(declared, list) and bool(declared),
+                f'Packaged application declares no AppIcon PNG files for {idiom}.')
+        found = {}
+        for value in declared:
+            require(isinstance(value, str) and value not in ('', '.', '..')
+                    and '/' not in value and '\\' not in value,
+                    'Invalid packaged AppIcon file declaration.')
+            base = value[:-4] if value.endswith('.png') else value
+            pattern = re.compile(re.escape(base) + r'(?:@[123]x)?(?:~(?:iphone|ipad))?\.png')
+            opposite = '~ipad.png' if idiom == 'iPhone' else '~iphone.png'
+            matches = [name for name in pngs if pattern.fullmatch(name) and not name.endswith(opposite)]
+            require(bool(matches), f'An AppIcon file declared for {idiom} is missing from the package.')
+            for name in matches:
+                found[name] = png_dimensions(pngs[name])
+        return found
+
+    phone = primary_icons('CFBundleIcons', 'iPhone')
+    require((180, 180) in phone.values(), 'Packaged application is missing its 180x180 iPhone AppIcon PNG.')
+    tablet = primary_icons('CFBundleIcons~ipad', 'iPad') if 2 in info.get('UIDeviceFamily', []) else {}
+    return {'asset': 'AppIcon', 'catalog': 'Assets.car',
+            'iPhone_PNGs': {name: list(size) for name, size in sorted(phone.items())},
+            'iPad_PNGs': {name: list(size) for name, size in sorted(tablet.items())}}
+
+
 def validate_ipa(ipa, source_sha, record):
     _, _, version, build, _ = release_configuration(record)
     require(ipa.is_file() and not ipa.is_symlink() and 0 < ipa.stat().st_size <= 512 * 1024 * 1024,
@@ -235,6 +294,7 @@ def validate_ipa(ipa, source_sha, record):
         require(all(info.get(key) == value for key, value in identity.items())
                 and info.get('MinimumOSVersion') in ('17.0', '17.0.0')
                 and 1 in info.get('UIDeviceFamily', []), 'IPA identity or iPhone platform does not match.')
+        icons = validate_app_icons(archive, app, info)
         executable = info.get('CFBundleExecutable')
         require(isinstance(executable, str) and executable not in ('', '.', '..')
                 and pathlib.PurePosixPath(executable).name == executable and '\\' not in executable,
@@ -261,7 +321,7 @@ def validate_ipa(ipa, source_sha, record):
                 build_count += 1
             offset += size
         require(offset == end and build_count == 1, 'Missing or ambiguous physical-iOS build version.')
-    return {'sha256': sha256(ipa), 'bytes': ipa.stat().st_size, 'source_sha': source_sha}
+    return {'sha256': sha256(ipa), 'bytes': ipa.stat().st_size, 'source_sha': source_sha, 'icons': icons}
 
 
 def git(source, *arguments):
