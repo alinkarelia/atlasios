@@ -15,7 +15,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: atlas-verification-${{ github.ref }}
+  # Keep diagnostics for an earlier candidate while checking its fixed source.
+  # Duplicate runs of the same commit still replace each other.
+  group: atlas-verification-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: true
 
 jobs:
