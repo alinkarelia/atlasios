@@ -24,7 +24,7 @@ enum PlanPDFExporter {
             UIBezierPath(roundedRect: drawingRect, cornerRadius: 12).fill()
             pdf.cgContext.saveGState()
             pdf.cgContext.clip(to: drawingRect)
-            let viewport = PlanViewport(plan: plan, rect: drawingRect)
+            let viewport = PlanViewport(plan: plan, rect: drawingRect, inset: 64)
             for room in plan.rooms {
                 let path = UIBezierPath()
                 path.usesEvenOddFillRule = true

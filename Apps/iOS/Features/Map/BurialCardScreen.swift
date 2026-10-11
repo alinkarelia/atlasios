@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import PhotosUI
+import UIKit
 import AtlasCore
 
 /// A grave observation, burial confirmation and personal identity are three
@@ -94,6 +95,7 @@ struct BurialCardScreen: View {
                 }
             }
             .disabled(metadataIssue != nil)
+            .scrollDismissesKeyboard(.interactively)
             .scrollContentBackground(.hidden).background(Color.atlasCanvas).foregroundStyle(Color.atlasInk)
             .navigationTitle(isNew ? "Новое захоронение" : "Карточка захоронения")
             .navigationBarTitleDisplayMode(.inline)
@@ -105,6 +107,12 @@ struct BurialCardScreen: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Сохранить") { Task { await save() } }.disabled(!canSave)
                         .accessibilityIdentifier("burial.save")
+                }
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Готово") {
+                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                    }.accessibilityIdentifier("burial.keyboardDone")
                 }
             }
             .interactiveDismissDisabled(changed || busy)

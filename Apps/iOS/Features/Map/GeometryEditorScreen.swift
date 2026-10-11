@@ -106,6 +106,9 @@ struct GeometryEditorScreen: View {
                     resetDraft()
                     Task { await refresh() }
                 }
+                // A new opening owns a new draft. Keep this presentation's
+                // identity stable while typing, rather than reusing card State.
+                .id(request.id)
         }
         .sheet(isPresented: $showSearch, onDismiss: { search.cancel() }) {
             MapPlaceSearchScreen(search: search, region: visibleRegion) { place in
@@ -357,7 +360,15 @@ struct GeometryEditorScreen: View {
         geographicDraft.append(point)
         if draftKind == .point { reviewDraft() }
     }
-    private func openExisting(_ feature: AtlasFeature) { editor = MapFeatureEditorRequest(feature: feature, isNew: false) }
+    private func openExisting(_ feature: AtlasFeature) {
+        // Lazy map/card views may retain an older button capture. Resolve the
+        // selected identity against the current saved snapshot before editing.
+        guard let current = features.first(where: { $0.id == feature.id }) else {
+            localIssue = "Карточка больше не доступна. Обновите данные проекта."
+            return
+        }
+        editor = MapFeatureEditorRequest(feature: current, isNew: false)
+    }
     private func recenter(_ point: GeographicCoordinate, span: Double) {
         position = .region(MKCoordinateRegion(center: SurveyMapStyle.coordinate(point),
             span: MKCoordinateSpan(latitudeDelta: span, longitudeDelta: span)))

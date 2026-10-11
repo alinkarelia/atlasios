@@ -340,9 +340,16 @@ final class AtlasUITests: XCTestCase {
         let inscriptionField = element("burial.inscription", in: app)
         scrollToControl(inscriptionField, in: app)
         inscriptionField.tap(); inscriptionField.typeText(inscription)
+        let keyboardDone = app.buttons["burial.keyboardDone"]
+        XCTAssertTrue(keyboardDone.waitForExistence(timeout: 10), "The card must provide a visible way to finish multiline text entry")
+        keyboardDone.tap()
+        waitForAbsence(app.keyboards.firstMatch)
         let notesField = element("burial.notes", in: app)
         scrollToControl(notesField, in: app)
         notesField.tap(); notesField.typeText(comment)
+        XCTAssertTrue(keyboardDone.waitForExistence(timeout: 10))
+        keyboardDone.tap()
+        waitForAbsence(app.keyboards.firstMatch)
         tap("burial.save", in: app)
         waitForAbsence(element("burial.save", in: app))
 
@@ -511,18 +518,31 @@ final class AtlasUITests: XCTestCase {
                        "Tapping the dimension switch thumb must restore the drawing annotations")
         XCTAssertEqual(dimensions.value as? String, "1")
         screenshot("22b-plan-dimensions", app: app)
-        scrollToControl(app.staticTexts["Учебная комната"].firstMatch, in: app)
-        XCTAssertTrue(app.staticTexts["Учебная комната"].exists,
+        let panMode = app.switches["floorPlan.panMode"]
+        scrollToControl(panMode, in: app)
+        XCTAssertEqual(panMode.value as? String, "0",
+                       "The drawing must allow page scrolling until the operator explicitly enables panning")
+        let room = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "floorPlan.room.", "Учебная комната")).firstMatch
+        scrollToControl(room, in: app)
+        XCTAssertTrue(room.exists && room.label.contains("Учебная комната"),
                       "The room must still exist after the presentation-only dimension changes")
+        let roomIdentifier = room.identifier
 
         app.terminate()
         app.launch()
         XCTAssertTrue(app.staticTexts["Демо · этажи здания"].firstMatch.waitForExistence(timeout: 15))
         tap("projects.openSelected", in: app)
         scrollAndTap("projects.buildingPlans", in: app)
-        scrollToControl(app.buttons["building.plan.A71A5000-1234-4000-8000-000000000203"].firstMatch, in: app)
+        let reopenedPlan = app.buttons["building.plan.A71A5000-1234-4000-8000-000000000203"].firstMatch
+        scrollToControl(reopenedPlan, in: app)
         XCTAssertTrue(element("building.floor.1", in: app).exists,
                       "Floor grouping must survive restarting the process")
+        reopenedPlan.tap()
+        XCTAssertTrue(app.staticTexts["Учебный обмер · этаж 1"].firstMatch.waitForExistence(timeout: 15))
+        let restoredRoom = app.buttons[roomIdentifier].firstMatch
+        scrollToControl(restoredRoom, in: app)
+        XCTAssertTrue(restoredRoom.exists && restoredRoom.label.contains("Учебная комната"),
+                      "The same saved room UUID and name must survive restarting the process")
     }
 
     @MainActor

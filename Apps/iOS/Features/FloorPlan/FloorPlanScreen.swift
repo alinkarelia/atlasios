@@ -33,6 +33,7 @@ struct FloorPlanScreen: View {
     @GestureState private var drag: CGSize = .zero
     @State private var isSaving = false
     @State private var showDimensions = true
+    @State private var canPanPlan = false
 
     init(model: AtlasAppModel, project: AtlasProject, initialPlanID: UUID? = nil) {
         self.model = model; self.project = project; self.initialPlanID = initialPlanID
@@ -55,15 +56,17 @@ struct FloorPlanScreen: View {
                         .gesture(DragGesture().updating($drag) { value, state, _ in state = value.translation }.onEnded { value in
                             pan.width += value.translation.width
                             pan.height += value.translation.height
-                        })
+                        }, including: canPanPlan ? .gesture : .none)
                         .accessibilityLabel("План: \(plan.rooms.count) комнат, \(plan.walls.count) стен. Геометрия в локальных метрах.")
+                        .accessibilityHint(canPanPlan ? "Перетаскивайте чертёж. Выключите перемещение для прокрутки страницы." : "Проведите вверх для списка комнат и стен.")
                     HStack {
                         Button("Уменьшить", systemImage: "minus.magnifyingglass") { zoom = max(0.5, zoom / 1.25) }.labelStyle(.iconOnly)
                         Slider(value: $zoom, in: 0.5...4).accessibilityLabel("Масштаб плана")
                         Button("Увеличить", systemImage: "plus.magnifyingglass") { zoom = min(4, zoom * 1.25) }.labelStyle(.iconOnly)
-                        Button("Вписать") { zoom = 1; pan = .zero }
+                        Button("Вписать") { zoom = 1; pan = .zero; canPanPlan = false }
                     }
                     .buttonStyle(.borderless)
+                    Toggle("Перемещать план", isOn: $canPanPlan).accessibilityIdentifier("floorPlan.panMode")
                     editingActions(plan)
                     roomsSection(plan)
                     wallsSection(plan)
@@ -105,7 +108,7 @@ struct FloorPlanScreen: View {
             }
         }
         .sheet(item: $share) { PlanSharingController(url: $0.url) }
-        .onChange(of: selectedID) { _, _ in zoom = 1; pan = .zero }
+        .onChange(of: selectedID) { _, _ in zoom = 1; pan = .zero; canPanPlan = false }
         .alert("План", isPresented: Binding(get: { issue != nil }, set: { if !$0 { issue = nil } })) {
             Button("Понятно") { issue = nil }
         } message: { Text(issue ?? "") }
@@ -160,6 +163,10 @@ struct FloorPlanScreen: View {
                                 .font(.caption).foregroundStyle(Color.atlasMuted)
                         }.frame(maxWidth: .infinity, alignment: .leading)
                     }.buttonStyle(.plain)
+                        .accessibilityIdentifier("floorPlan.room.\(room.id.uuidString)")
+                        .accessibilityLabel(room.name)
+                        .accessibilityValue("\((try? PolygonGeometry.area(of: room.boundary))?.formatted(.number.precision(.fractionLength(2))) ?? "—") м² · \(room.boundary.vertices.count) вершин")
+                        .accessibilityHint("Изменить название и контур комнаты")
                     Button("Удалить комнату", systemImage: "trash", role: .destructive) { deletion = .room(room.id) }.labelStyle(.iconOnly)
                 }.padding(16).background(.background, in: RoundedRectangle(cornerRadius: 16))
             }
@@ -245,7 +252,7 @@ private struct PlanDrawingView: View {
     let showDimensions: Bool
     var body: some View {
         Canvas { context, size in
-            let viewport = PlanViewport(plan: plan, rect: CGRect(origin: .zero, size: size), zoom: zoom, offset: offset)
+            let viewport = PlanViewport(plan: plan, rect: CGRect(origin: .zero, size: size), zoom: zoom, offset: offset, inset: 64)
             let step = pow(10, floor(log10(max(viewport.extent / 12, 0.1))))
             let range = Int(ceil(viewport.extent / step)) + 2
             if range < 100 {

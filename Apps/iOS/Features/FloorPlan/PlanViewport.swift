@@ -7,7 +7,7 @@ struct PlanViewport {
     let center: MetricPoint2D
     let extent: Double
     let scale: CGFloat
-    init(plan: AtlasFloorPlan, rect: CGRect, zoom: Double = 1, offset: CGSize = .zero) {
+    init(plan: AtlasFloorPlan, rect: CGRect, zoom: Double = 1, offset: CGSize = .zero, inset: CGFloat = 32) {
         self.rect = rect.offsetBy(dx: offset.width, dy: offset.height)
         let points = plan.rooms.flatMap { $0.boundary.vertices + $0.boundary.holes.flatMap { $0 } }
             + plan.walls.flatMap { [$0.start, $0.end] }
@@ -18,7 +18,7 @@ struct PlanViewport {
         center = MetricPoint2D(x: minX / 2 + maxX / 2, y: minY / 2 + maxY / 2)
         let width = max(1, maxX - minX), height = max(1, maxY - minY)
         extent = max(width, height)
-        scale = min(max(1, rect.width - 64) / CGFloat(width), max(1, rect.height - 64) / CGFloat(height)) * CGFloat(zoom)
+        scale = min(max(1, rect.width - inset * 2) / CGFloat(width), max(1, rect.height - inset * 2) / CGFloat(height)) * CGFloat(zoom)
     }
     func point(_ point: MetricPoint2D) -> CGPoint {
         CGPoint(x: rect.midX + CGFloat(point.x - center.x) * scale,
