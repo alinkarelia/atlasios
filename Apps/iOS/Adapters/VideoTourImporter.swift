@@ -273,7 +273,7 @@ actor VideoTourImporter {
     private func expectedTransform(_ actual: CGAffineTransform, document: CaptureVideoDocument) -> Bool {
         guard let values = VideoTourPolicy.recordedTrackTransform(document) else { return false }
         return zip([actual.a, actual.b, actual.c, actual.d, actual.tx, actual.ty],
-                   values.map(CGFloat.init))
+                   values.map { CGFloat($0) })
             .allSatisfy { abs($0 - $1) < 0.001 }
     }
 }
