@@ -1,6 +1,6 @@
 # Проверка TerraView 0.5.0 (7)
 
-Все шесть заданий [CI run 38170400797](https://github.com/alinkarelia/atlasios/actions/runs/38170400797) завершились успешно на исходном commit `0764ba0bd4551c429c1a5273e598b88234b1234e`. Ручная визуальная приёмка текущей сборки завершена; публикация подготовлена и ожидает проверки загруженных Release assets.
+Все шесть заданий [CI run 38170400797](https://github.com/alinkarelia/atlasios/actions/runs/38170400797) завершились успешно на исходном commit `0764ba0bd4551c429c1a5273e598b88234b1234e`. Ручная визуальная приёмка текущей сборки завершена. **[TerraView 0.5.0 (7)](https://github.com/alinkarelia/atlasios/releases/tag/v0.5.0-preview.7) опубликован 2026-10-11 в 20:29:44 UTC** через [publisher run 38172298870](https://github.com/alinkarelia/atlasios/actions/runs/38172298870), успешная попытка 2. Все пять опубликованных assets сверены по размеру и SHA-256 с проверенными файлами.
 
 TerraView и AppIcon, бесплатные инструменты без Business/StoreKit, переработанный LiDAR, направляемая съёмка объектов, измерения/срез/PNG в 3D и новые форматы экспорта входят в эту версию. x0 и API семейного архива отложены до следующей сборки.
 
@@ -37,9 +37,9 @@ TerraView и AppIcon, бесплатные инструменты без Busines
 - IPA: `Atlas-unsigned.ipa`, **8,390,460 байт**, SHA-256 `c66b07df266c8e656f87bc78ddbf6686e36fb9924b36ccbcc924ed07b9c04c2c`.
 - Исходники: `atlas-source.zip`, **5,353,169 байт**, SHA-256 `44a6cd66ca307af51b79474e8326e7a52fb6fc4e5de34680e159a4443b864a28`; все 148 файлов сверены с исходным Git tree, включая байты каждого blob.
 - Display name: TerraView; версия 0.5.0, build 7; исходный Bundle ID `com.atlasfield.app`.
-- Release: `v0.5.0-preview.7`, ID 409902085, target `0764ba0bd4551c429c1a5273e598b88234b1234e`. Публикация ожидает завершения publisher.
+- Release: `v0.5.0-preview.7`, ID 409902085, target `0764ba0bd4551c429c1a5273e598b88234b1234e`. Тег точно указывает на проверенный исходник; draft выключен, prerelease включён.
 
-Публикационный workflow повторно проверяет точный run/SHA, все шесть jobs, актуальные screenshot digests, hash IPA, иконки, arm64/iPhoneOS, отсутствие подписи и содержимое архива исходников. Пять файлов — IPA, его SHA, исходники, их SHA и verification.json — должны совпасть по размеру и digest до перевода draft в публичный prerelease. [Страница выпуска](https://github.com/alinkarelia/atlasios/releases/tag/v0.5.0-preview.7) и [IPA](https://github.com/alinkarelia/atlasios/releases/download/v0.5.0-preview.7/Atlas-unsigned.ipa) станут доступны после публикации.
+Публикационный workflow повторно проверяет точный run/SHA, все шесть jobs, актуальные screenshot digests, hash IPA, иконки, arm64/iPhoneOS, отсутствие подписи и содержимое архива исходников. Пять файлов — IPA, его SHA, исходники, их SHA и verification.json — должны совпасть по размеру и digest до перевода draft в публичный prerelease. [Страница выпуска](https://github.com/alinkarelia/atlasios/releases/tag/v0.5.0-preview.7) · [Скачать IPA](https://github.com/alinkarelia/atlasios/releases/download/v0.5.0-preview.7/Atlas-unsigned.ipa) · [Фактический verification.json](https://github.com/alinkarelia/atlasios/releases/download/v0.5.0-preview.7/verification.json).
 
 ## Аппаратные ограничения
 

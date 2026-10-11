@@ -2,7 +2,7 @@
 
 TerraView заменяет Atlas. Исходный Bundle ID остаётся `com.atlasfield.app`, чтобы обновление могло сохранить проекты. Приложение бесплатно; Mac и платная Apple Developer Program для установки через Sideloadly не нужны.
 
-Версия **0.5.0 (7)** прошла CI и визуальную приёмку; публикация подготовлена. После публикации скачайте [Atlas-unsigned.ipa](https://github.com/alinkarelia/atlasios/releases/download/v0.5.0-preview.7/Atlas-unsigned.ipa) со [страницы TerraView](https://github.com/alinkarelia/atlasios/releases/tag/v0.5.0-preview.7). Размер — **8 390 460 байт**, SHA-256: `c66b07df266c8e656f87bc78ddbf6686e36fb9924b36ccbcc924ed07b9c04c2c`. [Результаты проверки](verification.md).
+Версия **0.5.0 (7)** опубликована после CI и визуальной приёмки. Скачайте [Atlas-unsigned.ipa](https://github.com/alinkarelia/atlasios/releases/download/v0.5.0-preview.7/Atlas-unsigned.ipa) со [страницы TerraView](https://github.com/alinkarelia/atlasios/releases/tag/v0.5.0-preview.7). Размер — **8 390 460 байт**, SHA-256: `c66b07df266c8e656f87bc78ddbf6686e36fb9924b36ccbcc924ed07b9c04c2c`. [Результаты проверки](verification.md).
 
 ## Обновить установленный Atlas
 
