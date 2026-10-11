@@ -5,7 +5,7 @@
 ## Обновление
 
 1. В установленной Atlas экспортируйте нужные проекты в ZIP и сохраните вне приложения.
-2. Скачайте `Atlas-unsigned.ipa` из [готового предварительного выпуска](https://github.com/alinkarelia/atlasios/releases). Если выпуска ещё нет, сборка и проверка продолжаются.
+2. Скачайте [Atlas 0.4.0 (5) — `Atlas-unsigned.ipa`](https://github.com/alinkarelia/atlasios/releases/download/v0.4.0-preview.5/Atlas-unsigned.ipa). [Результаты проверки и контрольные суммы](https://github.com/alinkarelia/atlasios/releases/tag/v0.4.0-preview.5).
 3. Установите [Sideloadly с официального сайта](https://sideloadly.io/). Требуемые версии iTunes/iCloud для Windows и их ссылки указаны там.
 4. Подключите iPhone по USB, разблокируйте его и подтвердите доверие компьютеру.
 5. В Sideloadly выберите iPhone, прежний Apple Account и прежние параметры Bundle ID. Исходный идентификатор Atlas: `com.atlasfield.app`; если при первой установке он был изменён, повторите то же значение.
