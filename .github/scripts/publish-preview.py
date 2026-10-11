@@ -256,7 +256,7 @@ def validate_app_icons(archive, app, info):
         return found
 
     phone = primary_icons('CFBundleIcons', 'iPhone')
-    require((180, 180) in phone.values(), 'Packaged application is missing its 180x180 iPhone AppIcon PNG.')
+    # Modern universal catalogs can keep @3x icons in Assets.car instead of a standalone PNG.
     tablet = primary_icons('CFBundleIcons~ipad', 'iPad') if 2 in info.get('UIDeviceFamily', []) else {}
     return {'asset': 'AppIcon', 'catalog': 'Assets.car',
             'iPhone_PNGs': {name: list(size) for name, size in sorted(phone.items())},

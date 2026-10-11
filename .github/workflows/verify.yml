@@ -127,7 +127,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: device-build-results
-          path: artifacts/device-preview/*.xcresult
+          path: |
+            artifacts/device-preview/*.xcresult
+            artifacts/device-preview/app-icon-renditions.json
           if-no-files-found: ignore
           retention-days: 7
 

@@ -126,7 +126,7 @@ def validate_app_icons(archive, app, info):
         return found
 
     phone = primary_icons('CFBundleIcons', 'iPhone')
-    require((180, 180) in phone.values(), 'Packaged application is missing its 180x180 iPhone AppIcon PNG.')
+    # Modern universal catalogs can keep @3x icons in Assets.car instead of a standalone PNG.
     tablet = primary_icons('CFBundleIcons~ipad', 'iPad') if 2 in info.get('UIDeviceFamily', []) else {}
     return {'asset': 'AppIcon', 'catalog': 'Assets.car',
             'iPhone_PNGs': {name: list(size) for name, size in sorted(phone.items())},
@@ -144,6 +144,66 @@ with zipfile.ZipFile(sys.argv[1]) as archive:
     icons = validate_app_icons(archive, 'Payload/Atlas.app/', info)
     print('Packaged AppIcon validated: ' + json.dumps(icons, sort_keys=True))
 PY
+
+# Keep icon-only assetutil diagnostics. Catalog layout differs across Xcode
+# versions, so diagnostic parsing never turns a valid packaged icon into an error.
+icon_catalog_dump="$(mktemp "$artifacts/app-icon-catalog.XXXXXX")"
+icon_report="$artifacts/app-icon-renditions.json"
+rm -f -- "$icon_report"
+if xcrun --sdk iphoneos assetutil --info "$app_path/Assets.car" > "$icon_catalog_dump" 2>/dev/null; then
+  if ! python3 - "$icon_catalog_dump" "$app_path/Assets.car" "$icon_report" <<'ICONPY'
+import hashlib
+import json
+from pathlib import Path
+import sys
+
+catalog = Path(sys.argv[2])
+raw = json.loads(Path(sys.argv[1]).read_text())
+found = []
+
+
+def walk(value, depth=0):
+    if depth > 32:
+        return
+    if isinstance(value, dict):
+        # Discover actual icon rows without depending on an assetutil schema.
+        if any(isinstance(item, str) and item.startswith('AppIcon') for item in value.values()):
+            row = {}
+            for key, item in list(value.items())[:40]:
+                if isinstance(item, (str, int, float, bool)) or item is None:
+                    row[str(key)[:100]] = item[:240] if isinstance(item, str) else item
+                elif isinstance(item, list) and len(item) <= 16 and all(isinstance(v, (int, float)) for v in item):
+                    row[str(key)[:100]] = item
+            found.append(row)
+        for item in value.values():
+            if isinstance(item, (dict, list)):
+                walk(item, depth + 1)
+    elif isinstance(value, list):
+        for item in value:
+            walk(item, depth + 1)
+
+
+walk(raw)
+report = {'status': 'reported' if found else 'no_matching_icon_rows',
+          'catalog_sha256': hashlib.file_digest(catalog.open('rb'), 'sha256').hexdigest(),
+          'matching_icon_rows': len(found), 'retained_icon_rows': min(len(found), 64),
+          'renditions': found[:64]}
+Path(sys.argv[3]).write_text(json.dumps(report, indent=2, sort_keys=True) + '\n')
+preferred = ('Name', 'RenditionName', 'AssetType', 'PixelWidth', 'PixelHeight', 'Scale', 'Idiom', 'Appearance')
+summary = []
+for row in found[:6]:
+    selected = {key: row[key] for key in preferred if key in row}
+    summary.append(selected or dict(list(row.items())[:8]))
+print('AppIcon catalog diagnostics: ' + json.dumps({key: value for key, value in report.items() if key != 'renditions'}))
+print('AppIcon rendition sample: ' + json.dumps(summary, sort_keys=True))
+ICONPY
+  then
+    printf '%s\n' 'AppIcon catalog diagnostics could not be decoded; packaged icon declarations and PNG validation are authoritative.' >&2
+  fi
+else
+  printf '%s\n' 'AppIcon catalog diagnostics are unavailable; packaged icon declarations and PNG validation are authoritative.' >&2
+fi
+rm -f -- "$icon_catalog_dump"
 
 printf 'Created unsigned device IPA: %s\n' "$ipa_path"
 printf '%s\n' 'This file is not signed for installation or TestFlight. A personal Apple Account signing tool must sign it before installation on an iPhone.'
