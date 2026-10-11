@@ -104,7 +104,7 @@ struct BurialPhotoDetailScreen: View {
                         if let onUseOCR {
                             Button("Взять текст в черновик надписи", systemImage: "text.badge.plus") {
                                 onUseOCR(ocr.text, photo.id); dismiss()
-                            }.buttonStyle(.borderedProminent).disabled(originalURL == nil)
+                            }.buttonStyle(.borderedProminent).foregroundStyle(Color.atlasAccentInk).disabled(originalURL == nil)
                         }
                         Text("Сверьте буквы и даты с оригиналом. Распознавание не подтверждает личность и не заполняет людей автоматически.")
                             .font(.footnote).foregroundStyle(Color.atlasMuted)

@@ -164,6 +164,8 @@ struct BuildingPlansScreen: View {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(index.floorName(floorIndex)).font(.title3.bold())
+                        .accessibilityAddTraits(.isHeader)
+                        .accessibilityIdentifier("building.floor.\(floorIndex)")
                     Text("Номер этажа: \(floorIndex) · \(floorPlans.count) обмеров · \(areaLabel(floorPlans))")
                         .font(.caption).foregroundStyle(Color.atlasMuted)
                 }
@@ -203,13 +205,14 @@ struct BuildingPlansScreen: View {
                 }.accessibilityIdentifier("building.floorOverview.\(floorIndex)")
             }
         }.padding(18).background(Color.atlasCard, in: RoundedRectangle(cornerRadius: 22))
-            .accessibilityIdentifier("building.floor.\(floorIndex)")
     }
 
     private func apartmentGroup(_ apartment: BuildingPlanApartment, plans: [AtlasFloorPlan]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Label(apartment.label, systemImage: "door.left.hand.closed").font(.headline)
+                    .accessibilityAddTraits(.isHeader)
+                    .accessibilityIdentifier("building.apartment.\(apartment.id.uuidString)")
                 Spacer()
                 Menu {
                     Button("Изменить", systemImage: "pencil") { editor = .apartment(apartment, isNew: false) }
@@ -225,7 +228,6 @@ struct BuildingPlansScreen: View {
                 ForEach(plans) { planRow($0) }
             }
         }.padding(14).background(Color.atlasCanvas.opacity(0.7), in: RoundedRectangle(cornerRadius: 16))
-            .accessibilityIdentifier("building.apartment.\(apartment.id.uuidString)")
     }
 
     private func planRow(_ plan: AtlasFloorPlan) -> some View {

@@ -87,6 +87,51 @@ private enum NamedSourceExportChecks {
         catch { destinationRejected=true }
         try check(destinationRejected,"Redirected Exports directory rejects")
         try check(Set(try manager.contentsOfDirectory(atPath:exports.path))==beforeNames,"Redirect cannot modify another export directory")
-        print("Named source export: 3 filesystem scenarios, \(checks) checks passed")
+        // Scenario 4: a real flat-file index reconstructs the selected original
+        // relative layout and independently known SHA-256, including AR poses.
+        let segmentID=UUID(), frameID=UUID(), captureID=UUID()
+        let segment=scan.appendingPathComponent("segments/"+segmentID.uuidString,isDirectory:true)
+        try manager.createDirectory(at:segment,withIntermediateDirectories:true)
+        let movie=segment.appendingPathComponent("video.mov"), poses=segment.appendingPathComponent("video.json")
+        try Data("abc".utf8).write(to:movie)
+        try Data("{\"frameID\":\"\(frameID.uuidString)\",\"poses\":[1,2,3]}".utf8).write(to:poses)
+        let manifest=scan.appendingPathComponent("manifest.json")
+        let relativeMovie="segments/\(segmentID.uuidString)/video.mov",relativePoses="segments/\(segmentID.uuidString)/video.json"
+        let header:[String:Any] = ["schemaVersion":1,"id":captureID.uuidString,"projectID":projectID.uuidString,
+            "status":"ready","createdAt":"2026-10-09T00:00:00Z",
+            "segments":[["id":segmentID.uuidString,"frameID":frameID.uuidString,"startedAt":"2026-10-10T23:59:59Z"]],
+            "completedAssets":[relativeMovie,relativePoses]]
+        try JSONSerialization.data(withJSONObject:header).write(to:manifest)
+        let result=try await actor.prepareResult(sources:[movie,poses,manifest],captureRoot:captures,
+            projectName:"Северное кладбище",projectID:projectID,sourceID:captureID,capturedAt:nil,manifestURL:manifest)
+        let indexObject=try JSONSerialization.jsonObject(with:Data(contentsOf:result.indexURL)) as! [String:Any]
+        let indexFiles=indexObject["files"] as! [[String:Any]], indexMovie=indexFiles[0]
+        try check(result.files.count==3 && result.manifestAliasURL==result.files.last,"Input order and manifest alias retained")
+        try check(result.indexURL.deletingLastPathComponent()==exports,"Index outside capture archive tree")
+        try check(indexFiles.map {$0["aliasFileName"] as! String}==result.files.map(\.lastPathComponent),"Index maps exact shared filenames")
+        try check(indexMovie["originalCaptureRelativePath"] as? String==relativeMovie,"Original manifest-relative movie path reconstructable")
+        try check(indexMovie["originalRelativePath"] as? String=="scan/"+relativeMovie,"Full Captures-root-relative path retained")
+        try check(indexMovie["sha256"] as? String=="ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad","Independent known SHA256 of exact shared abc bytes")
+        try check(indexMovie["byteCount"] as? Int==3,"Exact byte count retained")
+        try check((indexMovie["segmentID"] as? String)?.lowercased()==segmentID.uuidString.lowercased()
+                  && (indexMovie["frameID"] as? String)?.lowercased()==frameID.uuidString.lowercased(),"AR segment/frame identity retained")
+        try check(indexMovie["capturedAt"] as? Double==captureDate.timeIntervalSince1970*1000,"Original segment start is capture time")
+        try check((indexObject["exportedAt"] as? Double ?? 0)>captureDate.timeIntervalSince1970*1000,"Preparation time distinct from source time")
+        try check(indexFiles[1]["originalCaptureRelativePath"] as? String==relativePoses,"Pose sidecar relationship retained")
+        let unknownResult=try await actor.prepareResult(sources:[video],captureRoot:captures,
+            projectName:"A",projectID:projectID,sourceID:sourceID,capturedAt:nil)
+        let unknownObject=try JSONSerialization.jsonObject(with:Data(contentsOf:unknownResult.indexURL)) as! [String:Any]
+        let unknownFile=(unknownObject["files"] as! [[String:Any]])[0]
+        try check(unknownFile["capturedAt"]==nil && unknownFile["frameID"]==nil,"Unknown capture clock/frame are not fabricated")
+        try check(unknownResult.files[0].lastPathComponent.contains("capture-unknown_export-"),"Unknown source naming agrees with index")
+        let beforeBadIndex=Set(try manager.contentsOfDirectory(atPath:exports.path))
+        var wrongScope=false
+        do { _=try await actor.prepareResult(sources:[movie,manifest],captureRoot:captures,projectName:"A",
+            projectID:UUID(),sourceID:captureID,capturedAt:nil,manifestURL:manifest) }
+        catch { wrongScope=true }
+        try check(wrongScope,"Manifest from another project cannot authorize a share index")
+        try check(Set(try manager.contentsOfDirectory(atPath:exports.path))==beforeBadIndex,"Invalid index leaves previous exports untouched")
+        try check(try Data(contentsOf:movie)==Data("abc".utf8),"Index creation never changes original movie")
+        print("Named source export: 4 filesystem scenarios, \(checks) checks passed")
     }
 }

@@ -562,6 +562,13 @@ struct CaptureScreen: View {
             }
             await lidar.resume()
             guard !Task.isCancelled, startGeneration == generation else { return }
+            if lidar.state == .recording {
+                // A retry after a saved fragment resumes live capture. Keep
+                // the durable result visible until the camera really opens.
+                savedManifest = nil
+                shareableAssets = []
+                sharedManifest = nil
+            }
             lidar.updateAutomaticLocation(location.currentFix)
             refreshLocationActivity()
         }
@@ -660,6 +667,12 @@ struct CaptureScreen: View {
             Text(mode == .room ? "RoomPlan JSON и USDZ. Обмер хранится в собственных локальных координатах."
                               : "Исходные сетки и доступные модели каждого фрагмента. При включённом видео — запись камеры и положения кадров. Файлы доступны без интернета.")
                 .font(.subheadline).foregroundStyle(.white.opacity(0.65))
+            if !preparingShares, let sharedManifest, !shareableAssets.isEmpty {
+                ShareLink(items: shareableAssets + [sharedManifest]) {
+                    Label("Все материалы и привязки", systemImage: "square.and.arrow.up.on.square")
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(lime)
+                }
+            }
             ForEach(shareableAssets, id: \.self) { asset in
                 ShareLink(item: asset) {
                     Label(asset.lastPathComponent, systemImage: "square.and.arrow.up").font(.subheadline).foregroundStyle(lime)
@@ -946,23 +959,16 @@ struct CaptureScreen: View {
                 }
                 let dates = ISO8601DateFormatter()
                 let capturedAt = (header["createdAt"] as? String).flatMap(dates.date(from:))
-                let segments = header["segments"] as? [[String: Any]] ?? []
-                let exporter = NamedSourceExport()
-                var prepared: [URL] = []
-                for asset in originalAssets {
-                    try Task.checkCancellation()
-                    let parentID = UUID(uuidString: asset.deletingLastPathComponent().lastPathComponent)
-                    let segment = segments.first { ($0["id"] as? String).flatMap(UUID.init(uuidString:)) == parentID }
-                    let segmentTime = (segment?["startedAt"] as? String).flatMap(dates.date(from:))
-                    let files = try await exporter.prepare(sources: [asset], captureRoot: outputDirectory,
-                        projectName: project.name, projectID: project.id, sourceID: parentID ?? id,
-                        capturedAt: segmentTime ?? capturedAt)
-                    prepared.append(contentsOf: files)
+                guard let paths = header["completedAssets"] as? [String], paths.count <= 511 else {
+                    throw TeamError.rejected("Для этой съёмки слишком много отдельных файлов. Отправьте полный ZIP проекта из раздела экспорта.")
                 }
-                let metadata = try await exporter.prepare(sources: [manifest], captureRoot: outputDirectory,
-                    projectName: project.name, projectID: project.id, sourceID: id, capturedAt: capturedAt)
+                let exporter = NamedSourceExport()
+                let result = try await exporter.prepareResult(sources: originalAssets + [manifest], captureRoot: outputDirectory,
+                    projectName: project.name, projectID: project.id, sourceID: id, capturedAt: capturedAt,
+                    manifestURL: manifest)
                 guard !Task.isCancelled, shareGeneration == generation else { return }
-                shareableAssets = prepared; sharedManifest = metadata.first
+                shareableAssets = result.files.filter { $0 != result.manifestAliasURL } + [result.indexURL]
+                sharedManifest = result.manifestAliasURL
             } catch is CancellationError { }
             catch {
                 guard shareGeneration == generation else { return }
@@ -973,13 +979,15 @@ struct CaptureScreen: View {
     }
 
     private func exportedAssets(from manifest: URL) -> [URL] {
-        guard let data = try? Data(contentsOf: manifest),
+        guard let values = try? manifest.resourceValues(forKeys: [.fileSizeKey]),
+              let size = values.fileSize, size > 0, size <= 2 * 1_024 * 1_024,
+              let data = try? Data(contentsOf: manifest),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let paths = object["completedAssets"] as? [String] else { return [] }
+              let paths = object["completedAssets"] as? [String], paths.count <= 511 else { return [] }
         let root = manifest.deletingLastPathComponent().standardizedFileURL
         return paths.compactMap { path in
             let url = root.appendingPathComponent(path).standardizedFileURL
-            guard url.path.hasPrefix(root.path + "/"), ["obj", "usdz", "mov", "mp4"].contains(url.pathExtension),
+            guard url.path.hasPrefix(root.path + "/"), ["obj", "usdz", "mov", "mp4", "json"].contains(url.pathExtension.lowercased()),
                   FileManager.default.fileExists(atPath: url.path) else { return nil }
             return url
         }

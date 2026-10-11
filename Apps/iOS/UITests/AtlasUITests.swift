@@ -294,7 +294,12 @@ final class AtlasUITests: XCTestCase {
         let graveLayer = app.switches["map.layer.grave"]
         scrollToControl(graveLayer, in: app)
         XCTAssertEqual(graveLayer.value as? String, "1")
-        graveLayer.tap()
+        // SwiftUI exposes the complete labelled row as a Switch. Its centre
+        // is the label; tap the visible native toggle at the right of the row.
+        graveLayer.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        let hiddenLayer = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "0"), object: graveLayer)
+        XCTAssertEqual(XCTWaiter.wait(for: [hiddenLayer], timeout: 10), .completed,
+                       "The actual grave switch must turn off before checking its map cards")
         XCTAssertEqual(graveLayer.value as? String, "0")
         screenshot("20-map-layers", app: app)
         app.navigationBars["Слои карты"].buttons["Готово"].tap()
@@ -303,7 +308,10 @@ final class AtlasUITests: XCTestCase {
         tap("map.layers", in: app)
         let restoredLayer = app.switches["map.layer.grave"]
         scrollToControl(restoredLayer, in: app)
-        restoredLayer.tap()
+        restoredLayer.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        let shownLayer = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1"), object: restoredLayer)
+        XCTAssertEqual(XCTWaiter.wait(for: [shownLayer], timeout: 10), .completed,
+                       "The actual grave switch must turn on before checking its map cards")
         XCTAssertEqual(restoredLayer.value as? String, "1")
         app.navigationBars["Слои карты"].buttons["Готово"].tap()
         XCTAssertTrue(grave.waitForExistence(timeout: 10), "Restoring a layer must restore its saved map cards")
@@ -390,7 +398,11 @@ final class AtlasUITests: XCTestCase {
         let inactive = app.switches["map.showInactive"]
         XCTAssertTrue(inactive.waitForExistence(timeout: 10))
         XCTAssertEqual(inactive.value as? String, "0")
-        inactive.tap()
+        inactive.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        let inactiveShown = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1"), object: inactive)
+        XCTAssertEqual(XCTWaiter.wait(for: [inactiveShown], timeout: 10), .completed,
+                       "Show inactive must turn on before opening the rejected record")
+        XCTAssertEqual(inactive.value as? String, "1")
         app.navigationBars["Слои карты"].buttons["Готово"].tap()
         openMapCard("104", in: app)
         XCTAssertEqual(element("burial.status.summary", in: app).label, "Предположение отклонено")
@@ -405,7 +417,11 @@ final class AtlasUITests: XCTestCase {
         tap("map.layers", in: app)
         let restoredInactive = app.switches["map.showInactive"]
         XCTAssertEqual(restoredInactive.value as? String, "1")
-        restoredInactive.tap()
+        restoredInactive.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        let inactiveHidden = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "0"), object: restoredInactive)
+        XCTAssertEqual(XCTWaiter.wait(for: [inactiveHidden], timeout: 10), .completed,
+                       "Show inactive must turn off before checking the restored candidate")
+        XCTAssertEqual(restoredInactive.value as? String, "0")
         app.navigationBars["Слои карты"].buttons["Готово"].tap()
         openMapCard("104", in: app)
         XCTAssertEqual(element("burial.status.summary", in: app).label, "Возможное захоронение · нужна проверка",
@@ -452,14 +468,17 @@ final class AtlasUITests: XCTestCase {
         tap("projects.openSelected", in: app)
         scrollAndTap("projects.buildingPlans", in: app)
         XCTAssertTrue(element("building.catalog", in: app).waitForExistence(timeout: 15))
-        let secondPlan = element("building.plan.A71A5000-1234-4000-8000-000000000204", in: app)
+        let secondPlan = app.buttons["building.plan.A71A5000-1234-4000-8000-000000000204"].firstMatch
+        XCTAssertTrue(secondPlan.waitForExistence(timeout: 10),
+                      "The saved second-floor plan must expose its own navigation control")
         scrollToControl(secondPlan, in: app)
         XCTAssertTrue(element("building.floor.2", in: app).exists,
                       "A saved floorIndex must produce its actual floor group")
-        let firstPlan = element("building.plan.A71A5000-1234-4000-8000-000000000203", in: app)
+        let firstPlan = app.buttons["building.plan.A71A5000-1234-4000-8000-000000000203"].firstMatch
         scrollToControl(firstPlan, in: app)
         XCTAssertTrue(element("building.floor.1", in: app).exists)
-        XCTAssertTrue(app.staticTexts["Учебный обмер · этаж 1"].exists)
+        XCTAssertTrue(firstPlan.label.contains("Учебный обмер · этаж 1"),
+                      "The exact saved plan UUID must name its real first-floor plan")
         screenshot("22-building-plans", app: app)
         firstPlan.tap()
         XCTAssertTrue(app.staticTexts["Учебный обмер · этаж 1"].firstMatch.waitForExistence(timeout: 15),
@@ -475,7 +494,10 @@ final class AtlasUITests: XCTestCase {
             XCTFail("The real floor-plan viewport did not produce a readable image")
             return
         }
-        dimensions.tap()
+        dimensions.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        let hiddenDimensions = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "0"), object: dimensions)
+        XCTAssertEqual(XCTWaiter.wait(for: [hiddenDimensions], timeout: 5), .completed,
+                       "Tapping the dimension switch thumb must hide the actual drawing annotations")
         XCTAssertEqual(dimensions.value as? String, "0")
         guard let withoutDimensions = drawingPixels(drawing.screenshot().image) else {
             XCTFail("The floor-plan viewport disappeared after hiding dimensions")
@@ -483,7 +505,10 @@ final class AtlasUITests: XCTestCase {
         }
         XCTAssertGreaterThan(changedDrawingPixels(withDimensions, withoutDimensions), 20,
                              "Hiding dimensions must change the native drawing itself, not just the switch")
-        dimensions.tap()
+        dimensions.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        let visibleDimensions = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1"), object: dimensions)
+        XCTAssertEqual(XCTWaiter.wait(for: [visibleDimensions], timeout: 5), .completed,
+                       "Tapping the dimension switch thumb must restore the drawing annotations")
         XCTAssertEqual(dimensions.value as? String, "1")
         screenshot("22b-plan-dimensions", app: app)
         scrollToControl(app.staticTexts["Учебная комната"].firstMatch, in: app)
@@ -495,7 +520,7 @@ final class AtlasUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Демо · этажи здания"].firstMatch.waitForExistence(timeout: 15))
         tap("projects.openSelected", in: app)
         scrollAndTap("projects.buildingPlans", in: app)
-        scrollToControl(element("building.plan.A71A5000-1234-4000-8000-000000000203", in: app), in: app)
+        scrollToControl(app.buttons["building.plan.A71A5000-1234-4000-8000-000000000203"].firstMatch, in: app)
         XCTAssertTrue(element("building.floor.1", in: app).exists,
                       "Floor grouping must survive restarting the process")
     }

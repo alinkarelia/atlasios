@@ -127,14 +127,14 @@ struct SurveyTrackScreen: View {
                     issue = nil
                     Task { await service.start() }
                 } label: { Label(service.session == nil ? "Начать" : "Новый трек", systemImage: "record.circle") }
-                    .buttonStyle(.borderedProminent).disabled(!service.canStart)
+                    .buttonStyle(.borderedProminent).foregroundStyle(Color.atlasAccentInk).disabled(!service.canStart)
                     .accessibilityIdentifier("map.track.start")
             } else if service.isRecording {
                 Button("Пауза", systemImage: "pause.fill") { service.pause() }
-                    .buttonStyle(.borderedProminent).accessibilityIdentifier("map.track.pause")
+                    .buttonStyle(.borderedProminent).foregroundStyle(Color.atlasAccentInk).accessibilityIdentifier("map.track.pause")
             } else {
                 Button("Продолжить", systemImage: "play.fill") { service.resume() }
-                    .buttonStyle(.borderedProminent).accessibilityIdentifier("map.track.resume")
+                    .buttonStyle(.borderedProminent).foregroundStyle(Color.atlasAccentInk).accessibilityIdentifier("map.track.resume")
             }
             if service.session != nil && service.session?.state != .stopped {
                 Button("Завершить", systemImage: "stop.fill") { service.stop() }

@@ -186,7 +186,7 @@ struct GeometryEditorScreen: View {
             else {
                 HStack(spacing: 12) {
                     Button { begin(.point, category: .grave) } label: { Label("Могила", systemImage: "plus") }
-                        .buttonStyle(.borderedProminent).accessibilityIdentifier("map.addgrave")
+                        .buttonStyle(.borderedProminent).foregroundStyle(Color.atlasAccentInk).accessibilityIdentifier("map.addgrave")
                     Menu {
                         Button("Граница кладбища", systemImage: "square.dashed") { begin(.polygon, category: .cemetery) }
                         Button("Участок могилы", systemImage: "rectangle") { begin(.polygon, category: .grave) }
@@ -265,7 +265,7 @@ struct GeometryEditorScreen: View {
             HStack {
                 Button("Отмена") { resetDraft() }
                 Spacer()
-                Button("Проверить геометрию") { reviewDraft() }.buttonStyle(.borderedProminent)
+                Button("Проверить геометрию") { reviewDraft() }.buttonStyle(.borderedProminent).foregroundStyle(Color.atlasAccentInk)
                     .disabled(draftCount < kind.minimum).accessibilityIdentifier("map.draft.review")
             }
         }

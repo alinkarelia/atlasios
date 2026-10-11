@@ -29,7 +29,7 @@ struct MeshPreviewScreen: View {
                         Text(issue ?? "Не удалось прочитать файл модели.")
                             .font(.subheadline).foregroundStyle(Color.atlasMuted).multilineTextAlignment(.center)
                         Button("Попробовать снова") { loadAttempt += 1 }
-                            .buttonStyle(.borderedProminent).accessibilityIdentifier("viewer.retry")
+                            .buttonStyle(.borderedProminent).foregroundStyle(Color.atlasAccentInk).accessibilityIdentifier("viewer.retry")
                         ShareLink(item: url) { Label("Выгрузить исходный файл", systemImage: "square.and.arrow.up") }
                     }
                 }

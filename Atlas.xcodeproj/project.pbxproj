@@ -46,6 +46,13 @@
 			"path" = "Apps/iOS/Adapters/CaptureFragmentPolicy.swift";
 			"sourceTree" = "SOURCE_ROOT";
 		};
+		"249819A371A4F96D4D76858B" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "CaptureShareIndex.swift";
+			"path" = "Apps/iOS/Adapters/CaptureShareIndex.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
 		"D12AC21D9B1951F65906686D" = {
 			"isa" = "PBXFileReference";
 			"lastKnownFileType" = "sourcecode.swift";
@@ -615,6 +622,7 @@
 				63E9342A24C2E1740F469593,
 				A08D391A214DE3054C640150,
 				034609A2CF17045F1BF1ED04,
+				249819A371A4F96D4D76858B,
 				D12AC21D9B1951F65906686D,
 				BF01E5CEC7F4A938CCAEA32E,
 				03D2912DC7305E7DF38EC611,
@@ -870,6 +878,10 @@
 		"0285CE9FF278694079AB7309" = {
 			"isa" = "PBXBuildFile";
 			"fileRef" = 034609A2CF17045F1BF1ED04;
+		};
+		"669BA939F124FBBDDC8200F3" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = 249819A371A4F96D4D76858B;
 		};
 		"9FBE1D1935FCC917225A8500" = {
 			"isa" = "PBXBuildFile";
@@ -1193,6 +1205,7 @@
 				529BBA292ED26C3144D72969,
 				9217DA3F118BB3729325FC87,
 				0285CE9FF278694079AB7309,
+				669BA939F124FBBDDC8200F3,
 				9FBE1D1935FCC917225A8500,
 				0AF35FE151107C787DF59EF9,
 				29ED90B78B2F8A1E3053D0A9,
