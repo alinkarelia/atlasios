@@ -119,7 +119,9 @@ private struct CaptureToolsScreen: View {
         }
         .foregroundStyle(Color.atlasInk)
         .background(Color.atlasCanvas)
-        .navigationTitle("Съёмка и инструменты")
+        .navigationTitle("Инструменты")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbarBackground(Color.atlasCanvas, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
     }

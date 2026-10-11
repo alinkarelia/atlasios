@@ -140,7 +140,8 @@ struct ProjectsScreen: View {
             }.padding(20)
         }
         .background(Color.atlasCanvas)
-        .navigationTitle("Проекты").navigationBarTitleDisplayMode(.large)
+        .navigationTitle("Проекты").navigationBarTitleDisplayMode(.inline)
+        .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbarBackground(Color.atlasCanvas, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbar {
