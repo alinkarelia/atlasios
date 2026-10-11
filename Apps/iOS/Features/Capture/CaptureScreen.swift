@@ -654,6 +654,7 @@ struct CaptureScreen: View {
     }
 
     private func savedCard(_ manifest: URL) -> some View {
+        ScrollView {
         VStack(alignment: .leading, spacing: 14) {
             Label("Съёмка сохранена", systemImage: "checkmark.circle.fill").font(.headline).foregroundStyle(lime)
             Text(mode == .room ? "RoomPlan JSON и USDZ. Обмер хранится в собственных локальных координатах."
@@ -662,6 +663,7 @@ struct CaptureScreen: View {
             ForEach(shareableAssets, id: \.self) { asset in
                 ShareLink(item: asset) {
                     Label(asset.lastPathComponent, systemImage: "square.and.arrow.up").font(.subheadline).foregroundStyle(lime)
+                        .lineLimit(2).truncationMode(.middle)
                 }
             }
             if preparingShares { ProgressView("Готовим именованные файлы для отправки").font(.caption) }
@@ -672,6 +674,7 @@ struct CaptureScreen: View {
             }
         }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
             .background(graphite.opacity(0.94), in: RoundedRectangle(cornerRadius: 22))
+        }.frame(maxHeight: 360)
     }
 
     private var awaitingLocationPermission: Bool {
