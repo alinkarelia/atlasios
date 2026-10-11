@@ -93,7 +93,7 @@ public enum VegetationDetection {
             let n = cross(face.triangle.a,face.triangle.b,face.triangle.c), horizontal = hypot(n.0,n.2)
             guard horizontal>1e-8 else { return nil }
             var angle = atan2(n.2,n.0); if angle<0 { angle += .pi }
-            return Int(floor((angle+.pi/24)/(.pi/12)))%12
+            return Int(floor((angle + .pi/24)/(.pi/12)))%12
         })
         guard orientations.count>=4 else { return nil }
         let kind: VegetationProposalKind, center: MetricPoint2D, crown: Spread, description: String
@@ -115,7 +115,14 @@ public enum VegetationDetection {
             kind = .shrubLike; center = spread.center; crown = spread
             description = "Наблюдается низкий объёмный объект с разными направлениями граней. Возможный кустарник; требуется осмотр оператора."
         }
-        let area = faces.reduce(0.0) { sum,face in let n = cross(face.triangle.a,face.triangle.b,face.triangle.c)
+        // Canonical order avoids changing observed area due to hash-table/input order.
+        let sortedFaces = faces.sorted { lhs,rhs in
+            let left = [lhs.triangle.a,lhs.triangle.b,lhs.triangle.c].sorted(by:order)
+            let right = [rhs.triangle.a,rhs.triangle.b,rhs.triangle.c].sorted(by:order)
+            for index in 0..<3 where left[index] != right[index] { return order(left[index],right[index]) }
+            return false
+        }
+        let area = sortedFaces.reduce(0.0) { sum,face in let n = cross(face.triangle.a,face.triangle.b,face.triangle.c)
             return sum+sqrt(n.0*n.0+n.1*n.1+n.2*n.2)/2 }
         let anchors = Set(faces.flatMap { $0.anchors }).sorted { $0.uuidString<$1.uuidString }
         let identity = "vegetation|\(frameID.uuidString)|\(kind.rawValue)|\(Int((center.x*2).rounded())),\(Int((center.y*2).rounded()))"
@@ -161,7 +168,19 @@ extension TerrainSurvey {
                   proposal.heightSpanMeters.isFinite,(0.35...15).contains(proposal.heightSpanMeters),proposal.canopyWidthMeters.isFinite,
                   proposal.canopyDepthMeters.isFinite,proposal.canopyWidthMeters>=0.5,proposal.canopyWidthMeters<=8,
                   proposal.canopyDepthMeters>=0.35,proposal.canopyDepthMeters<=8,proposal.observedSurfaceArea.isFinite,
-                  proposal.observedSurfaceArea>0 else { throw VegetationDetectionError.invalidData }
+                  proposal.observedSurfaceArea>0,proposal.sourceAnchorIDs.count<=VegetationDetection.maximumTriangles,
+                  !proposal.sourceAnchorIDs.isEmpty,Set(proposal.sourceAnchorIDs).count==proposal.sourceAnchorIDs.count,
+                  proposal.evidence.utf16.count<=2_048,proposal.counterEvidence.count<=16,
+                  proposal.counterEvidence.allSatisfy({$0.utf16.count<=2_048}) else { throw VegetationDetectionError.invalidData }
+            switch proposal.kind {
+            case .treeLike:
+                guard proposal.heightSpanMeters>=2.4,proposal.canopyWidthMeters>=1,proposal.canopyDepthMeters>=0.6 else {
+                    throw VegetationDetectionError.invalidData
+                }
+            case .shrubLike:
+                guard proposal.heightSpanMeters<=1.8,proposal.canopyWidthMeters<=3,proposal.canopyDepthMeters>=0.4,
+                      proposal.canopyDepthMeters/proposal.canopyWidthMeters>=0.4 else { throw VegetationDetectionError.invalidData }
+            }
             let kind:TerrainCandidateKind = proposal.kind == .treeLike ? .treeLikeStructure : .shrubLikeStructure
             let index = result.candidates.indices.first { index in let old=result.candidates[index]
                 return old.kind==kind && old.frameID==frameID && !matched.contains(old.id)

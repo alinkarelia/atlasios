@@ -89,6 +89,7 @@ jobs:
           python3 Apps/iOS/Adapters/Tests/check-terrain-analyzer.py
           python3 Apps/iOS/Adapters/Tests/check-tour-policy.py
           python3 Apps/iOS/Adapters/Tests/check-map-math.py
+          python3 Apps/iOS/Adapters/Tests/check-survey-checkpoint.py
           bash Apps/iOS/Adapters/Tests/video-tour-checks.sh
           bash Apps/iOS/Features/FloorPlan/Tests/checks.sh
       - name: Compile native iOS app against generic Simulator SDK

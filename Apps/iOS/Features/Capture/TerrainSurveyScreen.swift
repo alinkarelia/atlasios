@@ -125,6 +125,10 @@ struct TerrainSurveyScreen: View {
                     .font(.caption).foregroundStyle(candidate.state == .rejected ? Color.atlasMuted : Color.atlasAccent)
             }
             Text(candidate.evidence).font(.caption).foregroundStyle(Color.atlasMuted)
+            if [.fenceLikeStructure,.treeLikeStructure,.shrubLikeStructure].contains(candidate.kind) {
+                Text("Наблюдаемый вертикальный диапазон: \(candidate.heightDifference.formatted(.number.precision(.fractionLength(2)))) м · горизонтальный размер: \(candidate.lengthMeters.formatted(.number.precision(.fractionLength(2)))) м"+(candidate.widthMeters > 0 ? " × \(candidate.widthMeters.formatted(.number.precision(.fractionLength(2)))) м" : ""))
+                    .font(.caption).foregroundStyle(Color.atlasMuted)
+            }
             HStack {
                 Button("Показать") { selectedControl = candidate.center }.font(.caption)
                 Spacer()
@@ -150,6 +154,11 @@ struct TerrainSurveyScreen: View {
         do {
             let savedFrames = try await analyzer.framesForSavedCapture(manifestURL:manifest,directory:directory,projectID:project.id)
             frames = try await analyzer.availableFrames(directory:directory,projectID:project.id)
+            guard !savedFrames.isEmpty else {
+                selectedFrame = nil; survey = nil; savedURL = nil
+                error = "В этой съёмке нет доступной сохранённой сетки LiDAR. Повторите медленный обход, показывая землю и детали; дождитесь сохранения фрагмента."
+                return
+            }
             guard savedFrames.count == 1, let frame = savedFrames.first else {
                 selectedFrame = nil; survey = nil; savedURL = nil
                 error = "Съёмка содержит несколько независимых фрагментов. Выберите нужный фрагмент в списке; координаты автоматически не объединяются."

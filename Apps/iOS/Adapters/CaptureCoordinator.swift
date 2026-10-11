@@ -208,6 +208,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
         guard state == .ready || state == .saved ||
               ((state == .paused || state == .interrupted) && needsNewFrame && videoRecorder == nil) else { return }
         videoEnabled = enabled
+        videoIssue = nil
         videoStatus = enabled ? "Видео начнётся вместе с LiDAR" : "Видео выключено"
     }
 
@@ -243,7 +244,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
             let notice = "Reopened capture: each continuation uses a new independent AR frame and requires operator alignment. An unclosed prior segment ends conservatively at its last manifest timestamp, not at reopening."
             if !restored.notes.contains(notice) { restored.notes.append(notice) }
             manifest = restored; writer = restoredWriter; captureDirectory = directory
-            videoFinishTasks.removeAll(); videoRecorder = nil; videoIsRecording = false
+            videoFinishTasks.removeAll(); videoRecorder = nil; videoIsRecording = false; videoIssue = nil
             snapshots.removeAll(); lastSnapshotTimes.removeAll(); meshGeneration = UUID()
             totalTriangles = 0; totalSurfaceArea = 0; lastMetricPublication = 0
             pendingWrite = nil; checkpointError = nil; lastCheckpoint = nil
@@ -437,7 +438,10 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
         current.status = state == .interrupted ? "interrupted" : "paused"
         current.updatedAt = Date(); manifest = current
         if let pendingWrite { await pendingWrite.value }
-        do { try await writer.saveManifest(current) }
+        guard state == .paused || state == .interrupted, let latest = manifest,
+              latest.id == current.id,
+              latest.segments.first(where: { $0.id == id })?.endReason == "cancelledBeforeCameraRun" else { return }
+        do { try await writer.saveManifest(latest) }
         catch { errorMessage = error.localizedDescription }
     }
 
