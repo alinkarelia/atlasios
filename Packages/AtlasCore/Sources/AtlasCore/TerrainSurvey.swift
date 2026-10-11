@@ -130,7 +130,7 @@ public struct TerrainCell: Identifiable, Codable, Hashable, Sendable {
     public func center(cellSize: Double) -> MetricPoint2D { MetricPoint2D(x: (Double(column)+0.5)*cellSize, y: (Double(row)+0.5)*cellSize) }
 }
 
-public enum TerrainCandidateKind: String, Codable, CaseIterable, Sendable { case raisedSurface, depression, linearObstacle, fenceLikeStructure }
+public enum TerrainCandidateKind: String, Codable, CaseIterable, Sendable { case raisedSurface, depression, linearObstacle, fenceLikeStructure, treeLikeStructure, shrubLikeStructure }
 public enum TerrainCandidateState: String, Codable, Sendable { case proposed, confirmed, rejected }
 
 public struct TerrainCandidate: Identifiable, Codable, Hashable, Sendable {
@@ -331,7 +331,7 @@ public enum TerrainAnalysis {
             proposals.append(candidate)
         }
         // Operator decisions survive a later analysis with missing coverage.
-        for old in previous where (old.state != .proposed || old.kind == .fenceLikeStructure) && !proposals.contains(where: { $0.id == old.id }) { proposals.append(old) }
+        for old in previous where (old.state != .proposed || [.fenceLikeStructure,.treeLikeStructure,.shrubLikeStructure].contains(old.kind)) && !proposals.contains(where: { $0.id == old.id }) { proposals.append(old) }
         return proposals
     }
 }

@@ -519,8 +519,20 @@ struct CaptureScreen: View {
     }
 
     private func resumeLiDAR() async {
-        await lidar.resume()
-        refreshLocationActivity()
+        guard !isStarting, !isSaving else { return }
+        let generation = UUID(); startGeneration = generation
+        isStarting = true
+        let task = Task { @MainActor in
+            defer {
+                if startGeneration == generation { isStarting = false; startTask = nil }
+            }
+            await lidar.resume()
+            guard !Task.isCancelled, startGeneration == generation else { return }
+            lidar.updateAutomaticLocation(location.currentFix)
+            refreshLocationActivity()
+        }
+        startTask = task
+        await task.value
     }
 
     private var captureHelp: some View {
@@ -694,13 +706,29 @@ struct CaptureScreen: View {
     private func restoreCapture(_ record: CaptureContinuationRecord) async {
         guard !working, !hasOpenCapture else { return }
         cancelPreview()
+        let generation = UUID(); startGeneration = generation
         isStarting = true
-        defer { isStarting = false }
-        do {
-            try await lidar.restoreForContinuation(at: record.manifestURL, projectID: project.id, outputDirectory: outputDirectory)
-            savedManifest = nil; shareableAssets = []
-            refreshLocationActivity()
-        } catch { failure = error.localizedDescription; isStarting = false; schedulePreview() }
+        let task = Task { @MainActor in
+            var needsPreview = false
+            defer {
+                if startGeneration == generation {
+                    isStarting = false; startTask = nil
+                    if needsPreview { schedulePreview() }
+                }
+            }
+            do {
+                try await lidar.restoreForContinuation(at: record.manifestURL, projectID: project.id, outputDirectory: outputDirectory)
+                guard !Task.isCancelled, startGeneration == generation else { return }
+                savedManifest = nil; shareableAssets = []
+                refreshLocationActivity()
+            } catch is CancellationError { }
+            catch {
+                guard !Task.isCancelled, startGeneration == generation else { return }
+                failure = error.localizedDescription; needsPreview = true
+            }
+        }
+        startTask = task
+        await task.value
     }
 
     private func saveRoom() async {

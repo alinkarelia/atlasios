@@ -109,6 +109,18 @@ struct DownloadedFieldMaterial: Sendable {
         for batch in batched { try batch.manifest.validate() }
         let unchangedOriginal = try Data(contentsOf: captures.appendingPathComponent(photoPath))
         precondition(unchangedOriginal == original)
-        print("Field transfer assembler: originals, unknown import time, shared-manifest dedup, correction delta, partial scan, scope isolation, offline passport, plan/measurement corrections, 1025-photo batching passed.")
+        let movie = Data("actual-source-byte-fixture".utf8)
+        try movie.write(to: scanDirectory.appendingPathComponent("video.mov"))
+        var videoSnapshot = snapshot
+        let videoID = UUID()
+        videoSnapshot.scans.append(ScanRecord(id: videoID, projectID: project.id, source: .liDAR, status: .ready, frameID: UUID(),
+            assets: [asset("video.mov", .video)], createdAt: imported))
+        let videoBatches = try await assembler.prepare(snapshot: videoSnapshot, assetDirectory: directory, scope: scope, device: device)
+        let videoMaterials = videoBatches.flatMap { $0.manifest.materials }.filter { $0.sourceEntityID == videoID }
+        precondition(videoMaterials.count == 1 && videoMaterials[0].kind == .video)
+        let originalVideo = videoBatches.flatMap { $0.manifest.assets }.first { $0.kind == .originalVideo }!
+        precondition(originalVideo.sha256 == FieldTransferDigest.sha256(movie))
+        precondition(originalVideo.mediaType == "video/quicktime")
+        print("Field transfer assembler: originals, unknown import time, shared-manifest dedup, correction delta, partial scan, scope isolation, offline passport, plan/measurement corrections, 1025-photo batching and original video passed.")
     }
 }

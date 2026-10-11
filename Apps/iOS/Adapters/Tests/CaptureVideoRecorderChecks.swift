@@ -27,7 +27,8 @@ struct CaptureVideoRecorderChecks {
         func offer(_ index: Int) {
             let pose = CaptureVideoFrameDescriptor(arTimestamp: 1000 + Double(index) / 15,
                 observedAt: Date(), cameraTransform: [1,0,0,0, 0,1,0,0, 0,0,1,0, Float(index) / 10,0,0,1],
-                intrinsics: [140,0,0, 0,140,0, 80,60,1], trackingState: "normal")
+                intrinsics: [140,0,0, 0,140,0, 80,60,1], trackingState: "normal",
+                normalizedImageToDisplayTransform: [0,1,-1,0,1,0])
             recorder.offer(image: image, descriptor: pose)
         }
         offer(0)
@@ -63,6 +64,7 @@ struct CaptureVideoRecorderChecks {
         precondition(sidecar.identity.segmentID == identity.segmentID && sidecar.identity.frameID == identity.frameID && sidecar.identity.orientation == identity.orientation)
         precondition(abs(sidecar.identity.startedAt.timeIntervalSince(identity.startedAt)) < 1 && sidecar.counts == completed.document.counts)
         precondition(sidecar.keyframes.first?.frame.cameraTransform == [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1])
+        precondition(sidecar.normalizedImageToDisplayTransform == [0,1,-1,0,1,0])
         let secondFinish = await recorder.finish(reason: "secondRequest")
         precondition(secondFinish.completed && secondFinish.document.counts == sidecar.counts, "Idempotent finish cannot truncate a movie")
         let originalMovie = try Data(contentsOf: movie), originalSidecar = try Data(contentsOf: directory.appendingPathComponent("video.json"))

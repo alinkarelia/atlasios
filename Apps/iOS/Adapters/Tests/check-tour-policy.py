@@ -317,6 +317,37 @@ TESTS = r'''
         expect(fileSymlinkRejected, "an existing manifest-file symlink is rejected before saving")
         expect(try Data(contentsOf:untouchedExternalFile) == externalOriginal,
                "a rejected manifest symlink cannot overwrite an external file")
+        var large = tour
+        large.stations = (0..<500).map { _ in
+            var value = station; value.id = UUID()
+            value.annotations = (0..<30).map { _ in TourAnnotation(featureID:featureID,vertices:rectangle) }
+            return value
+        }
+        let largeDirectory = temporary.appendingPathComponent("large-valid-route",isDirectory:true)
+        let largeURL = try await store.save(large,directory:largeDirectory,projectID:projectID)
+        let committedLarge = try Data(contentsOf:largeURL)
+        expect(committedLarge.count > 8*1_024*1_024 && committedLarge.count <= TourStore.maximumManifestBytes,
+               "a valid large cemetery route exercises the former unreadable-over-8MB regression")
+        let loadedLarge = try await store.load(projectID:projectID,directory:largeDirectory)
+        expect(loadedLarge.count == 1 && loadedLarge[0].stations.count == 500
+               && loadedLarge[0].stations.last?.annotations.count == 30,
+               "a successfully committed large route can immediately reopen with all records")
+        var oversized = large
+        for index in oversized.stations.indices {
+            oversized.stations[index].comment = String(repeating:"墓",count:10_000)
+            oversized.stations[index].annotations = (0..<60).map { _ in TourAnnotation(featureID:featureID,vertices:rectangle) }
+        }
+        try TourPolicy.validate(oversized,projectID:projectID)
+        var preciseSizeRejection = false
+        do { _ = try await store.save(oversized,directory:largeDirectory,projectID:projectID) }
+        catch TourError.manifestTooLarge { preciseSizeRejection = true }
+        expect(preciseSizeRejection,"a policy-valid oversized route gets a precise size error before replacement")
+        expect(try Data(contentsOf:largeURL) == committedLarge,
+               "an oversized update preserves the exact previously committed route bytes")
+        let restoredLarge = try await TourStore().load(projectID:projectID,directory:largeDirectory)
+        expect(restoredLarge.first?.stations.last?.annotations.count == 30
+               && restoredLarge.first?.stations.last?.comment == station.comment,
+               "the prior route remains readable by a new store after an oversized update")
         print("Tour policy regression: \(count) checks passed")
     }
 }
@@ -326,7 +357,7 @@ with tempfile.TemporaryDirectory(prefix="terraview-tour-policy-") as directory:
     root = Path(directory)
     harness = root / "TourPolicyChecks.swift"
     executable = root / "tour-policy-check"
-    harness.write_text("import Foundation\n" + coordinate + geo + timestamp + video_document + "\n" + video_policy + "\n" + photos + production + TESTS)
+    harness.write_text("import Foundation\n#if canImport(CoreGraphics)\nimport CoreGraphics\n#endif\n" + coordinate + geo + timestamp + video_document + "\n" + video_policy + "\n" + photos + production + TESTS)
     subprocess.run(compiler + ["-swift-version", "6", "-strict-concurrency=complete",
         "-parse-as-library", str(harness), "-o", str(executable)], check=True)
     subprocess.run([str(executable)], check=True)

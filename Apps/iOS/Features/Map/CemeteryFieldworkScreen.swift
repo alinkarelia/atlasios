@@ -9,7 +9,7 @@ struct CemeteryFieldworkScreen: View {
     @State private var loading = true
 
     private var cemeteries: [AtlasFeature] {
-        features.filter { $0.category == .cemetery && $0.attributes["survey.status"] != "rejected" }
+        features.filter { $0.category == .cemetery && SurveyFeatureLifecycle.isActive($0) }
     }
 
     var body: some View {
@@ -36,8 +36,8 @@ struct CemeteryFieldworkScreen: View {
                     } label: {
                         VStack(alignment: .leading, spacing: 5) {
                             Text(cemetery.label).font(.headline)
-                            let linked = features.filter { $0.attributes["cemeteryID"] == cemetery.id.uuidString }
-                            Text("\(linked.filter { $0.category == .grave && $0.attributes["survey.status"] != "rejected" }.count) карточек · \(linked.filter { [.path, .road, .fence].contains($0.category) }.count) линий")
+                            let linked = features.filter { SurveyMapStyle.cemeteryID($0) == cemetery.id && SurveyFeatureLifecycle.isActive($0) }
+                            Text("\(linked.filter { $0.category == .grave }.count) карточек · \(linked.filter { [.path, .road, .fence].contains($0.category) }.count) линий")
                                 .font(.caption).foregroundStyle(Color.atlasMuted)
                         }
                     }

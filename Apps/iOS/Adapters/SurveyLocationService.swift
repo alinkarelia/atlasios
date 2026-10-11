@@ -9,6 +9,13 @@ private struct SurveyCheckpoint: Codable, Sendable {
     let session: CemeterySurveySession
 }
 
+private enum SurveyCheckpointError: LocalizedError {
+    case tooLarge
+    var errorDescription: String? {
+        "GPS-журнал превышает 16 МБ. Запись остановлена; предыдущее сохранение осталось без изменений."
+    }
+}
+
 @MainActor
 private final class SurveyWeakReference<T: AnyObject> {
     weak var value: T?
@@ -17,6 +24,7 @@ private final class SurveyWeakReference<T: AnyObject> {
 
 /// Serialized, atomic checkpoints retain the raw journal; display geometry is not the journal.
 private actor SurveyCheckpointStore {
+    static let maximumCheckpointBytes = 16 * 1_024 * 1_024
     let projectID: UUID
     let directory: URL
     private var loaded = false
@@ -29,7 +37,7 @@ private actor SurveyCheckpointStore {
         if loaded { return current }
         guard FileManager.default.fileExists(atPath: activeURL.path) else { loaded = true; return nil }
         let size = try activeURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-        guard size <= 16 * 1_024 * 1_024 else { throw CemeterySurveyError.invalidCheckpoint }
+        guard size <= Self.maximumCheckpointBytes else { throw SurveyCheckpointError.tooLarge }
         let checkpoint = try JSONDecoder().decode(SurveyCheckpoint.self, from: Data(contentsOf: activeURL))
         guard checkpoint.version == 1, checkpoint.projectID == projectID else { throw CemeterySurveyError.invalidCheckpoint }
         try checkpoint.session.validateCheckpoint()
@@ -52,23 +60,27 @@ private actor SurveyCheckpointStore {
                 }
             }
         } else if previous != nil { throw CemeterySurveyError.invalidCheckpoint }
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let checkpoint = SurveyCheckpoint(version: 1, projectID: projectID, session: session)
         let data = try JSONEncoder().encode(checkpoint)
+        guard data.count <= Self.maximumCheckpointBytes else { throw SurveyCheckpointError.tooLarge }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try data.write(to: activeURL, options: [.atomic, .completeFileProtectionUnlessOpen])
         current = session; loaded = true
     }
 
     func archive(_ session: CemeterySurveySession) throws {
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let url = directory.appendingPathComponent(projectID.uuidString + "-" + session.id.uuidString + ".json")
         // An existing archive is immutable and must describe the same complete journal.
         if FileManager.default.fileExists(atPath: url.path) {
+            let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+            guard size <= Self.maximumCheckpointBytes else { throw SurveyCheckpointError.tooLarge }
             let saved = try JSONDecoder().decode(SurveyCheckpoint.self, from: Data(contentsOf: url))
             guard saved.projectID == projectID, saved.session == session else { throw CemeterySurveyError.invalidCheckpoint }
             return
         }
         let data = try JSONEncoder().encode(SurveyCheckpoint(version: 1, projectID: projectID, session: session))
+        guard data.count <= Self.maximumCheckpointBytes else { throw SurveyCheckpointError.tooLarge }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try data.write(to: url, options: [.atomic, .completeFileProtectionUnlessOpen])
     }
 }
@@ -265,9 +277,9 @@ final class SurveyLocationService: NSObject, ObservableObject, @preconcurrency C
         defer { confirmingBoundary = false }
         let boundary = try current.confirmBoundary(segmentID: segmentID)
         // Persist the explicit confirmation before handing geometry to a card.
-        session = current
         generation += 1
         try await store.save(current, generation: generation)
+        session = current
         storageMessage = "Подтверждение контура сохранено вместе с исходным журналом"
         return boundary
     }

@@ -67,6 +67,7 @@ actor CemeteryTerrainAnalyzer {
         guard files.count <= 512 else { throw TerrainSurveyError.invalidData }
         var batches = [TerrainMeshBatch]()
         var fenceTriangles = [FenceTriangle]()
+        var vegetationTriangles = [FenceTriangle]()
         let groundBudget = max(12,min(4_000,100_000/max(1,files.count)/4))
         let fenceBudget = max(1,20_000/max(1,files.count))
         for file in files {
@@ -80,19 +81,22 @@ actor CemeteryTerrainAnalyzer {
             let points = try surfaceSamples(checkpoint,faceBudget:groundBudget)
             if !points.isEmpty { batches.append(.init(frameID:frame.frameID,anchorID:checkpoint.anchorID,captureID:frame.captureID,points:points)) }
             fenceTriangles.append(contentsOf:try verticalSamples(checkpoint,frameID:frame.frameID,faceBudget:fenceBudget))
+            vegetationTriangles.append(contentsOf:try spatialSamples(checkpoint,frameID:frame.frameID,faceBudget:fenceBudget))
         }
         let proposals = try FenceDetection.proposals(from:fenceTriangles,frameID:frame.frameID)
+        let vegetation = try VegetationDetection.proposals(from:vegetationTriangles,frameID:frame.frameID)
         var terrain:TerrainSurvey
         do { terrain = try TerrainAnalysis.analyze(batches,projectID:project.id,cemeteryID:cemetery.id,frameID:frame.frameID,previous:previous) }
         catch TerrainSurveyError.insufficientSurface {
-            guard !proposals.isEmpty,previous == nil || (previous?.frameID == frame.frameID && previous?.projectID == project.id && previous?.cemeteryID == cemetery.id) else { throw TerrainSurveyError.insufficientSurface }
+            guard !proposals.isEmpty || !vegetation.isEmpty,previous == nil || (previous?.frameID == frame.frameID && previous?.projectID == project.id && previous?.cemeteryID == cemetery.id) else { throw TerrainSurveyError.insufficientSurface }
             terrain = TerrainSurvey(id:previous?.id ?? UUID(),projectID:project.id,cemeteryID:cemetery.id,frameID:frame.frameID,sourceCaptureIDs:[frame.captureID],
                 referenceHeight:previous?.referenceHeight ?? 0,cells:[],candidates:previous?.candidates ?? [],registration:previous?.registration)
             if let previous { terrain.createdAt = previous.createdAt }
-            terrain.warnings.append("Горизонтальная поверхность недостаточно измерена. Показаны только видимые вертикальные конструкции для проверки; рельеф земли не построен.")
+            terrain.warnings.append("Горизонтальная поверхность недостаточно измерена. Показаны отдельные измеренные конструкции и объёмные формы для проверки; рельеф земли не построен.")
         }
         if proposals.count == FenceDetection.maximumProposals { terrain.warnings.append("Достигнут предел предложений ограждений. Разделите большой участок на фрагменты.") }
-        return try terrain.includingFenceProposals(proposals)
+        if vegetation.count == VegetationDetection.maximumProposals { terrain.warnings.append("Достигнут предел предложений деревьев и кустарников. Разделите большой участок на фрагменты.") }
+        return try terrain.includingFenceProposals(proposals).includingVegetationProposals(vegetation)
     }
 
     func save(_ survey: TerrainSurvey, directory: URL) throws -> URL {
@@ -133,8 +137,8 @@ actor CemeteryTerrainAnalyzer {
     private func surfaceSamples(_ checkpoint: Checkpoint, faceBudget:Int = 4_000) throws -> [TerrainPoint] {
         var result = [TerrainPoint](); result.reserveCapacity(16_000)
         let step = max(1,Int(ceil(Double(checkpoint.triangleCount)/Double(max(1,faceBudget)))))
-        return try checkpoint.positions.withUnsafeBytes { vertices in
-            try checkpoint.indices.withUnsafeBytes { faces in
+        return try checkpoint.positions.withUnsafeBytes { (vertices:UnsafeRawBufferPointer) -> [TerrainPoint] in
+            try checkpoint.indices.withUnsafeBytes { (faces:UnsafeRawBufferPointer) -> [TerrainPoint] in
                 func point(_ index: Int) throws -> TerrainPoint {
                     guard index >= 0, index < checkpoint.vertexCount else { throw TerrainSurveyError.invalidData }
                     let offset = index*12
@@ -165,8 +169,8 @@ actor CemeteryTerrainAnalyzer {
     private func verticalSamples(_ checkpoint:Checkpoint,frameID:UUID,faceBudget:Int) throws -> [FenceTriangle] {
         var result = [FenceTriangle]()
         let step = max(1,Int(ceil(Double(checkpoint.triangleCount)/Double(max(1,faceBudget)))))
-        return try checkpoint.positions.withUnsafeBytes { vertices in
-            try checkpoint.indices.withUnsafeBytes { faces in
+        return try checkpoint.positions.withUnsafeBytes { (vertices:UnsafeRawBufferPointer) -> [FenceTriangle] in
+            try checkpoint.indices.withUnsafeBytes { (faces:UnsafeRawBufferPointer) -> [FenceTriangle] in
                 func point(_ index:Int) throws -> TerrainPoint {
                     guard index >= 0,index < checkpoint.vertexCount else { throw TerrainSurveyError.invalidData }
                     let offset = index*12
@@ -185,12 +189,56 @@ actor CemeteryTerrainAnalyzer {
                     let ib = Int(UInt32(littleEndian:faces.loadUnaligned(fromByteOffset:face*12+4,as:UInt32.self)))
                     let ic = Int(UInt32(littleEndian:faces.loadUnaligned(fromByteOffset:face*12+8,as:UInt32.self)))
                     let a = try point(ia),b = try point(ib),c = try point(ic)
-                    let u = SIMD3(b.x-a.x,b.height-a.height,b.z-a.z),v = SIMD3(c.x-a.x,c.height-a.height,c.z-a.z)
-                    let normal = SIMD3(u.y*v.z-u.z*v.y,u.z*v.x-u.x*v.z,u.x*v.y-u.y*v.x)
+                    let u = SIMD3<Double>(b.x-a.x,b.height-a.height,b.z-a.z)
+                    let v = SIMD3<Double>(c.x-a.x,c.height-a.height,c.z-a.z)
+                    let normal = SIMD3<Double>(u.y*v.z-u.z*v.y,u.z*v.x-u.x*v.z,u.x*v.y-u.y*v.x)
                     let magnitude = sqrt(normal.x*normal.x+normal.y*normal.y+normal.z*normal.z)
                     let thirdX = c.x-b.x,thirdY = c.height-b.height,thirdZ = c.z-b.z
+                    let edgeAB:Double = sqrt(u.x*u.x+u.y*u.y+u.z*u.z)
+                    let edgeAC:Double = sqrt(v.x*v.x+v.y*v.y+v.z*v.z)
+                    let edgeBC:Double = sqrt(thirdX*thirdX+thirdY*thirdY+thirdZ*thirdZ)
                     guard magnitude > 1e-9,abs(normal.y)/magnitude <= 0.35,
-                          max(sqrt(u.x*u.x+u.y*u.y+u.z*u.z),sqrt(v.x*v.x+v.y*v.y+v.z*v.z),sqrt(thirdX*thirdX+thirdY*thirdY+thirdZ*thirdZ)) <= 2 else { continue }
+                          max(edgeAB,edgeAC,edgeBC) <= 2 else { continue }
+                    result.append(FenceTriangle(frameID:frameID,anchorID:checkpoint.anchorID,a:a,b:b,c:c,classification:raw == 1 ? .wall : .unknown))
+                }
+                return result
+            }
+        }
+    }
+
+    /// Full 3D measured faces retain horizontal canopy geometry. Apple mesh
+    /// labels do not identify plants; unknown shapes only reach review heuristics.
+    private func spatialSamples(_ checkpoint:Checkpoint,frameID:UUID,faceBudget:Int) throws -> [FenceTriangle] {
+        var result = [FenceTriangle]()
+        let step = max(1,Int(ceil(Double(checkpoint.triangleCount)/Double(max(1,faceBudget)))))
+        return try checkpoint.positions.withUnsafeBytes { (vertices:UnsafeRawBufferPointer) -> [FenceTriangle] in
+            try checkpoint.indices.withUnsafeBytes { (faces:UnsafeRawBufferPointer) -> [FenceTriangle] in
+                func point(_ index:Int) throws -> TerrainPoint {
+                    guard index >= 0,index < checkpoint.vertexCount else { throw TerrainSurveyError.invalidData }
+                    let offset = index*12
+                    let x = Double(Float(bitPattern:UInt32(littleEndian:vertices.loadUnaligned(fromByteOffset:offset,as:UInt32.self))))
+                    let height = Double(Float(bitPattern:UInt32(littleEndian:vertices.loadUnaligned(fromByteOffset:offset+4,as:UInt32.self))))
+                    let z = Double(Float(bitPattern:UInt32(littleEndian:vertices.loadUnaligned(fromByteOffset:offset+8,as:UInt32.self))))
+                    guard x.isFinite,height.isFinite,z.isFinite else { throw TerrainSurveyError.invalidData }
+                    return .init(x:x,z:z,height:height)
+                }
+                for face in stride(from:0,to:checkpoint.triangleCount,by:step) {
+                    let raw = checkpoint.classifications?[face] ?? 0
+                    guard raw == 0 || raw == 1 else { continue }
+                    let ia = Int(UInt32(littleEndian:faces.loadUnaligned(fromByteOffset:face*12,as:UInt32.self)))
+                    let ib = Int(UInt32(littleEndian:faces.loadUnaligned(fromByteOffset:face*12+4,as:UInt32.self)))
+                    let ic = Int(UInt32(littleEndian:faces.loadUnaligned(fromByteOffset:face*12+8,as:UInt32.self)))
+                    let a = try point(ia),b = try point(ib),c = try point(ic)
+                    let u = SIMD3<Double>(b.x-a.x,b.height-a.height,b.z-a.z)
+                    let v = SIMD3<Double>(c.x-a.x,c.height-a.height,c.z-a.z)
+                    let normal = SIMD3<Double>(u.y*v.z-u.z*v.y,u.z*v.x-u.x*v.z,u.x*v.y-u.y*v.x)
+                    let magnitude = sqrt(normal.x*normal.x+normal.y*normal.y+normal.z*normal.z)
+                    let thirdX = c.x-b.x,thirdY = c.height-b.height,thirdZ = c.z-b.z
+                    let edgeAB:Double = sqrt(u.x*u.x+u.y*u.y+u.z*u.z)
+                    let edgeAC:Double = sqrt(v.x*v.x+v.y*v.y+v.z*v.z)
+                    let edgeBC:Double = sqrt(thirdX*thirdX+thirdY*thirdY+thirdZ*thirdZ)
+                    guard magnitude > 1e-9,
+                          max(edgeAB,edgeAC,edgeBC) <= 1.2 else { continue }
                     result.append(FenceTriangle(frameID:frameID,anchorID:checkpoint.anchorID,a:a,b:b,c:c,classification:raw == 1 ? .wall : .unknown))
                 }
                 return result

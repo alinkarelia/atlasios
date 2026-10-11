@@ -78,6 +78,38 @@ import AtlasCore
         try rejects { object["completedAssets"] = ["room.json", "room.usdz", "empty-room/not-a-uuid/dimensions.json"] }
         try rejects { object["completedAssets"] = ["room.json", "room.usdz", relative + "../dimensions.json"] }
         try rejects { object["completedAssets"] = ["room.json", "room.usdz", "/" + relative + "dimensions.json"] }
-        print("CaptureCatalog: 22 dataset readiness, original/derivative identity and path isolation checks passed.")
+        let segmentID = UUID()
+        let segment = folder.appendingPathComponent("segments/\(segmentID.uuidString)")
+        try FileManager.default.createDirectory(at: segment, withIntermediateDirectories: true)
+        let videoRelative = "segments/\(segmentID.uuidString)/"
+        try Data("synthetic movie byte fixture".utf8).write(to: segment.appendingPathComponent("video.mov"))
+        let identity = CaptureVideoIdentity(captureID: scan, projectID: project, segmentID: segmentID, frameID: frame,
+            startedAt: Date(timeIntervalSince1970: 1_700_000_000), orientation: .portrait)
+        var videoDocument = CaptureVideoDocument(identity: identity, status: .ready)
+        videoDocument.videoFile = "video.mov"; videoDocument.firstARTimestamp = 100
+        videoDocument.sourceWidth = 1_920; videoDocument.sourceHeight = 1_440
+        videoDocument.encodedWidth = 1_920; videoDocument.encodedHeight = 1_440
+        videoDocument.durationSeconds = 2
+        videoDocument.counts = .init(sourceFrames: 60, rateLimitedFrames: 30, droppedFrames: 0, encodedFrames: 30)
+        videoDocument.keyframes = [.init(videoSeconds: 0, frame: .init(arTimestamp: 100, observedAt: identity.startedAt,
+            cameraTransform: [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1], intrinsics: [800,0,0, 0,800,0, 640,360,1], trackingState: "normal"))]
+        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
+        func writeVideo() throws { try encoder.encode(videoDocument).write(to: segment.appendingPathComponent("video.json"), options: .atomic) }
+        try writeVideo()
+        object["source"] = "ARKit.sceneReconstruction"
+        object["segments"] = [["id": segmentID.uuidString, "frameID": frame.uuidString,
+            "startedAt": ISO8601DateFormatter().string(from: identity.startedAt)]]
+        object["completedAssets"] = [videoRelative + "video.mov", videoRelative + "video.json"]
+        let videoOnly = try records()
+        precondition(videoOnly.count == 1 && videoOnly[0].id == segmentID && videoOnly[0].status == .ready)
+        precondition(videoOnly[0].assets.contains { $0.kind == .video } && !videoOnly[0].assets.contains { $0.kind == .mesh })
+        try rejects { object["completedAssets"] = [videoRelative + "video.mov"] }
+        try rejects { object["completedAssets"] = [videoRelative + "video.json"] }
+        try rejects { object["projectID"] = UUID().uuidString }
+        videoDocument.status = .recording; try writeVideo()
+        do { _ = try records(); preconditionFailure("Partial video accepted as ready") } catch { }
+        videoDocument.status = .ready; videoDocument.keyframes = []; try writeVideo()
+        do { _ = try records(); preconditionFailure("Video without source poses accepted") } catch { }
+        print("CaptureCatalog: 29 dataset readiness, original/derivative/video identity and path isolation checks passed.")
     }
 }

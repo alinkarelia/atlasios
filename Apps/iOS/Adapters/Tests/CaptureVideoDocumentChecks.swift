@@ -15,6 +15,16 @@ struct CaptureVideoDocumentChecks {
         for (width, height) in [(0, 100), (100, 0), (-1, 2), (1, 200), (9000, 200)] {
             check(CaptureVideoDocument.outputDimensions(width: width, height: height) == nil, "Reject invalid/unbounded image")
         }
+        check(CaptureVideoDocument.trackTransform(normalized: [0,1,-1,0,1,0], width: 1920, height: 1440,
+            orientation: .portrait) == [0,1,-1,0,1440,0], "AR source transform preserves full portrait image")
+        check(CaptureVideoDocument.trackTransform(normalized: [-1,0,0,-1,1,1], width: 1920, height: 1440,
+            orientation: .landscapeLeft) == [-1,0,0,-1,1920,1440], "Source-derived landscape rotation is retained")
+        check(CaptureVideoDocument.trackTransform(normalized: [1,0,0,1,0,0], width: 1280, height: 720,
+            orientation: .landscapeRight) == [1,0,0,1,0,0], "Native orientation is not guessed from a different source")
+        for value: [Float] in [[2,0,0,1,-0.5,0], [0.5,0.5,0.5,0.5,0,0], [.nan,0,0,1,0,0], [1,0]] {
+            check(CaptureVideoDocument.trackTransform(normalized: value, width: 1920, height: 1440,
+                orientation: .portrait) == nil, "Crop, collapse or corrupt transform cannot silently alter source image")
+        }
         let admission = CaptureVideoAdmission()
         check(admission.reserve(timestamp: 100), "Reserve first camera pool lease")
         check(!admission.reserve(timestamp: 100.01), "Intentional 15fps sampling skips dense AR frames")
@@ -64,6 +74,8 @@ struct CaptureVideoDocumentChecks {
         check(!invalid.isCompleted, "Video stays bounded to 1920")
         invalid = document; invalid.keyframes = [.init(videoSeconds: 5, frame: pose)]
         check(!invalid.isCompleted, "Keyframe lies inside actual movie timeline")
+        invalid = document; invalid.normalizedImageToDisplayTransform = [2,0,0,1,-0.5,0]
+        check(!invalid.isCompleted, "Completed source cannot hide a viewport crop")
         print("Capture video provenance/backpressure: \(checks) checks passed")
     }
 }

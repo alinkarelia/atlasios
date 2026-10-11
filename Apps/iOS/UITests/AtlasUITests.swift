@@ -230,17 +230,19 @@ final class AtlasUITests: XCTestCase {
     private func openMapCard(_ suffix: String, in app: XCUIApplication) {
         let identifier = "map.card.A71A5000-1234-4000-8000-000000000" + suffix
         let card = element(identifier, in: app)
-        XCTAssertTrue(card.waitForExistence(timeout: 15), "The saved map card is missing: \(identifier)")
-        for _ in 0..<4 {
-            if card.isHittable {
+        let strip = app.scrollViews["map.featureStrip"].firstMatch
+        XCTAssertTrue(strip.waitForExistence(timeout: 15), "The real lazy object strip is missing")
+        guard strip.exists else { return }
+        // A lazy stack creates distant cards after they enter its viewport.
+        // Search the strip before requiring a card's accessibility element.
+        for attempt in 0..<12 {
+            if card.exists && card.isHittable {
                 card.tap()
                 XCTAssertTrue(element("burial.status.summary", in: app).waitForExistence(timeout: 15),
                               "The saved grave must open its real burial card")
                 return
             }
-            let strip = app.scrollViews.containing(.button, identifier: identifier).firstMatch
-            XCTAssertTrue(strip.exists, "The map card must belong to the real object strip")
-            strip.swipeLeft()
+            if attempt < 6 { strip.swipeLeft() } else { strip.swipeRight() }
         }
         XCTFail("The saved map card cannot be opened: \(identifier)")
     }

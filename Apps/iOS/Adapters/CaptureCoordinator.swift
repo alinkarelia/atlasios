@@ -47,6 +47,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
     @Published private(set) var videoEnabled = false
     @Published private(set) var videoIsRecording = false
     @Published private(set) var videoStatus = "Видео выключено"
+    @Published private(set) var videoIssue: String?
 
     // State objects can coexist, but only the visible mode allocates a camera
     // renderer. Suspending another mode must never create a second AR session.
@@ -84,6 +85,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
     private var latestLocationFix: GeoLocationFix?
     private var isPreviewing = false
     private var isPreparingPreview = false
+    private var isResuming = false
     private var cameraWatchdog: Task<Void, Never>?
     private var lastFrameAt: TimeInterval?
     private var receivedFrameCount = 0
@@ -223,6 +225,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
     func restoreForContinuation(at manifestURL: URL, projectID: UUID, outputDirectory: URL) async throws {
         guard state == .ready || state == .saved else { throw CaptureError.operationInProgress }
         guard Self.isSupported else { throw CaptureError.lidarUnsupported }
+        guard manifestURL.lastPathComponent == "manifest.json" else { throw CaptureContinuationPolicy.ValidationError.invalid }
         suspendPreview()
         let previousState = state
         let generation = UUID(); startGeneration = generation
@@ -366,9 +369,12 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
     }
 
     func resume() async {
-        guard state == .paused || state == .interrupted, var current = manifest, let writer else { return }
+        guard !isResuming, state == .paused || state == .interrupted, var current = manifest, let writer else { return }
         guard Self.isSupported else { errorMessage = CaptureError.lidarUnsupported.localizedDescription; return }
+        isResuming = true
+        defer { isResuming = false }
         let generation = UUID(); startGeneration = generation
+        var provisionalSegmentID: UUID?
         do {
             try await Self.requireCameraAccess()
             guard generation == startGeneration, !Task.isCancelled else { return }
@@ -385,13 +391,17 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
                 guard current.segments.count < 256 else { throw CaptureError.segmentLimit }
                 let newSegment = CaptureSegment(id: UUID(), frameID: UUID(), startedAt: Date(), endedAt: nil,
                     endReason: nil, geoTag: freshAutomaticTag())
+                provisionalSegmentID = newSegment.id
                 current.segments.append(newSegment)
                 current.status = "recording"; current.updatedAt = Date()
                 manifest = current
                 try await writer.saveManifest(current)
                 guard generation == startGeneration, !Task.isCancelled,
                       state == .paused || state == .interrupted,
-                      UIApplication.shared.applicationState == .active else { return }
+                      UIApplication.shared.applicationState == .active else {
+                    await closeUnstartedSegment(newSegment.id, writer: writer)
+                    return
+                }
                 snapshots.removeAll(); lastSnapshotTimes.removeAll()
                 clearSurfaceOverlays()
                 meshGeneration = UUID()
@@ -399,6 +409,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
                 anchorCount = 0; triangleCount = 0; observedSurfaceArea = 0
                 segmentCount = current.segments.count
                 arView.session.run(configuration(), options: [.resetTracking, .removeExistingAnchors])
+                provisionalSegmentID = nil
                 trackingMessage = "Новый фрагмент. Его координаты требуют отдельного совмещения"
             } else {
                 arView.session.run(configuration())
@@ -412,7 +423,22 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
             beginCameraWatchdog()
             updateAutomaticLocation(latestLocationFix)
             updateManifest(status: "recording")
-        } catch { errorMessage = error.localizedDescription }
+        } catch {
+            if let provisionalSegmentID { await closeUnstartedSegment(provisionalSegmentID, writer: writer) }
+            if generation == startGeneration { errorMessage = error.localizedDescription }
+        }
+    }
+
+    private func closeUnstartedSegment(_ id: UUID, writer: MeshCheckpointWriter) async {
+        guard var current = manifest, let index = current.segments.firstIndex(where: { $0.id == id }),
+              current.segments[index].endedAt == nil else { return }
+        current.segments[index].endedAt = current.segments[index].startedAt
+        current.segments[index].endReason = "cancelledBeforeCameraRun"
+        current.status = state == .interrupted ? "interrupted" : "paused"
+        current.updatedAt = Date(); manifest = current
+        if let pendingWrite { await pendingWrite.value }
+        do { try await writer.saveManifest(current) }
+        catch { errorMessage = error.localizedDescription }
     }
 
     /// Flushes current mesh checkpoints and exports every independent segment.
@@ -423,9 +449,17 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
         guard let writer, var current = manifest, let directory = captureDirectory else {
             throw CaptureError.noCapture
         }
+        // A concurrent pending resume must not run its camera after Save.
+        startGeneration = UUID()
         cameraView?.session.pause()
         cameraWatchdog?.cancel(); cameraWatchdog = nil
         closeVideo(reason: "userFinished")
+        needsNewFrame = true
+        if !current.segments.isEmpty && current.segments[current.segments.count - 1].endedAt == nil {
+            current.segments[current.segments.count - 1].endedAt = Date()
+            current.segments[current.segments.count - 1].endReason = "userFinished"
+        }
+        manifest = current
         state = .exporting
         isCameraReady = false
         cameraStatus = "Сохраняем модель"
@@ -448,6 +482,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
             current.segments[current.segments.count - 1].endReason = "userFinished"
         }
         current.status = "exporting"; current.updatedAt = Date()
+        manifest = current
         do {
             let finished = try await writer.finalize(current)
             manifest = finished
@@ -660,6 +695,17 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
         receivedFrameCount += 1
         if state == .recording, let videoRecorder {
             let transform = frame.camera.transform, intrinsics = frame.camera.intrinsics
+            let orientation: UIInterfaceOrientation
+            switch videoRecorder.identity.orientation {
+            case .portrait: orientation = .portrait
+            case .portraitUpsideDown: orientation = .portraitUpsideDown
+            case .landscapeLeft: orientation = .landscapeLeft
+            case .landscapeRight: orientation = .landscapeRight
+            }
+            let width = CVPixelBufferGetWidth(frame.capturedImage), height = CVPixelBufferGetHeight(frame.capturedImage)
+            let portrait = orientation == .portrait || orientation == .portraitUpsideDown
+            let display = frame.displayTransform(for: orientation,
+                viewportSize: CGSize(width: portrait ? height : width, height: portrait ? width : height))
             let tracking: String
             switch frame.camera.trackingState {
             case .normal: tracking = "normal"
@@ -670,7 +716,9 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
                 observedAt: Date().addingTimeInterval(frame.timestamp - now),
                 cameraTransform: (0..<4).flatMap { column in (0..<4).map { transform[column][$0] } },
                 intrinsics: (0..<3).flatMap { column in (0..<3).map { intrinsics[column][$0] } },
-                trackingState: tracking)
+                trackingState: tracking,
+                normalizedImageToDisplayTransform: [Float(display.a), Float(display.b), Float(display.c),
+                    Float(display.d), Float(display.tx), Float(display.ty)])
             videoRecorder.offer(image: frame.capturedImage, descriptor: descriptor)
         }
         projectPlaneOutlines(now: now)
@@ -997,15 +1045,17 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
         let identity = CaptureVideoIdentity(captureID: current.id, projectID: current.projectID,
             segmentID: segment.id, frameID: segment.frameID, startedAt: segment.startedAt, orientation: orientation)
         videoStatus = "Ожидаем первый кадр для видео…"
+        videoIssue = nil
         videoIsRecording = false
         videoRecorder = CaptureVideoRecorder(identity: identity,
             directory: directory.appendingPathComponent("segments/\(segment.id.uuidString)", isDirectory: true)) { [weak self] message, recording in
                 Task { @MainActor [weak self] in
                     guard let self, self.manifest?.id == identity.captureID,
                           self.manifest?.segments.last?.id == identity.segmentID else { return }
+                    guard !recording || (self.state == .recording && self.videoRecorder?.identity == identity) else { return }
                     self.videoStatus = message; self.videoIsRecording = recording
                     if message.hasPrefix("Видео не") {
-                        self.errorMessage = message
+                        self.videoIssue = message
                         self.closeVideo(reason: "videoEncoderFailure")
                     }
                 }

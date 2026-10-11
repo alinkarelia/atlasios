@@ -192,6 +192,8 @@ struct GeometryEditorScreen: View {
                         Button("Участок могилы", systemImage: "rectangle") { begin(.polygon, category: .grave) }
                         Button("Вход", systemImage: "door.left.hand.open") { begin(.point, category: .entrance) }
                         Button("Урна", systemImage: "trash") { begin(.point, category: .wasteBin) }
+                        Button("Дерево", systemImage: "tree") { begin(.point, category: .tree) }
+                        Button("Кустарник", systemImage: "leaf") { begin(.point, category: .shrub) }
                         Button("Свалка — точка", systemImage: "exclamationmark.triangle") { begin(.point, category: .wasteDump) }
                         Button("Граница свалки", systemImage: "square.dashed") { begin(.polygon, category: .wasteDump) }
                         Button("Дорога", systemImage: "road.lanes") { begin(.polyline, category: .road) }

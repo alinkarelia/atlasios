@@ -85,6 +85,7 @@ public enum FeatureGeometry: Codable, Hashable, Sendable {
 public enum FeatureCategory: String, Codable, CaseIterable, Sendable {
     case grave, sector, path, building, boundary, other
     case cemetery, road, entrance, wasteBin, fence, wasteDump
+    case tree, shrub
 }
 
 /// Human review is distinct from measured positional accuracy.

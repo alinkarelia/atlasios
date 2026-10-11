@@ -31,6 +31,8 @@ enum SurveyMapStyle {
         case .entrance: .green
         case .wasteBin: .mint
         case .wasteDump: .red
+        case .tree: .green
+        case .shrub: .mint
         case .fence, .boundary: .yellow
         case .building: .pink
         case .other: .gray
@@ -46,6 +48,8 @@ enum SurveyMapStyle {
         case .entrance: "door.left.hand.open"
         case .wasteBin: "trash"
         case .wasteDump: "exclamationmark.triangle"
+        case .tree: "tree"
+        case .shrub: "leaf"
         case .fence: "line.3.horizontal"
         case .boundary: "point.3.connected.trianglepath.dotted"
         case .building: "building.2"
@@ -109,29 +113,47 @@ enum SurveyMapStyle {
 enum SurveyMapHitTest {
     static func geographic(_ point: CGPoint, feature: AtlasFeature,
                            project: (GeographicCoordinate) -> CGPoint?) -> Bool {
+        selectionDistance(point, feature: feature, project: project).isFinite
+    }
+    static func selectGeographic(_ point: CGPoint, features: [AtlasFeature],
+                                 project: (GeographicCoordinate) -> CGPoint?) -> AtlasFeature? {
+        var selected: AtlasFeature?, nearest = CGFloat.infinity, selectedLayer = Int.max
+        for feature in features.reversed() {
+            let candidate = selectionDistance(point, feature: feature, project: project), candidateLayer = layer(feature)
+            guard candidate.isFinite else { continue }
+            if candidateLayer < selectedLayer || (candidateLayer == selectedLayer && candidate < nearest) {
+                selected = feature; nearest = candidate; selectedLayer = candidateLayer
+            }
+        }
+        return selected
+    }
+    private static func selectionDistance(_ point: CGPoint, feature: AtlasFeature,
+                                          project: (GeographicCoordinate) -> CGPoint?) -> CGFloat {
         func ring(_ coordinates: [GeographicCoordinate]) -> [CGPoint]? {
             let points = coordinates.compactMap(project)
             return points.count == coordinates.count && points.allSatisfy { $0.x.isFinite && $0.y.isFinite } ? points : nil
         }
         switch feature.geometry {
         case let .geographicPoint(coordinate):
-            guard let vertex = project(coordinate) else { return false }
-            return hypot(point.x - vertex.x, point.y - vertex.y) <= 22
+            guard let vertex = project(coordinate) else { return .infinity }
+            let separation = hypot(point.x - vertex.x, point.y - vertex.y)
+            return separation <= 22 ? separation : .infinity
         case let .geographicPolyline(line):
-            guard let points = ring(line.vertices) else { return false }
-            return distance(point, line: points, closed: false) <= 14
+            guard let points = ring(line.vertices) else { return .infinity }
+            let separation = distance(point, line: points, closed: false)
+            return separation <= 14 ? separation : .infinity
         case let .geographicPolygon(polygon):
-            guard let outer = ring(polygon.vertices) else { return false }
+            guard let outer = ring(polygon.vertices) else { return .infinity }
             var holes: [[CGPoint]] = []
             for coordinates in polygon.holes {
-                guard let hole = ring(coordinates) else { return false }
+                guard let hole = ring(coordinates) else { return .infinity }
                 holes.append(hole)
             }
-            if holes.contains(where: { contains(point, ring: $0) }) { return false }
-            if distance(point, line: outer, closed: true) <= 6 { return true }
-            if holes.contains(where: { distance(point, line: $0, closed: true) <= 6 }) { return true }
-            return contains(point, ring: outer)
-        default: return false
+            if holes.contains(where: { contains(point, ring: $0) }) { return .infinity }
+            if contains(point, ring: outer) { return 0 }
+            let separation = distance(point, line: outer, closed: true)
+            return separation <= 6 ? separation : .infinity
+        default: return .infinity
         }
     }
 

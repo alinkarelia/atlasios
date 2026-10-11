@@ -140,8 +140,14 @@ actor VideoTourImporter {
         try Task.checkCancellation()
         // Recheck actual movie bytes after extraction. An altered source cannot
         // silently be claimed as the origin of an accepted route batch.
-        guard try streamingHash(movieURL) == movieHash,
-              SHA256.hash(data: Data(contentsOf: directory.appendingPathComponent(source.metadataRelativePath)))
+        let metadataAfter = try boundedData(directory.appendingPathComponent(source.metadataRelativePath),
+            within: directory, maximumBytes: maximumMetadataBytes)
+        let parentAfter = try readParent(folder: folder, projectID: projectID, directory: directory)
+        let retainedBytes = try regularFileSize(movieURL, within: directory)
+        let retainedHash = try streamingHash(movieURL)
+        guard retainedBytes == source.videoByteCount,
+              retainedHash == movieHash, parentAfter.sha256 == source.parentManifestSHA256,
+              SHA256.hash(data: metadataAfter)
                 .map({ String(format: "%02x", $0) }).joined() == source.metadataSHA256 else {
             throw VideoTourError.sourceChanged
         }
@@ -215,6 +221,14 @@ actor VideoTourImporter {
               url.resolvingSymlinksInPath().path.hasPrefix(root.resolvingSymlinksInPath().path+"/") else {
             throw VideoTourError.invalidSource
         }
+        let relative = String(url.standardizedFileURL.path.dropFirst(root.standardizedFileURL.path.count+1))
+        var component = root.standardizedFileURL
+        for part in relative.split(separator: "/") {
+            component.appendPathComponent(String(part))
+            guard (try? component.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true else {
+                throw VideoTourError.invalidSource
+            }
+        }
     }
     private func regularFileSize(_ url: URL, within root: URL) throws -> Int64 {
         try safePath(url, within: root)
@@ -234,9 +248,12 @@ actor VideoTourImporter {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
         var hash = SHA256()
+        var bytes: Int64 = 0
         while true {
             try Task.checkCancellation()
             guard let data = try handle.read(upToCount: 1_024*1_024), !data.isEmpty else { break }
+            bytes += Int64(data.count)
+            guard bytes <= maximumVideoBytes else { throw VideoTourError.sourceChanged }
             hash.update(data: data)
         }
         return hash.finalize().map { String(format: "%02x", $0) }.joined()

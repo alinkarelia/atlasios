@@ -202,7 +202,7 @@ export function featureData(input: unknown, reference: Reference): Record<string
   const data = object(input);
   keys(data, ['label', 'category', 'geometry', 'attributes', 'notes', 'reviewStatus', 'links']);
   text(data.label, 'label', 160, 1);
-  enumeration(data.category, ['grave', 'sector', 'path', 'building', 'boundary', 'other', 'cemetery', 'road', 'entrance', 'wasteBin', 'fence', 'wasteDump'], 'category');
+  enumeration(data.category, ['grave', 'sector', 'path', 'building', 'boundary', 'other', 'cemetery', 'road', 'entrance', 'wasteBin', 'fence', 'wasteDump', 'tree', 'shrub'], 'category');
   geometry(data.geometry, reference);
   const attributes = object(data.attributes ?? {}, 'attributes');
   if (Object.keys(attributes).length > 64) invalid('Too many attributes');

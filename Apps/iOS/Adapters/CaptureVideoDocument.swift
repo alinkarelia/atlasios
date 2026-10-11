@@ -23,11 +23,15 @@ struct CaptureVideoFrameDescriptor: Codable, Sendable {
     /// Column-major 3×3 camera intrinsic matrix in source-image pixels.
     let intrinsics: [Float]
     let trackingState: String
+    /// ARKit's image-to-view transform using a full-image viewport, without
+    /// aspect-fill cropping. Optional for older metadata and synthetic input.
+    var normalizedImageToDisplayTransform: [Float]? = nil
 
     var isValid: Bool {
         arTimestamp.isFinite && arTimestamp >= 0 && observedAt.timeIntervalSince1970.isFinite
             && cameraTransform.count == 16 && cameraTransform.allSatisfy(\.isFinite)
             && intrinsics.count == 9 && intrinsics.allSatisfy(\.isFinite)
+            && normalizedImageToDisplayTransform.map({ $0.count == 6 && $0.allSatisfy(\.isFinite) }) != false
     }
 }
 
@@ -55,6 +59,7 @@ struct CaptureVideoDocument: Codable, Sendable {
     var sourceHeight = 0
     var encodedWidth = 0
     var encodedHeight = 0
+    var normalizedImageToDisplayTransform: [Float]?
     var targetFramesPerSecond = 15
     var durationSeconds: Double = 0
     var counts = CaptureVideoCounts()
@@ -79,6 +84,8 @@ struct CaptureVideoDocument: Codable, Sendable {
             && videoFile == "video.mov" && counts.encodedFrames > 0 && durationSeconds > 0
             && durationSeconds.isFinite && sourceWidth > 0 && sourceHeight > 0
             && encodedWidth > 0 && encodedHeight > 0 && max(encodedWidth, encodedHeight) <= 1920
+            && normalizedImageToDisplayTransform.map({ Self.trackTransform(normalized: $0,
+                width: encodedWidth, height: encodedHeight, orientation: identity.orientation) != nil }) != false
             && firstARTimestamp.map({ $0.isFinite && $0 >= 0 }) == true
             && counts.sourceFrames >= counts.encodedFrames && counts.droppedFrames >= 0 && counts.rateLimitedFrames >= 0
             && !keyframes.isEmpty && keyframes.count <= 7_200 && keyframes.allSatisfy {
@@ -93,6 +100,26 @@ struct CaptureVideoDocument: Codable, Sendable {
         let w = max(2, Int(Double(width) * scale) / 2 * 2)
         let h = max(2, Int(Double(height) * scale) / 2 * 2)
         return (w, h)
+    }
+
+    static func trackTransform(normalized: [Float], width: Int, height: Int,
+                               orientation: CaptureVideoOrientation) -> [Double]? {
+        guard normalized.count == 6, normalized.allSatisfy(\.isFinite), width > 0, height > 0 else { return nil }
+        let values = normalized.map(Double.init)
+        guard abs(abs(values[0] * values[3] - values[1] * values[2]) - 1) < 0.001 else { return nil }
+        let corners = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)].map { x, y in
+            (values[0] * x + values[2] * y + values[4], values[1] * x + values[3] * y + values[5])
+        }
+        // A source image must remain complete. Never accept a viewport crop.
+        guard abs((corners.map(\.0).min() ?? 1)) < 0.001,
+              abs((corners.map(\.0).max() ?? 0) - 1) < 0.001,
+              abs((corners.map(\.1).min() ?? 1)) < 0.001,
+              abs((corners.map(\.1).max() ?? 0) - 1) < 0.001 else { return nil }
+        let portrait = orientation == .portrait || orientation == .portraitUpsideDown
+        let displayWidth = Double(portrait ? height : width), displayHeight = Double(portrait ? width : height)
+        return [values[0] * displayWidth / Double(width), values[1] * displayHeight / Double(width),
+                values[2] * displayWidth / Double(height), values[3] * displayHeight / Double(height),
+                values[4] * displayWidth, values[5] * displayHeight]
     }
 }
 

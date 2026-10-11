@@ -65,7 +65,7 @@ enum CaptureContinuationPolicy {
               manifestURL.lastPathComponent == "manifest.json" else { throw ValidationError.invalid }
         let directory = manifestURL.deletingLastPathComponent().standardizedFileURL
         let managed = outputDirectory.standardizedFileURL.resolvingSymlinksInPath()
-        guard directory.deletingLastPathComponent().resolvingSymlinksInPath() == managed else {
+        guard directory.deletingLastPathComponent().resolvingSymlinksInPath().path == managed.path else {
             throw ValidationError.invalid
         }
         try requireDirectory(directory)

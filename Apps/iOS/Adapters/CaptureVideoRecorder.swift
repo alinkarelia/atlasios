@@ -123,7 +123,16 @@ final class CaptureVideoRecorder: @unchecked Sendable {
         ]
         let track = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
         track.expectsMediaDataInRealTime = true
-        track.transform = orientationTransform(width: dimensions.width, height: dimensions.height)
+        if let normalized = lease.descriptor.normalizedImageToDisplayTransform {
+            guard let values = CaptureVideoDocument.trackTransform(normalized: normalized,
+                width: dimensions.width, height: dimensions.height, orientation: identity.orientation) else {
+                throw CaptureVideoError.unsupportedImage
+            }
+            track.transform = CGAffineTransform(a: values[0], b: values[1], c: values[2], d: values[3], tx: values[4], ty: values[5])
+            document.normalizedImageToDisplayTransform = normalized
+        } else {
+            track.transform = orientationTransform(width: dimensions.width, height: dimensions.height)
+        }
         guard output.canAdd(track) else { throw CaptureVideoError.encoderUnavailable }
         output.add(track)
         let pixels = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: track,

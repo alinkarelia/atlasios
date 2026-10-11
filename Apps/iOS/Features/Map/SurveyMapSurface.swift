@@ -51,10 +51,8 @@ struct SurveyMapSurface: View {
                 if isDrawing {
                     guard let coordinate = proxy.convert(point, from: .local) else { return }
                     onTap(GeographicCoordinate(longitude: coordinate.longitude, latitude: coordinate.latitude))
-                } else if let feature = features.reversed().first(where: { feature in
-                    SurveyMapHitTest.geographic(point, feature: feature) { coordinate in
-                        proxy.convert(SurveyMapStyle.coordinate(coordinate), to: .local)
-                    }
+                } else if let feature = SurveyMapHitTest.selectGeographic(point, features: features, project: { coordinate in
+                    proxy.convert(SurveyMapStyle.coordinate(coordinate), to: .local)
                 }) {
                     onSelect(feature)
                 }

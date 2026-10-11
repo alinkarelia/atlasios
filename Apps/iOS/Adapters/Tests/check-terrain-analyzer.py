@@ -31,6 +31,7 @@ errors = declaration(core,"public enum TerrainSurveyError:")
 checkpoint = declaration(native,"private struct Checkpoint:").replace("private struct", "struct", 1)
 sampler = declaration(native,"private func surfaceSamples(").replace("private func", "func", 1)
 vertical = declaration(native,"private func verticalSamples(").replace("private func", "func", 1)
+spatial = declaration(native,"private func spatialSamples(").replace("private func", "func", 1)
 fence_class = declaration(fence,"public enum FenceSurfaceClassification:")
 fence_input = declaration(fence,"public struct FenceTriangle:")
 
@@ -109,6 +110,21 @@ tests = r'''
         expect(bounded.count <= 17,"whole-survey allocation can bound per-anchor vertical samples")
         let boundedGround = try await reader.surfaceSamples({ var item = mesh(); item.triangleCount = repeated.triangleCount; item.indices = repeated.indices; return item }(),faceBudget:17)
         expect(boundedGround.count <= 17*4,"whole-survey allocation can bound per-anchor ground samples")
+        let canopy = try await reader.spatialSamples(mesh(),frameID:frame,faceBudget:17)
+        expect(canopy.count == 1,"actual horizontal unknown canopy faces remain available to 3D shape review")
+        expect(canopy[0].frameID == frame && canopy[0].classification == .unknown,"3D sampling retains local frame without plant semantic claims")
+        let trunk = try await reader.spatialSamples(standing,frameID:frame,faceBudget:17)
+        expect(trunk.count == 1,"vertical observed stem faces remain available beside canopy geometry")
+        let labelledWall = try await reader.spatialSamples(mesh(classification:1),frameID:frame,faceBudget:17)
+        expect(labelledWall.count == 1 && labelledWall[0].classification == .wall,"native wall labels stay excluded by vegetation heuristic")
+        for code:UInt8 in [2,3,4,5,6,7] {
+            let ignored = try await reader.spatialSamples(mesh(classification:code),frameID:frame,faceBudget:17)
+            expect(ignored.isEmpty,"known floor/ceiling/furniture never becomes plant input")
+        }
+        let boundedSpatial = try await reader.spatialSamples(repeated,frameID:frame,faceBudget:17)
+        expect(boundedSpatial.count <= 17,"whole-survey spatial canopy allocation remains bounded")
+        let largeSpatial = try await reader.spatialSamples(mesh([[0,0,0],[0,1.5,0],[0.5,0,0]]),frameID:frame,faceBudget:17)
+        expect(largeSpatial.isEmpty,"long mesh spans do not fabricate tree crown surfaces")
         print("Terrain mesh sampler regression: \(count) checks passed")
     }
 }
@@ -118,6 +134,6 @@ with tempfile.TemporaryDirectory(prefix="terraview-terrain-sampler-") as directo
     folder = Path(directory)
     source = folder / "TerrainSampler.swift"
     executable = folder / "check"
-    source.write_text("import Foundation\n" + point + "\n" + errors + "\n" + fence_class + "\n" + fence_input + "\nactor Reader {\n" + checkpoint + "\n" + sampler + "\n" + vertical + "\n}\n" + tests)
+    source.write_text("import Foundation\n" + point + "\n" + errors + "\n" + fence_class + "\n" + fence_input + "\nactor Reader {\n" + checkpoint + "\n" + sampler + "\n" + vertical + "\n" + spatial + "\n}\n" + tests)
     subprocess.run(compiler + ["-swift-version","6","-strict-concurrency=complete","-parse-as-library",str(source),"-o",str(executable)],check=True)
     subprocess.run([str(executable)],check=True)

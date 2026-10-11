@@ -16,7 +16,7 @@ test('cemetery geometry accepts synthesized Swift points and open lines without 
   const geographicLine = { geographicPolyline: { _0: { vertices: [{ longitude: 37, latitude: 55 }, { longitude: 37.0001, latitude: 55.0001 }] } } };
   geometry(metricPoint, local); geometry(metricLine, local);
   geometry(geographicPoint, global); geometry(geographicLine, global);
-  for (const category of ['cemetery', 'road', 'entrance', 'wasteBin', 'fence', 'wasteDump']) {
+  for (const category of ['cemetery', 'road', 'entrance', 'wasteBin', 'fence', 'wasteDump', 'tree', 'shrub']) {
     const source = { label: 'Объект', category, geometry: metricPoint, attributes: { 'survey.status': 'candidate' } };
     const validated = featureData(source, local);
     assert.deepEqual(validated.geometry, metricPoint);

@@ -13,6 +13,8 @@ extension FeatureCategory {
         case .entrance: "Вход"
         case .wasteBin: "Мусорный контейнер"
         case .wasteDump: "Свалка / скопление мусора"
+        case .tree: "Дерево"
+        case .shrub: "Кустарник"
         case .fence: "Ограда"
         case .building: "Здание"
         case .boundary: "Граница"

@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(CoreGraphics)
+import CoreGraphics
+#endif
 import AtlasCore
 
 enum TourProjection: String, Codable, CaseIterable, Sendable { case photograph, equirectangular360 }
@@ -59,12 +62,13 @@ struct TourManifest: Identifiable, Codable, Sendable {
     }
 }
 
-enum TourError: LocalizedError { case invalidManifest, panoramaNeedsConfirmation, sourceMissing
+enum TourError: LocalizedError { case invalidManifest, panoramaNeedsConfirmation, sourceMissing, manifestTooLarge
     var errorDescription: String? {
         switch self {
         case .invalidManifest: "Некорректный маршрут или ссылка на исходное фото."
         case .panoramaNeedsConfirmation: "Режим 360° доступен только для подтверждённой полной эквидистантной панорамы 2:1. Обычный снимок остаётся обычным снимком."
         case .sourceMissing: "Исходная фотография точки недоступна. Верните оригинал в проект или выберите другое фото."
+        case .manifestTooLarge: "Маршрут превышает 32 МБ. Разделите его на несколько маршрутов. Предыдущее сохранение осталось без изменений."
         }
     }
 }
@@ -177,6 +181,7 @@ enum TourPolicy {
 }
 
 actor TourStore {
+    static let maximumManifestBytes = 32 * 1_024 * 1_024
     func load(projectID: UUID, directory: URL) throws -> [TourManifest] {
         let folder = directory.appendingPathComponent("Tours",isDirectory:true)
         guard FileManager.default.fileExists(atPath:folder.path) else { return [] }
@@ -186,7 +191,8 @@ actor TourStore {
         guard files.count <= 100 else { throw TourError.invalidManifest }
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
         return try files.map { file in
-            guard safe(file,inside:directory),let bytes = try file.resourceValues(forKeys:[.fileSizeKey]).fileSize,bytes > 0,bytes < 8*1_024*1_024 else { throw TourError.invalidManifest }
+            guard safe(file,inside:directory),let bytes = try file.resourceValues(forKeys:[.fileSizeKey]).fileSize,bytes > 0 else { throw TourError.invalidManifest }
+            guard bytes <= Self.maximumManifestBytes else { throw TourError.manifestTooLarge }
             let result = try decoder.decode(TourManifest.self,from:Data(contentsOf:file))
             try TourPolicy.validate(result,projectID:projectID)
             guard file.lastPathComponent == "\(result.id.uuidString).tour.json" else { throw TourError.invalidManifest }
@@ -201,7 +207,9 @@ actor TourStore {
         let url = folder.appendingPathComponent("\(tour.id.uuidString).tour.json")
         guard safe(url,inside:directory) else { throw TourError.invalidManifest }
         let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601; encoder.outputFormatting = [.prettyPrinted,.sortedKeys]
-        try encoder.encode(tour).write(to:url,options:[.atomic,.completeFileProtectionUntilFirstUserAuthentication])
+        let data = try encoder.encode(tour)
+        guard data.count <= Self.maximumManifestBytes else { throw TourError.manifestTooLarge }
+        try data.write(to:url,options:[.atomic,.completeFileProtectionUntilFirstUserAuthentication])
         return url
     }
     private func safe(_ url: URL, inside root: URL) -> Bool {

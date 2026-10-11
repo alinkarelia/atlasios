@@ -8,6 +8,10 @@ swift_compiler="${SWIFTC:-swiftc}"
   "$test_directory/../CaptureVideoDocument.swift" "$test_directory/CaptureVideoDocumentChecks.swift" \
   -o "$test_workspace/video-provenance"
 "$test_workspace/video-provenance"
+"$swift_compiler" -swift-version 6 -strict-concurrency=complete \
+  "$test_directory/../CaptureContinuation.swift" "$test_directory/CaptureContinuationChecks.swift" \
+  -o "$test_workspace/capture-continuation"
+"$test_workspace/capture-continuation"
 if [[ "$(uname -s)" == "Darwin" ]]; then
   "$swift_compiler" -swift-version 6 -strict-concurrency=complete \
     "$test_directory/../CaptureVideoDocument.swift" "$test_directory/../CaptureVideoRecorder.swift" \

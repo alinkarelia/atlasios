@@ -22,6 +22,8 @@ struct TerrainSurveyScreen: View {
     @State private var savedURL: URL?
     @State private var selectedControl: MetricPoint2D?
     @State private var analysisTask: Task<Void,Never>?
+    @State private var loadingSelected = false
+    @State private var selectionLoadID = UUID()
 
     init(project: AtlasProject, cemetery: AtlasFeature, directory: URL, onConfirmedFeature: @escaping (AtlasFeature) async throws -> Void,
          onSurveySaved: (() -> Void)? = nil, onCaptureSaved: ((URL) -> Void)? = nil) {
@@ -33,7 +35,7 @@ struct TerrainSurveyScreen: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 18) {
                 Label("Рельеф и точки для проверки", systemImage:"mountain.2").font(.title2.bold())
-                Text("LiDAR показывает видимую землю и конструкции. Выступ или впадина — повод осмотреть место, а не доказательство захоронения.")
+                Text("LiDAR показывает видимую землю и конструкции. Формы, похожие на ограду, дерево или кустарник, предлагаются для проверки. Выступ или впадина не доказывают захоронение.")
                     .font(.subheadline).foregroundStyle(Color.atlasMuted)
                 Button { showCapture = true } label: { Label("Снять участок LiDAR",systemImage:"viewfinder") }
                     .buttonStyle(AtlasPrimaryButtonStyle()).disabled(busy).accessibilityIdentifier("terrain.capture")
@@ -41,14 +43,14 @@ struct TerrainSurveyScreen: View {
                     Text("Сначала медленно обойдите участок: покажите землю, соседние ровные поверхности и видимые детали. После сохранения здесь появится рельеф.")
                         .font(.subheadline).padding(18).background(Color.atlasCard,in:RoundedRectangle(cornerRadius:18))
                 } else {
-                    Picker("Фрагмент съёмки",selection:$selectedFrame) {
+                    Picker("Фрагмент съёмки",selection:Binding(get:{selectedFrame},set:{ selectedFrame = $0; survey = nil; savedURL = nil; loadingSelected = true; Task { await loadSelected() } })) {
                         Text("Выберите фрагмент").tag(Optional<UUID>.none)
                         ForEach(frames) { frame in Text(frame.createdAt.formatted(date:.abbreviated,time:.shortened)+" · "+String(frame.frameID.uuidString.prefix(6))).tag(Optional(frame.frameID)) }
                     }.disabled(busy)
                     Button { analysisTask = Task { await analyzeSelected() } } label: {
                         if busy { Label("Анализируем поверхность…",systemImage:"hourglass") }
                         else { Label("Построить / обновить рельеф",systemImage:"square.stack.3d.up") }
-                    }.buttonStyle(AtlasSecondaryButtonStyle()).disabled(busy).accessibilityIdentifier("terrain.analyze")
+                    }.buttonStyle(AtlasSecondaryButtonStyle()).disabled(busy || loadingSelected || selectedFrame == nil).accessibilityIdentifier("terrain.analyze")
                 }
                 if let survey {
                     Text("\(survey.cells.count) измеренных ячеек · шаг \(survey.cellSize.formatted()) м")
@@ -88,7 +90,6 @@ struct TerrainSurveyScreen: View {
             .navigationTitle(cemetery.label).navigationBarTitleDisplayMode(.inline)
             .task { await reload() }
             .onDisappear { analysisTask?.cancel(); analysisTask = nil }
-            .onChange(of:selectedFrame) { _, _ in Task { await loadSelected() } }
             .fullScreenCover(isPresented:$showCapture) {
                 CaptureScreen(project:project,outputDirectory:directory,onSaved:{ manifest in
                     onCaptureSaved?(manifest); showCapture = false
@@ -104,6 +105,8 @@ struct TerrainSurveyScreen: View {
             }
             .confirmationDialog("Как записать проверенную оператором точку?",isPresented:Binding(get:{selectedCandidate != nil},set:{ if !$0 { selectedCandidate = nil } }),titleVisibility:.visible,presenting:selectedCandidate) { candidate in
                 if candidate.kind == .fenceLikeStructure { Button("Ограда / ограждение · проверить") { Task { await confirm(candidate,category:.fence) } } }
+                else if candidate.kind == .treeLikeStructure { Button("Дерево · подтвердить видимый объект") { Task { await confirm(candidate,category:.tree) } } }
+                else if candidate.kind == .shrubLikeStructure { Button("Кустарник · подтвердить видимый объект") { Task { await confirm(candidate,category:.shrub) } } }
                 else { Button("Возможное захоронение · личность неизвестна") { Task { await confirm(candidate,category:.grave) } } }
                 Button("Другой объект / препятствие") { Task { await confirm(candidate,category:.other) } }
                 Button("Отмена",role:.cancel) { selectedCandidate = nil }
@@ -116,7 +119,7 @@ struct TerrainSurveyScreen: View {
     private func candidateRow(_ candidate: TerrainCandidate) -> some View {
         VStack(alignment:.leading,spacing:10) {
             HStack {
-                Text(candidate.kind == .raisedSurface ? "Возвышение" : candidate.kind == .depression ? "Впадина" : candidate.kind == .fenceLikeStructure ? "Вертикальное ограждение?" : "Линейное препятствие").font(.headline)
+                Label(terrainCandidateTitle(candidate.kind),systemImage:terrainCandidateIcon(candidate.kind)).font(.headline).foregroundStyle(terrainCandidateColor(candidate.kind))
                 Spacer()
                 Text(candidate.state == .proposed ? "Проверить" : candidate.state == .confirmed ? "Точка подтверждена" : "Отклонено")
                     .font(.caption).foregroundStyle(candidate.state == .rejected ? Color.atlasMuted : Color.atlasAccent)
@@ -137,10 +140,9 @@ struct TerrainSurveyScreen: View {
         }.padding(16).background(Color.atlasCard,in:RoundedRectangle(cornerRadius:18))
     }
 
-    private func reload(selectNewest: Bool = false) async {
+    private func reload() async {
         do {
             frames = try await analyzer.availableFrames(directory:directory,projectID:project.id)
-            if selectNewest || selectedFrame == nil { selectedFrame = frames.first?.frameID }
             await loadSelected()
         } catch { self.error = error.localizedDescription }
     }
@@ -159,13 +161,15 @@ struct TerrainSurveyScreen: View {
         } catch { self.error = error.localizedDescription }
     }
     private func loadSelected() async {
-        guard let selectedFrame else { survey = nil; return }
+        let ticket = UUID(); selectionLoadID = ticket; loadingSelected = true; survey = nil; savedURL = nil; selectedControl = nil
+        defer { if selectionLoadID == ticket { loadingSelected = false } }
+        guard let selectedFrame else { return }
         do {
             let loaded = try await analyzer.load(cemeteryID:cemetery.id,frameID:selectedFrame,projectID:project.id,directory:directory)
-            guard self.selectedFrame == selectedFrame else { return }
+            guard self.selectedFrame == selectedFrame,selectionLoadID == ticket else { return }
             survey = loaded; selectedControl = nil
             savedURL = loaded.map { directory.appendingPathComponent("TerrainSurveys/\($0.cemeteryID.uuidString)-\($0.frameID.uuidString).terrain.json") }
-        } catch { self.error = error.localizedDescription }
+        } catch { if selectionLoadID == ticket { self.error = error.localizedDescription } }
     }
     private func analyzeSelected() async {
         guard !busy, let frame = frames.first(where: { $0.frameID == selectedFrame }) else { return }
@@ -235,8 +239,10 @@ struct TerrainSurveyScreen: View {
                     "sourceFrameID":current.frameID.uuidString,"survey.sourceCandidateID":candidate.id.uuidString,"survey.status":"confirmed","grave.identityStatus":"unknown","grave.evidenceType":"surfaceAnomaly",
                     "positionalUncertaintyMeters":current.registration?.positionalUncertaintyMeters.map { String($0) } ?? "unknown"]
                 if category != .grave { attributes.removeValue(forKey:"grave.identityStatus"); attributes.removeValue(forKey:"grave.evidenceType") }
-                let feature = AtlasFeature(id:featureID,projectID:project.id,label:category == .grave ? "Возможное захоронение · проверить" : category == .fence ? "Ограждение · проверить" : "Объект рельефа · проверить",category:category,geometry:geometry,attributes:attributes,
-                    notes:candidate.evidence+"\nОператор подтвердил точку осмотра; наличие захоронения и личность не установлены.",reviewStatus:.needsReview)
+                let label = category == .grave ? "Возможное захоронение · проверить" : category == .fence ? "Ограждение · проверить" : category == .tree ? "Дерево · проверить" : category == .shrub ? "Кустарник · проверить" : "Объект рельефа · проверить"
+                let note = category == .grave ? "Оператор подтвердил точку осмотра; наличие захоронения и личность не установлены." : "Оператор подтвердил видимый объект. Его геометрия и точность положения требуют независимой проверки."
+                let feature = AtlasFeature(id:featureID,projectID:project.id,label:label,category:category,geometry:geometry,attributes:attributes,
+                    notes:candidate.evidence+"\n"+note,reviewStatus:.needsReview)
                 pendingFeature = feature
             }
             if let pendingFeature {
@@ -277,7 +283,10 @@ private struct TerrainLocalPreview: View {
                 }
                 for candidate in survey.candidates where candidate.state != .rejected {
                     var path = Path(); path.addLines((candidate.lineVertices ?? candidate.boundary).map { CGPoint(x:($0.x-minX)*scale,y:($0.y-minZ)*scale) }); if candidate.lineVertices == nil { path.closeSubpath() }
-                    context.stroke(path,with:.color(.white),style:StrokeStyle(lineWidth:2,dash:[5,4]))
+                    let color = terrainCandidateColor(candidate.kind)
+                    context.stroke(path,with:.color(color),style:StrokeStyle(lineWidth:2,dash:[5,4]))
+                    let center = CGPoint(x:(candidate.center.x-minX)*scale,y:(candidate.center.y-minZ)*scale)
+                    context.fill(Path(ellipseIn:CGRect(x:center.x-5,y:center.y-5,width:10,height:10)),with:.color(color))
                 }
                 if let selected {
                     let center = CGPoint(x:(selected.x-minX)*scale,y:(selected.y-minZ)*scale)
@@ -312,7 +321,7 @@ private struct TerrainGeographicPreview: View {
                 }
                 ForEach(visibleCandidates) { candidate in
                     if let registration = survey.registration, let point = try? registration.coordinate(for:candidate.center,frameID:survey.frameID),insideCemetery(point) {
-                        Annotation("Проверить",coordinate:.init(latitude:point.latitude,longitude:point.longitude)) { Image(systemName:"questionmark.circle.fill").foregroundStyle(.orange).font(.title3) }
+                        Annotation(terrainCandidateTitle(candidate.kind),coordinate:.init(latitude:point.latitude,longitude:point.longitude)) { Image(systemName:terrainCandidateIcon(candidate.kind)).foregroundStyle(terrainCandidateColor(candidate.kind)).font(.title3) }
                         if let line = candidate.lineVertices {
                             let coordinates = line.compactMap { try? registration.coordinate(for:$0,frameID:survey.frameID) }
                             if coordinates.count == line.count,coordinates.allSatisfy(insideCemetery) { MapPolyline(coordinates:coordinates.map { .init(latitude:$0.latitude,longitude:$0.longitude) }).stroke(.orange,lineWidth:3) }
@@ -417,6 +426,32 @@ private func terrainColor(_ residual: Double) -> Color {
     if residual >= 0.12 { return .orange }
     if residual <= -0.12 { return .blue }
     return Color.atlasAccent.opacity(0.6)
+}
+
+private func terrainCandidateTitle(_ kind:TerrainCandidateKind) -> String {
+    switch kind {
+    case .raisedSurface: "Возвышение"
+    case .depression: "Впадина"
+    case .linearObstacle: "Линейное препятствие"
+    case .fenceLikeStructure: "Вертикальное ограждение?"
+    case .treeLikeStructure: "Форма похожа на дерево?"
+    case .shrubLikeStructure: "Форма похожа на кустарник?"
+    }
+}
+private func terrainCandidateColor(_ kind:TerrainCandidateKind) -> Color {
+    switch kind {
+    case .treeLikeStructure: .green
+    case .shrubLikeStructure: .mint
+    default: .orange
+    }
+}
+private func terrainCandidateIcon(_ kind:TerrainCandidateKind) -> String {
+    switch kind {
+    case .treeLikeStructure: "tree.fill"
+    case .shrubLikeStructure: "leaf.fill"
+    case .fenceLikeStructure: "line.3.horizontal"
+    default: "questionmark.circle.fill"
+    }
 }
 
 private func terrainContains(_ point: GeographicCoordinate, in polygon: GeographicPolygon) -> Bool {
