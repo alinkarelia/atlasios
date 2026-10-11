@@ -370,7 +370,35 @@ final class AtlasUITests: XCTestCase {
         scrollToControl(element("burial.status.summary", in: app), in: app, towardTop: true)
         screenshot("18-burial-unknown", app: app)
 
-        scrollAndTap("burial.history", in: app)
+        let historyButton = app.buttons["burial.history"]
+        let cardNavigation = app.navigationBars["Карточка захоронения"]
+        XCTAssertTrue(cardNavigation.waitForExistence(timeout: 10))
+        let window = app.frame
+        let top = cardNavigation.frame.maxY + 8
+        // Leave room above the home indicator. A partially clipped Form row
+        // can report isHittable even while its actionable centre is offscreen.
+        let bottom = window.maxY - 60
+        let viewport = CGRect(x: window.minX, y: top, width: window.width, height: bottom - top)
+        var historyFullyVisible = false
+        for _ in 0..<10 {
+            let frame = historyButton.exists ? historyButton.frame : CGRect.zero
+            if historyButton.exists && historyButton.isHittable && viewport.contains(frame) {
+                historyFullyVisible = true
+                break
+            }
+            let towardTop = historyButton.exists && frame.minY < viewport.minY
+            let origin = app.coordinate(withNormalizedOffset: .zero)
+            let distance = min(240, viewport.height / 3)
+            let startY = viewport.minY + viewport.height * (towardTop ? 0.38 : 0.62)
+            let start = origin.withOffset(CGVector(dx: viewport.midX - window.minX, dy: startY - window.minY))
+            let finish = origin.withOffset(CGVector(dx: viewport.midX - window.minX,
+                dy: startY - window.minY + (towardTop ? distance : -distance)))
+            start.press(forDuration: 0.05, thenDragTo: finish)
+        }
+        XCTAssertTrue(historyFullyVisible, "The actual history button must be fully inside the visible Form before tapping")
+        guard historyFullyVisible else { return }
+        XCTAssertTrue(historyButton.isEnabled)
+        historyButton.tap()
         XCTAssertTrue(app.navigationBars["История карточки"].waitForExistence(timeout: 10))
         let revisions = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Версия "))
         XCTAssertTrue(revisions.firstMatch.waitForExistence(timeout: 15))

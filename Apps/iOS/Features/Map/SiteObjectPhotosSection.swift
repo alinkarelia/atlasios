@@ -29,7 +29,7 @@ struct SiteObjectPhotosSection: View {
                     ForEach(attached) { photo in
                         VStack {
                             Button { selected = photo } label: { BurialPhotoThumbnail(service: photos, photo: photo, directory: directory) }.buttonStyle(.plain)
-                            Button("Отвязать", role: .destructive) { photoIDs.removeAll { $0 == photo.id } }.font(.caption).disabled(busy)
+                            Button("Отвязать", role: .destructive) { photoIDs.removeAll { $0 == photo.id } }.buttonStyle(.borderless).font(.caption).disabled(busy)
                         }
                     }
                 }

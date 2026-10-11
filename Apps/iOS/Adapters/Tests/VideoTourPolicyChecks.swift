@@ -38,6 +38,16 @@ struct VideoTourPolicyChecks {
             } catch { return true }
         }
         expect(!rejects(document), "actual identity and monotonic calibrated keyframes are accepted")
+        expect(VideoTourPolicy.recordedTrackTransform(document) == [0,1,-1,0,720,0],
+               "legacy metadata without a recorded transform retains its original portrait mapping")
+        var actualTransformDocument = document
+        actualTransformDocument.normalizedImageToDisplayTransform = [0,-1,1,0,0,1]
+        expect(VideoTourPolicy.recordedTrackTransform(actualTransformDocument) == [0,-1,1,0,0,1_280],
+               "the actual recorded full-image transform takes precedence over the orientation guess")
+        expect(!rejects(actualTransformDocument), "valid actual full-image transform remains a completed source")
+        actualTransformDocument.normalizedImageToDisplayTransform = [2,0,0,2,0,0]
+        expect(VideoTourPolicy.recordedTrackTransform(actualTransformDocument) == nil && rejects(actualTransformDocument),
+               "a viewport crop cannot silently fall back to the legacy orientation guess")
         expect(rejects(document, project: UUID()), "another project cannot acquire the recording")
         expect(rejects(document, capture: UUID()), "capture identity must match the parent manifest")
         expect(rejects(document, segment: UUID()), "a selected segment never falls back to another segment")
@@ -114,6 +124,11 @@ struct VideoTourPolicyChecks {
             sourceWidth: 1_280, sourceHeight: 720, encodedWidth: 1_280, encodedHeight: 720,
             imageRotationApplied: .portrait, poseTimeOffsetSeconds: 0.0005, trackingState: "normal")
         expect(provenance.isValid, "a derived JPEG retains the exact movie and sampled pose provenance")
+        var withTransform = provenance
+        withTransform.normalizedImageToDisplayTransform = [0,-1,1,0,0,1]
+        expect(withTransform.isValid, "derived metadata preserves the actual full-image display transform")
+        withTransform.normalizedImageToDisplayTransform = [2,0,0,2,0,0]
+        expect(!withTransform.isValid, "derived metadata rejects a cropped source transform")
         let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
         let restored = try decoder.decode(VideoFrameProvenance.self, from: encoder.encode(provenance))

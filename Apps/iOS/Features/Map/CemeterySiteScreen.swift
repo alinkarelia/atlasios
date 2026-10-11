@@ -97,6 +97,7 @@ struct CemeterySiteScreen: View {
                     facilitiesSection
                     Section("История и состояние записи") {
                         Button("История изменений", systemImage: "clock.arrow.circlepath") { showHistory = true }
+                            .buttonStyle(.borderless)
                         SurveyRecordActions(feature: cemetery, disabled: saving || photoBusy || photoIssue != nil) { action in Task { await save(action: action) } }
                         Text("Изменение состояния кладбища не удаляет связанные захоронения и исходные фотографии.")
                             .font(.footnote).foregroundStyle(Color.atlasMuted)

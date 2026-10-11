@@ -120,7 +120,7 @@ actor VideoTourImporter {
             guard actualSeconds.isFinite, actualSeconds >= 0, abs(offset) <= VideoTourPolicy.maximumPoseTimeOffset else {
                 throw VideoTourError.frameTimeMismatch
             }
-            let provenance = VideoFrameProvenance(captureID: source.captureID, segmentID: source.segmentID,
+            var provenance = VideoFrameProvenance(captureID: source.captureID, segmentID: source.segmentID,
                 frameID: source.frameID, sourceVideoRelativePath: source.videoRelativePath,
                 sourceVideoSHA256: movieHash, sourceMetadataSHA256: source.metadataSHA256,
                 requestedVideoSeconds: key.videoSeconds, actualVideoSeconds: actualSeconds,
@@ -129,6 +129,7 @@ actor VideoTourImporter {
                 sourceHeight: current.document.sourceHeight, encodedWidth: current.document.encodedWidth,
                 encodedHeight: current.document.encodedHeight, imageRotationApplied: current.document.identity.orientation,
                 poseTimeOffsetSeconds: offset, trackingState: key.frame.trackingState)
+            provenance.normalizedImageToDisplayTransform = current.document.normalizedImageToDisplayTransform
             guard provenance.isValid else { throw VideoTourError.invalidSource }
             let data = try jpeg(decoded.image)
             let photo = try await evidence.saveVideoFrame(data: data, projectID: projectID,
@@ -270,16 +271,9 @@ actor VideoTourImporter {
         return Data(referencing: data)
     }
     private func expectedTransform(_ actual: CGAffineTransform, document: CaptureVideoDocument) -> Bool {
-        let w = CGFloat(document.encodedWidth), h = CGFloat(document.encodedHeight)
-        let expected: CGAffineTransform
-        switch document.identity.orientation {
-        case .portrait: expected = CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: h, ty: 0)
-        case .portraitUpsideDown: expected = CGAffineTransform(a: 0, b: -1, c: 1, d: 0, tx: 0, ty: w)
-        case .landscapeLeft: expected = .identity
-        case .landscapeRight: expected = CGAffineTransform(a: -1, b: 0, c: 0, d: -1, tx: w, ty: h)
-        }
+        guard let values = VideoTourPolicy.recordedTrackTransform(document) else { return false }
         return zip([actual.a, actual.b, actual.c, actual.d, actual.tx, actual.ty],
-                   [expected.a, expected.b, expected.c, expected.d, expected.tx, expected.ty])
+                   values.map(CGFloat.init))
             .allSatisfy { abs($0 - $1) < 0.001 }
     }
 }

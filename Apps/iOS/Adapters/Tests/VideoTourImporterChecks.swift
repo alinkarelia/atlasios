@@ -54,6 +54,7 @@ struct VideoTourImporterChecks {
         let captureRoot = root.appendingPathComponent("lidar-\(identity.captureID.uuidString)",isDirectory:true)
         let segmentRoot = captureRoot.appendingPathComponent("segments/\(identity.segmentID.uuidString)",isDirectory:true)
         let recorder = CaptureVideoRecorder(identity: identity,directory: segmentRoot) { _, _ in }
+        let actualImageTransform: [Float] = [0,-1,1,0,0,1]
         var sourceImage: CVPixelBuffer?
         let attributes: [CFString: Any] = [kCVPixelBufferIOSurfacePropertiesKey: [:]]
         expect(CVPixelBufferCreate(kCFAllocatorDefault,160,120,kCVPixelFormatType_32BGRA,
@@ -67,7 +68,8 @@ struct VideoTourImporterChecks {
         func offer(_ index: Int) {
             recorder.offer(image:sourceImage,descriptor:.init(arTimestamp: 100+Double(index)/15,
                 observedAt:Date(),cameraTransform:[1,0,0,0,0,1,0,0,0,0,1,0,Float(index)/10,0,0,1],
-                intrinsics:[140,0,0,0,140,0,80,60,1],trackingState:"normal"))
+                intrinsics:[140,0,0,0,140,0,80,60,1],trackingState:"normal",
+                normalizedImageToDisplayTransform:actualImageTransform))
         }
         offer(0)
         try await Task.sleep(for:.seconds(2))
@@ -75,6 +77,8 @@ struct VideoTourImporterChecks {
         let result = await recorder.finish(reason:"syntheticVideoTourIntegration")
         expect(result.completed,"production recorder seals its actual H264 movie")
         expect(result.document.keyframes.count >= 3,"actual movie contains several real source pose keys")
+        expect(result.document.normalizedImageToDisplayTransform == actualImageTransform,
+               "the actual AR full-image transform is retained rather than guessed from orientation")
 
         let manifestURL = captureRoot.appendingPathComponent("manifest.json")
         let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
@@ -111,6 +115,7 @@ struct VideoTourImporterChecks {
             let p = photo.videoFrameProvenance
             expect(p.isValid && p.sourceVideoSHA256 == movieHash,"derived image retains actual original movie hash")
             expect(p.frameID == identity.frameID && p.captureID == identity.captureID && p.segmentID == identity.segmentID,"derived image retains actual project capture/segment/frame provenance")
+            expect(p.normalizedImageToDisplayTransform == actualImageTransform,"derived JPEG retains the actual source transform even when it differs from legacy rotation")
             expect(abs(p.actualVideoSeconds-p.requestedVideoSeconds) <= 0.01,"actual decoder moment belongs to the selected recorded pose")
             expect(photo.cameraTransform.count == 16 && photo.capturedAt == p.sourceObservedAt,"recorded camera pose/date survive extraction")
             guard let image = CGImageSourceCreateWithData(photo.data as CFData,nil),
@@ -158,6 +163,28 @@ struct VideoTourImporterChecks {
         expect(cancelledPhotos.count == 1,"already saved evidence remains available after cancellation")
         let afterCancel = try Data(contentsOf:movieURL)
         expect(afterCancel == originalMovie,"cancellation never removes or truncates the source movie")
+        let legacyIdentity = CaptureVideoIdentity(captureID:UUID(),projectID:identity.projectID,
+            segmentID:UUID(),frameID:UUID(),startedAt:Date(),orientation:.portrait)
+        let legacyRoot = root.appendingPathComponent("lidar-\(legacyIdentity.captureID.uuidString)",isDirectory:true)
+        let legacySegment = legacyRoot.appendingPathComponent("segments/\(legacyIdentity.segmentID.uuidString)",isDirectory:true)
+        let legacyRecorder = CaptureVideoRecorder(identity:legacyIdentity,directory:legacySegment) { _, _ in }
+        legacyRecorder.offer(image:sourceImage,descriptor:.init(arTimestamp:500,observedAt:Date(),
+            cameraTransform:[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],
+            intrinsics:[140,0,0,0,140,0,80,60,1],trackingState:"normal"))
+        try await Task.sleep(for:.seconds(2))
+        let legacyResult = await legacyRecorder.finish(reason:"syntheticLegacyTransform")
+        expect(legacyResult.completed && legacyResult.document.normalizedImageToDisplayTransform == nil,
+               "older synthetic sources retain the existing legacy orientation format")
+        let legacyParent = Parent(id:legacyIdentity.captureID,projectID:identity.projectID,
+            segments:[.init(id:legacyIdentity.segmentID,frameID:legacyIdentity.frameID,startedAt:legacyIdentity.startedAt)],
+            completedAssets:["segments/\(legacyIdentity.segmentID.uuidString)/video.mov","segments/\(legacyIdentity.segmentID.uuidString)/video.json"])
+        try encoder.encode(legacyParent).write(to:legacyRoot.appendingPathComponent("manifest.json"),options:.atomic)
+        let both = try await importer.sources(projectID:identity.projectID,directory:root)
+        guard let legacySource = both.sources.first(where:{$0.segmentID == legacyIdentity.segmentID}) else { fatalError("Missing explicit legacy source") }
+        let legacyPhotos = try await importer.importStations(source:legacySource,projectID:identity.projectID,
+            directory:root,evidence:sink,maximumStations:1)
+        expect(legacyPhotos.count == 1 && legacyPhotos[0].videoFrameProvenance.normalizedImageToDisplayTransform == nil,
+               "the production importer also decodes legacy sources without inventing new display metadata")
         print("Actual MOV → photo-tour integration: \(checks) checks passed; original bytes, timestamp-matched portrait pixels, pose/frame/hash provenance, visible identity failures and mid-extraction cancellation. Synthetic encoder input; iPhone sensors not tested.")
     }
 }

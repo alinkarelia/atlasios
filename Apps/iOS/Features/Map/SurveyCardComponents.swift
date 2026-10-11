@@ -55,13 +55,18 @@ struct SurveyRecordActions: View {
         VStack(alignment: .leading, spacing: 12) {
             if SurveyFeatureLifecycle.isSoftRemoved(feature) || SurveyFeatureLifecycle.status(of: feature) == .rejected {
                 Button("Восстановить карточку", systemImage: "arrow.uturn.backward") { request(.restore) }
+                    .buttonStyle(.borderless)
             } else {
                 Button("Отклонить предположение", systemImage: "xmark.circle", role: .destructive) { request(.reject) }
+                    .buttonStyle(.borderless)
                 Button("Убрать из активных", systemImage: "archivebox", role: .destructive) { request(.remove) }
+                    .buttonStyle(.borderless)
             }
             Text("Карточка, история и исходные фотографии сохраняются. Действие можно отменить восстановлением.")
                 .font(.footnote).foregroundStyle(Color.atlasMuted)
         }
+        // Automatic Form-row buttons can dispatch every action in this VStack
+        // from one tap. Each control above must own its own activation.
         .disabled(disabled)
         .confirmationDialog("Сохранить изменения карточки и изменить её состояние?", isPresented: $confirmation, titleVisibility: .visible) {
             Button("Подтвердить") { if let pending { onAction(pending) } }

@@ -24,6 +24,9 @@ struct VideoFrameProvenance: Codable, Sendable, Equatable {
     var encodedWidth: Int
     var encodedHeight: Int
     var imageRotationApplied: CaptureVideoOrientation
+    /// The recorded ARKit full-image transform takes precedence over legacy
+    /// orientation labels. Optional keeps previously derived frames readable.
+    var normalizedImageToDisplayTransform: [Float]? = nil
     var poseTimeOffsetSeconds: Double
     var trackingState: String
 
@@ -40,6 +43,8 @@ struct VideoFrameProvenance: Codable, Sendable, Equatable {
             && VideoTourPolicy.validIntrinsics(sourceIntrinsics)
             && (2...8_192).contains(sourceWidth) && (2...8_192).contains(sourceHeight)
             && (2...1_920).contains(encodedWidth) && (2...1_920).contains(encodedHeight)
+            && normalizedImageToDisplayTransform.map({ CaptureVideoDocument.trackTransform(normalized: $0,
+                width: encodedWidth, height: encodedHeight, orientation: imageRotationApplied) != nil }) != false
             && trackingState == "normal"
     }
 }
@@ -54,6 +59,23 @@ enum VideoTourPolicy {
     }
     static func metadataPath(captureID: UUID, segmentID: UUID) -> String {
         "lidar-\(captureID.uuidString)/segments/\(segmentID.uuidString)/video.json"
+    }
+    /// Uses the encoder's exact recorded full-image transform. The old mapping
+    /// is used only when an older or synthetic source has no recorded transform.
+    static func recordedTrackTransform(_ document: CaptureVideoDocument) -> [Double]? {
+        if let normalized = document.normalizedImageToDisplayTransform {
+            return CaptureVideoDocument.trackTransform(normalized: normalized,
+                width: document.encodedWidth, height: document.encodedHeight,
+                orientation: document.identity.orientation)
+        }
+        let w = Double(document.encodedWidth), h = Double(document.encodedHeight)
+        guard w > 0, h > 0 else { return nil }
+        switch document.identity.orientation {
+        case .portrait: return [0,1,-1,0,h,0]
+        case .portraitUpsideDown: return [0,-1,1,0,0,w]
+        case .landscapeLeft: return [1,0,0,1,0,0]
+        case .landscapeRight: return [-1,0,0,-1,w,h]
+        }
     }
     static func validIntrinsics(_ values: [Float]) -> Bool {
         values.count == 9 && values.allSatisfy(\.isFinite)

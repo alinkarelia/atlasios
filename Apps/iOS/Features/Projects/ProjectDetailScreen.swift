@@ -117,6 +117,7 @@ struct ProjectDetailScreen: View {
                             .accessibilityLabel("Открыть модель \(url.lastPathComponent)")
                         Spacer()
                         ShareLink(item: url) { Image(systemName: "square.and.arrow.up") }
+                            .buttonStyle(.borderless)
                             .frame(minWidth: 44, minHeight: 44)
                             .accessibilityLabel("Выгрузить \(url.lastPathComponent)")
                     }

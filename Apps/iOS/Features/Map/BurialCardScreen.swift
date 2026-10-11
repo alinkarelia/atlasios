@@ -89,6 +89,7 @@ struct BurialCardScreen: View {
                 if !isNew {
                     Section("История и состояние записи") {
                         Button("История изменений", systemImage: "clock.arrow.circlepath") { showHistory = true }
+                            .buttonStyle(.borderless)
                             .accessibilityIdentifier("burial.history")
                         SurveyRecordActions(feature: feature, disabled: !canSave) { action in Task { await save(action: action) } }
                     }
@@ -268,7 +269,7 @@ struct BurialCardScreen: View {
                                 Button { selectedPhoto = photo } label: { BurialPhotoThumbnail(service: photos, photo: photo, directory: directory) }
                                     .buttonStyle(.plain)
                                 Button("Отвязать", role: .destructive) { metadata.photoIDs.removeAll { $0 == photo.id } }
-                                    .font(.caption).disabled(busy)
+                                    .buttonStyle(.borderless).font(.caption).disabled(busy)
                             }
                         }
                     }

@@ -67,7 +67,7 @@ struct CaptureRecoveryScreen: View {
                                 Label("Метаданные исходника", systemImage: "doc.text")
                                     .font(.caption).foregroundStyle(Color.atlasMuted)
                             }
-                        }.padding(.vertical, 6)
+                        }.buttonStyle(.borderless).padding(.vertical, 6)
                     }
                 }
             }
