@@ -85,6 +85,22 @@ private struct CaptureToolsScreen: View {
                     }.listRowBackground(Color.atlasCard)
                     Section("Полевые инструменты") {
                         NavigationLink {
+                            TourScreen(model: model, project: project)
+                        } label: { Label("Прогулка · фото и карточки", systemImage: "figure.walk") }
+                            .accessibilityIdentifier("tools.tour")
+                        NavigationLink {
+                            BuildingPlansScreen(model: model, project: project)
+                        } label: { Label("Здание · этажи и квартиры", systemImage: "building.2") }
+                            .accessibilityIdentifier("tools.buildingPlans")
+                        NavigationLink {
+                            CemeteryFieldworkScreen(model: model, project: project)
+                        } label: { Label("Обследование кладбища", systemImage: "map.fill") }
+                            .accessibilityIdentifier("tools.cemetery")
+                        NavigationLink {
+                            EmptyRoomScreen(model: model, project: project)
+                        } label: { Label("Чистое помещение · для дизайнера", systemImage: "square.dashed") }
+                            .accessibilityIdentifier("tools.emptyRoom")
+                        NavigationLink {
                             MeasurementToolsScreen(model: model, project: project)
                         } label: { Label("Рулетка, уровень и компас", systemImage: "ruler") }
                             .accessibilityIdentifier("tools.measurements")

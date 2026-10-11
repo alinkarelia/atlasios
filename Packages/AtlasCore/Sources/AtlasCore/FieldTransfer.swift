@@ -15,10 +15,10 @@ public struct FieldTransferSettings: Codable, Hashable, Sendable {
 
 public enum TransferNetwork: String, Codable, Sendable { case offline, wifi, cellular, other }
 public enum FieldMaterialKind: String, Codable, CaseIterable, Sendable {
-    case photo, mesh, floorPlan, feature, measurement, project
+    case photo, video, mesh, floorPlan, feature, measurement, project
 }
 public enum FieldAssetKind: String, Codable, CaseIterable, Sendable {
-    case originalPhoto, mesh, roomPlan, metadata, floorPlan, feature, measurement, projectSnapshot, preview, other
+    case originalPhoto, originalVideo, mesh, roomPlan, metadata, floorPlan, feature, measurement, projectSnapshot, preview, other
 }
 
 public struct FieldCaptureDevice: Codable, Hashable, Sendable {

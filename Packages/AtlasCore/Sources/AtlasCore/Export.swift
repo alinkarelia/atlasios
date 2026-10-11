@@ -1,7 +1,7 @@
 import Foundation
 
 public enum ExportFormat: String, Codable, CaseIterable, Sendable {
-    case projectJSON, geoJSON, dxf, svg, csv, kml
+    case projectJSON, geoJSON, dxf, svg, csv, kml, gpx
 }
 
 public struct ExportArtifact: Sendable {
@@ -61,9 +61,17 @@ public enum AtlasExporter {
         case .geoJSON:
             guard snapshot.project.coordinateReference == .wgs84 else { throw AtlasExportError.requiresGeographicCoordinates }
             let collection = GeoCollection(features: try snapshot.features.map { feature in
-                guard case let .geographicPolygon(polygon) = feature.geometry else { throw AtlasExportError.requiresGeographicCoordinates }
+                let geometry: GeoGeometry
+                switch feature.geometry {
+                case let .geographicPoint(point): geometry = .point([point.longitude, point.latitude])
+                case let .geographicPolyline(line):
+                    geometry = .lineString(line.vertices.map { [$0.longitude, $0.latitude] })
+                case let .geographicPolygon(polygon): geometry = .polygon(geographicRings(polygon))
+                case .metricPoint, .metricPolyline, .metricPolygon:
+                    throw AtlasExportError.requiresGeographicCoordinates
+                }
                 return GeoFeature(id: feature.id.uuidString,
-                                  geometry: GeoGeometry(coordinates: geographicRings(polygon)),
+                                  geometry: geometry,
                                   properties: GeoProperties(label: feature.label, category: feature.category.rawValue,
                                                             reviewStatus: feature.reviewStatus.rawValue, notes: feature.notes,
                                                             attributes: feature.attributes, projectID: feature.projectID.uuidString,
@@ -78,13 +86,15 @@ public enum AtlasExporter {
                 try PolygonGeometry.validate(plan, in: snapshot.project.coordinateReference)
             }
             return ExportArtifact(fileName: name + ".dxf", contentType: "application/dxf",
-                                  data: Data(dxf(snapshot).utf8), warnings: ["DXF содержит 2D-контуры в метрах, названия и линии стен."])
+                                  data: Data(dxf(snapshot).utf8), warnings: ["DXF содержит 2D-точки, открытые линии и контуры в метрах, названия и линии стен."])
         case .svg:
             return try vectorSVG(snapshot, fileName: name + ".svg")
         case .csv:
             return try metadataCSV(snapshot, fileName: name + ".csv")
         case .kml:
             return try geographicKML(snapshot, fileName: name + ".kml")
+        case .gpx:
+            return try geographicGPX(snapshot, fileName: name + ".gpx")
         }
     }
 
@@ -115,10 +125,17 @@ public enum AtlasExporter {
         func number(_ value: Double) -> String { String(value == 0 ? 0 : value) }
         func polygon(_ polygon: MetricPolygon, layer: String) {
             for (index, ring) in ([polygon.vertices] + polygon.holes).enumerated() {
-                pair(0, "LWPOLYLINE"); pair(100, "AcDbEntity"); pair(8, index == 0 ? layer : layer + "_HOLES")
-                pair(100, "AcDbPolyline"); pair(90, String(ring.count)); pair(70, "1")
-                for point in ring { pair(10, number(point.x)); pair(20, number(point.y)) }
+                polyline(ring, layer: index == 0 ? layer : layer + "_HOLES", closed: true)
             }
+        }
+        func polyline(_ vertices: [MetricPoint2D], layer: String, closed: Bool) {
+            pair(0, "LWPOLYLINE"); pair(100, "AcDbEntity"); pair(8, layer)
+            pair(100, "AcDbPolyline"); pair(90, String(vertices.count)); pair(70, closed ? "1" : "0")
+            for point in vertices { pair(10, number(point.x)); pair(20, number(point.y)) }
+        }
+        func point(_ point: MetricPoint2D, layer: String) {
+            pair(0, "POINT"); pair(100, "AcDbEntity"); pair(8, layer); pair(100, "AcDbPoint")
+            pair(10, number(point.x)); pair(20, number(point.y)); pair(30, "0")
         }
         func text(_ label: String, at point: MetricPoint2D, layer: String) {
             guard !label.isEmpty else { return }
@@ -134,10 +151,16 @@ public enum AtlasExporter {
         pair(9, "$MEASUREMENT"); pair(70, "1")
         pair(0, "ENDSEC"); pair(0, "SECTION"); pair(2, "ENTITIES")
         for feature in snapshot.features {
-            guard case let .metricPolygon(boundary) = feature.geometry else { continue }
             let layer = "FEATURE_" + feature.category.rawValue.uppercased()
-            polygon(boundary, layer: layer)
-            if let first = boundary.vertices.first { text(feature.label, at: first, layer: layer + "_LABELS") }
+            let labelPoint: MetricPoint2D?
+            switch feature.geometry {
+            case let .metricPoint(_, coordinate): point(coordinate, layer: layer); labelPoint = coordinate
+            case let .metricPolyline(line):
+                polyline(line.vertices, layer: layer, closed: false); labelPoint = line.vertices.first
+            case let .metricPolygon(boundary): polygon(boundary, layer: layer); labelPoint = boundary.vertices.first
+            case .geographicPoint, .geographicPolyline, .geographicPolygon: continue
+            }
+            if let first = labelPoint { text(feature.label, at: first, layer: layer + "_LABELS") }
         }
         for plan in snapshot.floorPlans {
             let floor = plan.floorIndex >= 0 ? "FLOOR_\(plan.floorIndex)" : "BASEMENT_\(String(plan.floorIndex).dropFirst())"
@@ -175,9 +198,24 @@ private struct GeoFeature: Encodable {
     let geometry: GeoGeometry
     let properties: GeoProperties
 }
-private struct GeoGeometry: Encodable {
-    let type = "Polygon"
-    let coordinates: [[[Double]]]
+/// GeoJSON coordinate depth is specific to each geometry, not a degenerate polygon.
+private enum GeoGeometry: Encodable {
+    case point([Double])
+    case lineString([[Double]])
+    case polygon([[[Double]]])
+
+    private enum CodingKeys: String, CodingKey { case type, coordinates }
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case let .point(coordinates):
+            try container.encode("Point", forKey: .type); try container.encode(coordinates, forKey: .coordinates)
+        case let .lineString(coordinates):
+            try container.encode("LineString", forKey: .type); try container.encode(coordinates, forKey: .coordinates)
+        case let .polygon(coordinates):
+            try container.encode("Polygon", forKey: .type); try container.encode(coordinates, forKey: .coordinates)
+        }
+    }
 }
 private struct GeoProperties: Encodable {
     let label: String

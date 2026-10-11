@@ -86,6 +86,10 @@ jobs:
           bash Apps/iOS/Adapters/Tests/mesh-export-checks.sh
           bash Apps/iOS/Adapters/Tests/check-field-assembler.sh
           bash Apps/iOS/Adapters/Tests/object-capture-checks.sh
+          python3 Apps/iOS/Adapters/Tests/check-terrain-analyzer.py
+          python3 Apps/iOS/Adapters/Tests/check-tour-policy.py
+          bash Apps/iOS/Adapters/Tests/video-capture-checks.sh
+          bash Apps/iOS/Features/FloorPlan/Tests/checks.sh
       - name: Compile native iOS app against generic Simulator SDK
         run: bash Scripts/check-native.sh
       - name: Retain native build results
@@ -200,8 +204,8 @@ jobs:
           root = Path('artifacts/runtime')
           summary = json.loads((root / 'diagnostics/test-summary.json').read_text())
           total = summary.get('totalTestCount', 0)
-          if total < 7 or summary.get('passedTests') != total or summary.get('result') != 'Passed':
-              raise SystemExit('Full UI verification requires all seven passing tests, including free tools and Object Capture fallback.')
+          if total < 13 or summary.get('passedTests') != total or summary.get('result') != 'Passed':
+              raise SystemExit('Full UI verification requires all thirteen passing tests, including fieldwork, identity, floor grouping and dimension pixels.')
           if any(summary.get(field, 0) != 0 for field in ('failedTests', 'skippedTests', 'expectedFailures')):
               raise SystemExit('UI verification contains failed, skipped, or expected-failure tests.')
           selection = json.loads((root / 'simulator-selection.json').read_text())
@@ -218,6 +222,10 @@ jobs:
               '11-transfer-manual-initial_', '12-transfer-auto-wifi_',
               '13-transfer-restored-manual_',
               '14-free-tools_', '15-object-unavailable_', '16-viewer-section_',
+              '17-field-map_', '18-burial-unknown_', '19-burial-candidate-restored_',
+              '20-map-layers_', '20b-map-search_', '21-empty-room-unavailable_',
+              '22-building-plans_', '22b-plan-dimensions_',
+              '23-tour-contours_', '24-tour-linked-card_',
           }
           found = set()
           for entry in manifest:

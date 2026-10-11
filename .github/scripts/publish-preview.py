@@ -20,11 +20,14 @@ import zipfile
 
 REPOSITORY = 'alinkarelia/atlasios'
 IPA_ARTIFACT = 'Atlas-unsigned-device-IPA-candidate'
-MINIMUM_UI_TESTS = 7
+MINIMUM_UI_TESTS = 13
 REQUIRED_VISUAL_STATES = {
     'initial_3D', 'orbit_rotated', 'foreground_return', 'walk_forward',
     'transfer_manual', 'transfer_automatic', 'transfer_restored_manual',
     'free_tools', 'object_unavailable', 'viewer_section',
+    'field_map', 'burial_unknown', 'candidate_restored', 'map_layers',
+    'map_search', 'empty_room_unavailable', 'building_plans', 'plan_dimensions',
+    'tour_contours', 'tour_linked_card',
 }
 REQUIRED_SCREENSHOT_LABELS = {
     '01-project-created', '02-project-reopened', '03-capture-lidar-unavailable',
@@ -32,6 +35,9 @@ REQUIRED_SCREENSHOT_LABELS = {
     '07-viewer-orbit-rotated', '07b-viewer-foreground', '08-viewer-walk-forward',
     '09-viewer-reset', '11-transfer-manual-initial', '12-transfer-auto-wifi',
     '13-transfer-restored-manual', '14-free-tools', '15-object-unavailable', '16-viewer-section',
+    '17-field-map', '18-burial-unknown', '19-burial-candidate-restored', '20-map-layers',
+    '20b-map-search', '21-empty-room-unavailable', '22-building-plans', '22b-plan-dimensions',
+    '23-tour-contours', '24-tour-linked-card',
 }
 EXPECTED_JOBS = {
     'Source project and Server',
@@ -116,7 +122,7 @@ def release_configuration(record):
             'Unexpected reviewed application identity or platform.')
     required_tests = record.get('required_ui_tests')
     require(type(required_tests) is int and required_tests >= MINIMUM_UI_TESTS,
-            'The review record must require the new project-transfer UI test.')
+            'The review record must require all twelve UI tests, including offline fieldwork and designer flows.')
     return tag, release_id, version, build, required_tests
 
 
@@ -157,10 +163,10 @@ def verify_context():
                 and REQUIRED_SCREENSHOT_LABELS <= set(runtime.get('screenshot_labels', []))
                 and isinstance(runtime.get('screenshots_archive_sha256'), str)
                 and re.fullmatch(r'[0-9a-f]{64}', runtime['screenshots_archive_sha256']) is not None,
-                'All sixteen actual runtime screenshot labels and their archive digest are required.')
+                'All twenty-four actual runtime screenshot labels and their archive digest are required.')
         require(runtime.get('manual_visual_review') == 'passed'
                 and REQUIRED_VISUAL_STATES <= set(runtime.get('reviewed', [])),
-                'Incomplete actual 3D and project-transfer screenshot review.')
+                'Incomplete actual 3D, fieldwork, designer, and project-transfer screenshot review.')
     repository = api('GET', f'/repos/{REPOSITORY}')
     require(repository.get('private') is False and repository.get('full_name') == REPOSITORY,
             'Publication requires the public source repository.')

@@ -50,7 +50,7 @@ actor FieldTransferAssembler {
             try Task.checkCancellation()
             if let tag = scan.geoTag { try GeoTagPolicy.validate(tag) }
             materials.append(FieldMaterial(id: scan.id, sourceEntityID: scan.id,
-                kind: scan.source == .roomPlan ? .floorPlan : .mesh, capturedAt: scan.createdAt,
+                kind: scan.source == .roomPlan ? .floorPlan : (scan.assets.contains { $0.kind == .video } && !scan.assets.contains { $0.kind == .mesh } ? .video : .mesh), capturedAt: scan.createdAt,
                 frameID: scan.frameID, geoTag: scan.geoTag))
             for reference in scan.assets.sorted(by: { $0.relativePath < $1.relativePath }) {
                 guard reference.relativePath.hasPrefix(projectRoot) else {
@@ -70,6 +70,7 @@ actor FieldTransferAssembler {
                 case .roomPlanJSON: kind = .roomPlan
                 case .cameraMetadata: kind = .metadata
                 case .image: kind = .originalPhoto
+                case .video: kind = .originalVideo
                 case .depth: kind = .other
                 }
                 assets.append(FieldAsset(id: stableID("file:" + reference.relativePath), materialID: scan.id,
@@ -276,7 +277,7 @@ actor FieldTransferAssembler {
             var author: FieldCaptureOperator?, endedAt: Date?
             for asset in scan.assets {
                 guard asset.relativePath.hasPrefix(prefix) else { throw FieldTransferError.invalidAssetPath(asset.relativePath) }
-                let kind: FieldAssetKind = asset.kind == .mesh ? .mesh : (asset.kind == .roomPlanJSON ? .roomPlan : (asset.kind == .image ? .originalPhoto : .metadata))
+                let kind: FieldAssetKind = asset.kind == .mesh ? .mesh : (asset.kind == .roomPlanJSON ? .roomPlan : (asset.kind == .image ? .originalPhoto : (asset.kind == .video ? .originalVideo : .metadata)))
                 references[asset.relativePath] = (scan.id, kind)
                 if asset.kind == .cameraMetadata, asset.relativePath.hasSuffix("/manifest.json") {
                     let file = try FieldTransferPaths.resolve(relativePath: asset.relativePath, root: managed)
@@ -288,7 +289,7 @@ actor FieldTransferAssembler {
                 }
             }
             materialValues.append(.init(source: FieldMaterial(id: scan.id, sourceEntityID: scan.id,
-                kind: scan.source == .roomPlan ? .floorPlan : .mesh, capturedAt: scan.createdAt,
+                kind: scan.source == .roomPlan ? .floorPlan : (scan.assets.contains { $0.kind == .video } && !scan.assets.contains { $0.kind == .mesh } ? .video : .mesh), capturedAt: scan.createdAt,
                 endedAt: endedAt, frameID: scan.frameID, geoTag: scan.geoTag), captureOperator: author))
         }
         let evidence = captures.appendingPathComponent("evidence", isDirectory: true)
@@ -472,6 +473,9 @@ actor FieldTransferAssembler {
         case "json": "application/json"
         case "obj": "model/obj"
         case "usdz": "model/vnd.usdz+zip"
+        case "mov": "video/quicktime"
+        case "mp4": "video/mp4"
+        case "pdf": "application/pdf"
         default: "application/octet-stream"
         }
     }

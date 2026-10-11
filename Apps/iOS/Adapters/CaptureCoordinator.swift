@@ -44,6 +44,9 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
     @Published private(set) var overlayIssue: String?
     @Published private(set) var availableDiskBytes: Int64 = 0
     @Published private(set) var captureDirectory: URL?
+    @Published private(set) var videoEnabled = false
+    @Published private(set) var videoIsRecording = false
+    @Published private(set) var videoStatus = "Видео выключено"
 
     // State objects can coexist, but only the visible mode allocates a camera
     // renderer. Suspending another mode must never create a second AR session.
@@ -114,6 +117,8 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
     private var motionWarningUntil: TimeInterval = 0
     private var lastGeometryAt: TimeInterval = 0
     private var lastSurfaceBiasPublication: TimeInterval = 0
+    private var videoRecorder: CaptureVideoRecorder?
+    private var videoFinishTasks: [UUID: Task<CaptureVideoResult, Never>] = [:]
 
     override init() {
         super.init()
@@ -195,6 +200,63 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
         cameraStatus = "Камера остановлена"
     }
 
+    /// Selection is explicit and fixed before a scan starts. Video shares the
+    /// AR camera; enabling it never creates another camera session.
+    func setVideoEnabled(_ enabled: Bool) {
+        guard state == .ready || state == .saved ||
+              ((state == .paused || state == .interrupted) && needsNewFrame && videoRecorder == nil) else { return }
+        videoEnabled = enabled
+        videoStatus = enabled ? "Видео начнётся вместе с LiDAR" : "Видео выключено"
+    }
+
+    var canChangeVideoSelection: Bool {
+        state == .ready || state == .saved ||
+            ((state == .paused || state == .interrupted) && needsNewFrame && videoRecorder == nil)
+    }
+
+    static func continuableCaptures(in outputDirectory: URL, projectID: UUID) async -> [CaptureContinuationRecord] {
+        await CaptureContinuationStore().records(in: outputDirectory, projectID: projectID)
+    }
+
+    /// Reopening loads existing originals without starting the camera. Explicit
+    /// resume creates a new independent origin; yesterday's mesh is not joined.
+    func restoreForContinuation(at manifestURL: URL, projectID: UUID, outputDirectory: URL) async throws {
+        guard state == .ready || state == .saved else { throw CaptureError.operationInProgress }
+        guard Self.isSupported else { throw CaptureError.lidarUnsupported }
+        suspendPreview()
+        let previousState = state
+        let generation = UUID(); startGeneration = generation
+        state = .preparing
+        let directory = manifestURL.deletingLastPathComponent()
+        let restoredWriter = MeshCheckpointWriter(root: directory)
+        do {
+            var restored = try await restoredWriter.loadForContinuation(projectID: projectID, outputDirectory: outputDirectory)
+            guard generation == startGeneration, !Task.isCancelled else { throw CancellationError() }
+            for index in restored.segments.indices where restored.segments[index].endedAt == nil {
+                restored.segments[index].endedAt = CaptureContinuationPolicy.conservativeEnd(
+                    startedAt: restored.segments[index].startedAt, lastSavedAt: restored.updatedAt)
+                restored.segments[index].endReason = "reopenedWithIndependentARFrame"
+            }
+            let notice = "Reopened capture: each continuation uses a new independent AR frame and requires operator alignment. An unclosed prior segment ends conservatively at its last manifest timestamp, not at reopening."
+            if !restored.notes.contains(notice) { restored.notes.append(notice) }
+            manifest = restored; writer = restoredWriter; captureDirectory = directory
+            videoFinishTasks.removeAll(); videoRecorder = nil; videoIsRecording = false
+            snapshots.removeAll(); lastSnapshotTimes.removeAll(); meshGeneration = UUID()
+            totalTriangles = 0; totalSurfaceArea = 0; lastMetricPublication = 0
+            pendingWrite = nil; checkpointError = nil; lastCheckpoint = nil
+            anchorCount = 0; triangleCount = 0; observedSurfaceArea = 0
+            segmentCount = restored.segments.count; needsNewFrame = true
+            resetCameraReadiness(clearRecordedSurfaces: true)
+            errorMessage = nil; state = .paused
+            cameraStatus = "Готово к продолжению. Нажмите «Продолжить»"
+            trackingMessage = "Продолжение создаст отдельный фрагмент. Для общего плана нужно совмещение"
+            videoStatus = videoEnabled ? "Видео начнётся в новом фрагменте" : "Видео выключено"
+        } catch {
+            if generation == startGeneration { state = previousState }
+            throw error
+        }
+    }
+
     func start(projectID: UUID, projectName: String, outputDirectory: URL) async {
         guard state == .ready || state == .saved else { return }
         guard !Task.isCancelled else { return }
@@ -234,6 +296,8 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
             manifest = newManifest
             writer = newWriter
             captureDirectory = directory
+            videoFinishTasks.removeAll()
+            videoRecorder = nil; videoIsRecording = false
             snapshots.removeAll()
             lastSnapshotTimes.removeAll()
             meshGeneration = UUID()
@@ -246,6 +310,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
             isPreviewing = false
             resetCameraReadiness(clearRecordedSurfaces: true)
             state = .recording
+            beginSegmentVideo()
             view.session.run(configuration(), options: [.resetTracking, .removeExistingAnchors])
             beginCameraWatchdog()
             // Permission/GPS may finish while the camera and files prepare.
@@ -288,15 +353,25 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
         cameraStatus = "Камера на паузе"
         isTrackingNormal = false
         trackingMessage = reason ?? "Пауза. Фрагмент остаётся в локальных координатах"
+        if videoEnabled {
+            // One movie belongs to one uninterrupted AR origin. A resumed
+            // movie starts a new segment instead of overwriting or joining.
+            closeVideo(reason: reason ?? "userPaused")
+            needsNewFrame = true
+            closeCurrentSegment(reason: reason ?? "userPaused")
+            trackingMessage = reason ?? "Пауза. Продолжение начнёт отдельный фрагмент с видео"
+        }
         updateManifest(status: "paused")
         checkpointAll()
     }
 
     func resume() async {
-        guard state == .paused || state == .interrupted, var current = manifest else { return }
+        guard state == .paused || state == .interrupted, var current = manifest, let writer else { return }
+        guard Self.isSupported else { errorMessage = CaptureError.lidarUnsupported.localizedDescription; return }
         let generation = UUID(); startGeneration = generation
         do {
             try await Self.requireCameraAccess()
+            guard generation == startGeneration, !Task.isCancelled else { return }
             let view = arView
             try await Self.waitForCameraPresentation(view)
             guard generation == startGeneration, !Task.isCancelled else { return }
@@ -307,12 +382,16 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
                 guard generation == startGeneration, !Task.isCancelled,
                       state == .paused || state == .interrupted else { return }
                 if let checkpointError { throw CaptureError.checkpointFailed(checkpointError) }
+                guard current.segments.count < 256 else { throw CaptureError.segmentLimit }
                 let newSegment = CaptureSegment(id: UUID(), frameID: UUID(), startedAt: Date(), endedAt: nil,
                     endReason: nil, geoTag: freshAutomaticTag())
                 current.segments.append(newSegment)
                 current.status = "recording"; current.updatedAt = Date()
                 manifest = current
-                try await writer?.saveManifest(current)
+                try await writer.saveManifest(current)
+                guard generation == startGeneration, !Task.isCancelled,
+                      state == .paused || state == .interrupted,
+                      UIApplication.shared.applicationState == .active else { return }
                 snapshots.removeAll(); lastSnapshotTimes.removeAll()
                 clearSurfaceOverlays()
                 meshGeneration = UUID()
@@ -329,6 +408,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
             errorMessage = nil
             resetCameraReadiness()
             state = .recording
+            beginSegmentVideo()
             beginCameraWatchdog()
             updateAutomaticLocation(latestLocationFix)
             updateManifest(status: "recording")
@@ -345,11 +425,17 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
         }
         cameraView?.session.pause()
         cameraWatchdog?.cancel(); cameraWatchdog = nil
+        closeVideo(reason: "userFinished")
         state = .exporting
         isCameraReady = false
         cameraStatus = "Сохраняем модель"
         isTrackingNormal = false
         for task in Array(meshTasks.values) { await task.value }
+        let videoResults = await finalizedVideoResults()
+        for result in videoResults where !result.completed {
+            let notice = "Video segment \(result.identity.segmentID.uuidString): \(result.failure ?? "not completed"). Partial source files are retained."
+            if !current.notes.contains(notice) { current.notes.append(notice) }
+        }
         publishMeshMetrics(force: true)
         checkpointAll()
         if let pendingWrite { await pendingWrite.value }
@@ -417,18 +503,14 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
         guard state == .recording || state == .paused else { return }
         cameraView?.session.pause()
         cameraWatchdog?.cancel(); cameraWatchdog = nil
+        closeVideo(reason: reason)
         state = .interrupted
         isCameraReady = false
         cameraStatus = reason
         isTrackingNormal = false
         needsNewFrame = true
         trackingMessage = reason
-        if var current = manifest, !current.segments.isEmpty {
-            let index = current.segments.count - 1
-            current.segments[index].endedAt = Date()
-            current.segments[index].endReason = reason
-            manifest = current
-        }
+        closeCurrentSegment(reason: reason)
         updateManifest(status: "interrupted")
         checkpointAll()
     }
@@ -576,6 +658,21 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
         guard now - frame.timestamp < 1.5 else { return }
         lastFrameAt = now
         receivedFrameCount += 1
+        if state == .recording, let videoRecorder {
+            let transform = frame.camera.transform, intrinsics = frame.camera.intrinsics
+            let tracking: String
+            switch frame.camera.trackingState {
+            case .normal: tracking = "normal"
+            case .notAvailable: tracking = "unavailable"
+            case .limited: tracking = "limited"
+            }
+            let descriptor = CaptureVideoFrameDescriptor(arTimestamp: frame.timestamp,
+                observedAt: Date().addingTimeInterval(frame.timestamp - now),
+                cameraTransform: (0..<4).flatMap { column in (0..<4).map { transform[column][$0] } },
+                intrinsics: (0..<3).flatMap { column in (0..<3).map { intrinsics[column][$0] } },
+                trackingState: tracking)
+            videoRecorder.offer(image: frame.capturedImage, descriptor: descriptor)
+        }
         projectPlaneOutlines(now: now)
         updateSurfaceBias(camera: frame.camera, now: now)
         updateScanGuidance(frame, now: now)
@@ -886,6 +983,64 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
         }
     }
 
+    private func beginSegmentVideo() {
+        guard videoEnabled, videoRecorder == nil, let current = manifest,
+              let segment = current.segments.last, let directory = captureDirectory else { return }
+        let orientation: CaptureVideoOrientation
+        switch cameraView?.window?.windowScene?.interfaceOrientation ?? .portrait {
+        case .portrait: orientation = .portrait
+        case .portraitUpsideDown: orientation = .portraitUpsideDown
+        case .landscapeLeft: orientation = .landscapeLeft
+        case .landscapeRight: orientation = .landscapeRight
+        default: orientation = .portrait
+        }
+        let identity = CaptureVideoIdentity(captureID: current.id, projectID: current.projectID,
+            segmentID: segment.id, frameID: segment.frameID, startedAt: segment.startedAt, orientation: orientation)
+        videoStatus = "Ожидаем первый кадр для видео…"
+        videoIsRecording = false
+        videoRecorder = CaptureVideoRecorder(identity: identity,
+            directory: directory.appendingPathComponent("segments/\(segment.id.uuidString)", isDirectory: true)) { [weak self] message, recording in
+                Task { @MainActor [weak self] in
+                    guard let self, self.manifest?.id == identity.captureID,
+                          self.manifest?.segments.last?.id == identity.segmentID else { return }
+                    self.videoStatus = message; self.videoIsRecording = recording
+                    if message.hasPrefix("Видео не") {
+                        self.errorMessage = message
+                        self.closeVideo(reason: "videoEncoderFailure")
+                    }
+                }
+            }
+    }
+
+    private func closeVideo(reason: String) {
+        guard let recorder = videoRecorder else { return }
+        videoRecorder = nil; videoIsRecording = false
+        videoStatus = "Завершаем видеофайл…"
+        let segmentID = recorder.identity.segmentID
+        let backgroundLease = CaptureVideoBackgroundLease()
+        videoFinishTasks[segmentID] = Task {
+            let result = await recorder.finish(reason: reason)
+            backgroundLease.end()
+            return result
+        }
+    }
+
+    private func closeCurrentSegment(reason: String) {
+        guard var current = manifest, !current.segments.isEmpty else { return }
+        let index = current.segments.count - 1
+        if current.segments[index].endedAt == nil {
+            current.segments[index].endedAt = Date()
+            current.segments[index].endReason = reason
+            manifest = current
+        }
+    }
+
+    private func finalizedVideoResults() async -> [CaptureVideoResult] {
+        var results: [CaptureVideoResult] = []
+        for task in Array(videoFinishTasks.values) { results.append(await task.value) }
+        return results
+    }
+
     static func requireCameraAccess() async throws {
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized: return
@@ -939,6 +1094,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
         "ARKit right-handed gravity-aligned coordinates; metres; Y is vertical.",
         "Every reset creates an independent local frame. Segment files are not registered with one another.",
         "Optional GeoTag is the operator's device location at observedAt. It does not georegister the AR origin or imply RTK accuracy.",
+        "Optional per-segment H.264 video stores the same AR camera imagery with sampled source poses; it is not raw depth or a textured mesh.",
         "No textures, raw depth frames, or watertight reconstruction are implied.",
         "Mesh surface area describes observed triangles; it is not a coverage percentage or survey accuracy."
     ]
@@ -948,6 +1104,7 @@ enum CaptureError: LocalizedError {
     case cameraPermission, lowDisk, lowMemory, overheated, noCapture, noSurfaces, invalidCheckpoint
     case checkpointFailed(String)
     case operationInProgress, cameraViewNotReady, cameraNoFrames, appInactive
+    case lidarUnsupported, segmentLimit
     var errorDescription: String? {
         switch self {
         case .cameraPermission: "Разрешите доступ к камере в настройках iOS."
@@ -962,6 +1119,8 @@ enum CaptureError: LocalizedError {
         case .cameraViewNotReady: "Экран камеры ещё не готов. Вернитесь к съёмке и повторите запуск."
         case .cameraNoFrames: "Камера не передаёт изображение. Закройте другие приложения с камерой и повторите запуск."
         case .appInactive: "Вернитесь в приложение и повторите запуск камеры."
+        case .lidarUnsupported: "Продолжить 3D-съёмку можно на устройстве с LiDAR."
+        case .segmentLimit: "В съёмке уже 256 фрагментов. Сохраните её и начните новую съёмку."
         }
     }
 }
@@ -1194,8 +1353,15 @@ private actor MeshCheckpointWriter {
     }
 
     func loadManifest() throws -> LiDARCaptureManifest {
-        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
-        return try decoder.decode(LiDARCaptureManifest.self, from: Data(contentsOf: root.appendingPathComponent("manifest.json")))
+        let url = root.appendingPathComponent("manifest.json")
+        _ = try CaptureContinuationPolicy.requireFile(url, maximumBytes: 2 * 1_024 * 1_024)
+        return try decoder().decode(LiDARCaptureManifest.self, from: Data(contentsOf: url))
+    }
+
+    func loadForContinuation(projectID: UUID, outputDirectory: URL) throws -> LiDARCaptureManifest {
+        _ = try CaptureContinuationPolicy.validate(at: root.appendingPathComponent("manifest.json"),
+            projectID: projectID, outputDirectory: outputDirectory)
+        return try loadManifest()
     }
 
     func finalize(_ input: LiDARCaptureManifest) throws -> LiDARCaptureManifest {
@@ -1204,19 +1370,39 @@ private actor MeshCheckpointWriter {
         try saveManifest(result)
         var assets = [String]()
         var hasGeometry = false
+        var hasVideo = false
         for segment in result.segments {
             let relative = "segments/\(segment.id.uuidString)"
             let directory = root.appendingPathComponent(relative, isDirectory: true)
+            let movie = directory.appendingPathComponent("video.mov")
+            let sidecar = directory.appendingPathComponent("video.json")
+            if FileManager.default.fileExists(atPath: movie.path), FileManager.default.fileExists(atPath: sidecar.path),
+               let sidecarSize = try sidecar.resourceValues(forKeys: [.fileSizeKey]).fileSize, sidecarSize <= 16 * 1_024 * 1_024,
+               let metadata = try? decoder().decode(CaptureVideoDocument.self, from: Data(contentsOf: sidecar)),
+               metadata.isCompleted, metadata.identity.captureID == result.id, metadata.identity.projectID == result.projectID,
+               metadata.identity.segmentID == segment.id, metadata.identity.frameID == segment.frameID,
+               (try movie.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) > 0 {
+                assets.append("\(relative)/video.mov"); assets.append("\(relative)/video.json")
+                hasVideo = true
+            }
+            let modelPath = "\(relative)/model.obj"
+            if result.completedAssets.contains(modelPath) {
+                // Continuation appends independent sources. A completed model
+                // from an older day is never regenerated or replaced.
+                _ = try CaptureContinuationPolicy.requireFile(directory.appendingPathComponent("model.obj"), maximumBytes: nil)
+                assets.append(modelPath); hasGeometry = true
+                continue
+            }
             let meshes = directory.appendingPathComponent("meshes", isDirectory: true)
             guard FileManager.default.fileExists(atPath: meshes.path) else { continue }
             let files = try FileManager.default.contentsOfDirectory(at: meshes, includingPropertiesForKeys: nil)
                 .filter { $0.lastPathComponent.hasSuffix(".mesh.json") }.sorted { $0.lastPathComponent < $1.lastPathComponent }
             guard !files.isEmpty else { continue }
             try exportOBJ(from: files, to: directory.appendingPathComponent("model.obj"), frameID: segment.frameID)
-            assets.append("\(relative)/model.obj")
+            assets.append(modelPath)
             hasGeometry = true
         }
-        guard hasGeometry else { throw CaptureError.noSurfaces }
+        guard hasGeometry || hasVideo else { throw CaptureError.noSurfaces }
         result.completedAssets = assets
         result.status = "ready"; result.updatedAt = Date()
         try saveManifest(result)
@@ -1268,9 +1454,31 @@ private actor MeshCheckpointWriter {
         succeeded = true
     }
 
+    private func decoder() -> JSONDecoder {
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        return decoder
+    }
+
     private func encoder() -> JSONEncoder {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
         return encoder
+    }
+}
+
+/// iOS grants a short completion window when the user locks or leaves the app.
+/// This protects sealing the two queued video frames, not background filming.
+@MainActor
+private final class CaptureVideoBackgroundLease {
+    private var identifier: UIBackgroundTaskIdentifier = .invalid
+    init() {
+        identifier = UIApplication.shared.beginBackgroundTask(withName: "Finish field video") { [weak self] in
+            Task { @MainActor [weak self] in self?.end() }
+        }
+    }
+    func end() {
+        guard identifier != .invalid else { return }
+        let task = identifier; identifier = .invalid
+        UIApplication.shared.endBackgroundTask(task)
     }
 }

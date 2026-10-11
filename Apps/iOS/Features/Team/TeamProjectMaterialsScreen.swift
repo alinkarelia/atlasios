@@ -278,6 +278,7 @@ private struct TeamMaterialDetailScreen: View {
     private func materialTitle(_ kind: FieldMaterialKind) -> String {
         switch kind {
         case .photo: "Фотография"
+        case .video: "Видео маршрута"
         case .mesh: "3D-съёмка"
         case .floorPlan: "План помещения"
         case .feature: "Карточка и геометрия"

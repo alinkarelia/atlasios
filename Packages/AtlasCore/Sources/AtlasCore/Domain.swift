@@ -49,20 +49,42 @@ public struct GeographicPolygon: Codable, Hashable, Sendable {
     }
 }
 
+/// An open line in one identified local metric frame. A repeated first vertex is
+/// permitted only when the operator intentionally records a closed fence line.
+public struct MetricPolyline: Codable, Hashable, Sendable {
+    public var frameID: UUID
+    public var vertices: [MetricPoint2D]
+    public init(frameID: UUID, vertices: [MetricPoint2D]) {
+        self.frameID = frameID; self.vertices = vertices
+    }
+}
+
+public struct GeographicPolyline: Codable, Hashable, Sendable {
+    public var vertices: [GeographicCoordinate]
+    public init(vertices: [GeographicCoordinate]) { self.vertices = vertices }
+}
+
 public enum FeatureGeometry: Codable, Hashable, Sendable {
     case metricPolygon(MetricPolygon)
     case geographicPolygon(GeographicPolygon)
+    case metricPoint(frameID: UUID, point: MetricPoint2D)
+    case geographicPoint(GeographicCoordinate)
+    case metricPolyline(MetricPolyline)
+    case geographicPolyline(GeographicPolyline)
 
     public var coordinateReference: CoordinateReference {
         switch self {
         case let .metricPolygon(polygon): .localMeters(frameID: polygon.frameID)
-        case .geographicPolygon: .wgs84
+        case let .metricPoint(frameID, _): .localMeters(frameID: frameID)
+        case let .metricPolyline(line): .localMeters(frameID: line.frameID)
+        case .geographicPolygon, .geographicPoint, .geographicPolyline: .wgs84
         }
     }
 }
 
 public enum FeatureCategory: String, Codable, CaseIterable, Sendable {
     case grave, sector, path, building, boundary, other
+    case cemetery, road, entrance, wasteBin, fence, wasteDump
 }
 
 /// Human review is distinct from measured positional accuracy.
@@ -149,7 +171,7 @@ public struct AtlasFloorPlan: Identifiable, Codable, Hashable, Sendable {
 
 public enum ScanSource: String, Codable, Sendable { case liDAR, roomPlan, photogrammetry, imported }
 public enum ScanStatus: String, Codable, Sendable { case recording, interrupted, captured, processing, ready, failed }
-public enum SourceAssetKind: String, Codable, Sendable { case image, depth, mesh, cameraMetadata, roomPlanJSON }
+public enum SourceAssetKind: String, Codable, Sendable { case image, video, depth, mesh, cameraMetadata, roomPlanJSON }
 
 public struct SourceAssetReference: Identifiable, Codable, Hashable, Sendable {
     public var id: UUID

@@ -20,6 +20,14 @@ objects=("$build_path"/AtlasCore.build/*.swift.o)
 "$swift_compiler" -swift-version 6 -strict-concurrency=complete \
   -I "$build_path/Modules" -I "$core_root/Sources/CSQLite" \
   "${objects[@]}" "$repo_root/Apps/iOS/Adapters/CaptureCatalog.swift" \
+  "$repo_root/Apps/iOS/Adapters/CaptureVideoDocument.swift" \
   "$repo_root/Apps/iOS/Adapters/Tests/CaptureCatalogChecks.swift" \
   -lsqlite3 -o "$checks_dir/catalog-checks"
 "$checks_dir/catalog-checks"
+"$swift_compiler" -swift-version 6 -strict-concurrency=complete \
+  -I "$build_path/Modules" -I "$core_root/Sources/CSQLite" \
+  "${objects[@]}" "$repo_root/Apps/iOS/Adapters/FieldDeliveryPassport.swift" \
+  "$repo_root/Apps/iOS/Adapters/AssistantProjectPackage.swift" \
+  "$repo_root/Apps/iOS/Adapters/Tests/AssistantPackageChecks.swift" \
+  -lsqlite3 -o "$checks_dir/assistant-checks"
+"$checks_dir/assistant-checks"

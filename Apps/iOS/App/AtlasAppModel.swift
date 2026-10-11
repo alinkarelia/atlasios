@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import UIKit
 import AtlasCore
 
 @MainActor
@@ -43,6 +44,9 @@ final class AtlasAppModel: ObservableObject {
         started = true
         await reload()
         await seedPreviewMeshIfRequested()
+        await seedCemeteryIfRequested()
+        await seedBuildingIfRequested()
+        await seedTourIfRequested()
         ready = true
         if team.connected { await team.refresh() }
         await transfers.refresh()
@@ -71,6 +75,11 @@ final class AtlasAppModel: ObservableObject {
 
     func features(in project: AtlasProject) async -> [AtlasFeature] {
         do { return try await store?.features(projectID: project.id) ?? [] }
+        catch { issue = error.localizedDescription; return [] }
+    }
+
+    func featureHistory(_ feature: AtlasFeature) async -> [AtlasFeature] {
+        do { return try await store?.featureHistory(featureID: feature.id, projectID: feature.projectID) ?? [] }
         catch { issue = error.localizedDescription; return [] }
     }
 
@@ -289,14 +298,37 @@ final class AtlasAppModel: ObservableObject {
             try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
             defer { try? FileManager.default.removeItem(at: staging) }
             let metadata = staging.appendingPathComponent("project.json")
-            try AtlasExporter.export(snapshot, format: .projectJSON).data.write(to: metadata, options: .atomic)
             let passport = staging.appendingPathComponent("delivery-passport.json")
-            try await transfers.deliveryPassport(snapshot: snapshot, assetDirectory: directory)
-                .write(to: passport, options: .atomic)
+            let passportData = try await transfers.deliveryPassport(snapshot: snapshot, assetDirectory: directory)
+            var histories: [AssistantFeatureHistory.Entry] = []
+            var totalRevisions = 0
+            if let store {
+                for feature in snapshot.features {
+                    var values: [AtlasFeature] = []
+                    var cursor: Int64? = feature.revision == Int64.max ? nil : feature.revision + 1
+                    while true {
+                        try Task.checkCancellation()
+                        let page = try await store.featureHistory(featureID: feature.id, projectID: project.id,
+                                                                  limit: 100, beforeRevision: cursor)
+                        if page.isEmpty { break }
+                        totalRevisions += page.count
+                        guard totalRevisions <= 100_000 else {
+                            throw TeamError.rejected("История проекта слишком большая для одного архива. Исходники сохранены; разделите обследование.")
+                        }
+                        values.insert(contentsOf: page, at: 0)
+                        cursor = page.first?.revision
+                    }
+                    histories.append(.init(featureID: feature.id, revisions: values))
+                }
+            }
+            let retainedHistories = histories
             let captureRoot = captureDirectory(for: project)
             let destination = exportDirectory.appendingPathComponent("TerraView-\(project.id.uuidString).zip")
             return try await Task.detached(priority: .utility) {
-                try Self.writeArchive(metadata: metadata, passport: passport, captureRoot: captureRoot, destination: destination)
+                let files = try AssistantProjectPackage.prepare(snapshot: snapshot, passportData: passportData,
+                    histories: retainedHistories, staging: staging)
+                return try Self.writeArchive(metadata: metadata, passport: passport, packageFiles: files,
+                                             captureRoot: captureRoot, destination: destination)
             }.value
         } catch { issue = error.localizedDescription; return nil }
     }
@@ -304,7 +336,8 @@ final class AtlasAppModel: ObservableObject {
     /// DirectoryEnumerator's iterator is synchronous on current Apple SDKs.
     /// The detached utility task calls this helper without moving file IO onto
     /// MainActor or allowing the enumerator to cross a suspension point.
-    private nonisolated static func writeArchive(metadata: URL, passport: URL, captureRoot: URL, destination: URL) throws -> URL {
+    private nonisolated static func writeArchive(metadata: URL, passport: URL, packageFiles: [URL],
+                                               captureRoot: URL, destination: URL) throws -> URL {
         let delivery = try FieldTransferJSON.decode(FieldDeliveryPassport.self, from: Data(contentsOf: passport))
         var hashes: [String: String] = [:]
         for asset in delivery.assets {
@@ -315,6 +348,10 @@ final class AtlasAppModel: ObservableObject {
         var entries = [AtlasArchiveEntry(relativePath: "project.json", fileURL: metadata,
                                         expectedSHA256: hashes["project.json"]),
                        AtlasArchiveEntry(relativePath: "delivery-passport.json", fileURL: passport)]
+        for file in packageFiles {
+            guard let hash = hashes[file.lastPathComponent] else { throw AtlasArchiveError.sourceChanged(file.lastPathComponent) }
+            entries.append(AtlasArchiveEntry(relativePath: file.lastPathComponent, fileURL: file, expectedSHA256: hash))
+        }
         if let enumerator = FileManager.default.enumerator(at: captureRoot,
             includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey], options: [.skipsHiddenFiles]) {
             for case let url as URL in enumerator {
@@ -371,6 +408,123 @@ final class AtlasAppModel: ObservableObject {
         } catch {
             issue = "Не удалось подготовить демонстрационную модель: \(error.localizedDescription)"
         }
+    }
+
+    /// Explicit runtime fixtures exercise normal SQLite/card/map flows. These
+    /// records are labelled synthetic; they do not impersonate a sensor survey.
+    private func seedCemeteryIfRequested() async {
+        guard ProcessInfo.processInfo.arguments.contains("--uitest-seed-cemetery"), let store else { return }
+        let projectID = UUID(uuidString: "A71A5000-1234-4000-8000-000000000101")!
+        let cemeteryID = UUID(uuidString: "A71A5000-1234-4000-8000-000000000102")!
+        do {
+            let project: AtlasProject
+            if let existing = try await store.project(id: projectID) { project = existing }
+            else {
+                project = try await store.saveProject(AtlasProject(id: projectID,
+                    name: "Демо · полевое обследование", kind: .cemetery, coordinateReference: .wgs84,
+                    notes: "Синтетические данные для проверки интерфейса. Не результат обследования."))
+                let origin = GeographicCoordinate(longitude: 30.312, latitude: 59.951)
+                let cemetery = AtlasFeature(id: cemeteryID, projectID: projectID,
+                    label: "Учебное кладбище", category: .cemetery,
+                    geometry: .geographicPolygon(.init(vertices: [origin,
+                        .init(longitude: 30.313, latitude: 59.951),
+                        .init(longitude: 30.313, latitude: 59.9516),
+                        .init(longitude: 30.312, latitude: 59.9516)])),
+                    attributes: ["source": "demonstration", "survey.status": "confirmed"],
+                    notes: "Учебный участок. Требуется уборка у северного входа.")
+                _ = try await store.saveFeature(cemetery)
+                for (suffix, label, longitude, status) in [(103, "Участок 001", 30.31235, "confirmed"),
+                                                          (104, "Аномалия 002", 30.31255, "candidate")] {
+                    let id = UUID(uuidString: String(format: "A71A5000-1234-4000-8000-%012d", suffix))!
+                    var feature = AtlasFeature(id: id, projectID: projectID, label: label, category: .grave,
+                        geometry: .geographicPoint(.init(longitude: longitude, latitude: 59.9513)),
+                        attributes: ["source": "demonstration", "survey.status": status],
+                        notes: "Синтетическая точка для проверки карточки.")
+                    feature = try BurialMetadata(cemeteryID: cemeteryID, visibleSigns: [.mound],
+                        condition: "Требует осмотра", identityStatus: .unknown).applying(to: feature)
+                    _ = try await store.saveFeature(feature)
+                }
+                let fence = AtlasFeature(projectID: projectID, label: "Северная ограда", category: .fence,
+                    geometry: .geographicPolyline(.init(vertices: [
+                        .init(longitude: 30.312, latitude: 59.9516), .init(longitude: 30.313, latitude: 59.9516)])),
+                    attributes: ["source": "demonstration", "cemeteryID": cemeteryID.uuidString])
+                _ = try await store.saveFeature(fence)
+            }
+            selectedProjectID = project.id
+            await reload()
+        } catch { issue = "Не удалось подготовить учебное обследование: \(error.localizedDescription)" }
+    }
+
+    private func seedTourIfRequested() async {
+        guard ProcessInfo.processInfo.arguments.contains("--uitest-seed-tour"), let store else { return }
+        let projectID = UUID(uuidString: "A71A5000-1234-4000-8000-000000000101")!
+        guard let project = try? await store.project(id: projectID) else { return }
+        let captures = captureDirectory(for: project)
+        let tourStore = TourStore()
+        do {
+            if try await tourStore.load(projectID: projectID, directory: captures).contains(where: { $0.title == "Учебная прогулка" }) { return }
+            let cemeteryID = UUID(uuidString: "A71A5000-1234-4000-8000-000000000102")!
+            let graveID = UUID(uuidString: "A71A5000-1234-4000-8000-000000000103")!
+            let roadID = UUID(uuidString: "A71A5000-1234-4000-8000-000000000105")!
+            let known = try await store.features(projectID: projectID)
+            if !known.contains(where: { $0.id == roadID }) {
+                _ = try await store.saveFeature(AtlasFeature(id: roadID, projectID: projectID, label: "Учебная тропинка", category: .path,
+                    geometry: .geographicPolyline(.init(vertices: [.init(longitude: 30.3122, latitude: 59.9511), .init(longitude: 30.3128, latitude: 59.9511)])),
+                    attributes: ["source": "demonstration", "cemeteryID": cemeteryID.uuidString]))
+            }
+            var tour = TourManifest(projectID: projectID, title: "Учебная прогулка")
+            let evidence = EvidenceService()
+            for index in 1...2 {
+                let renderer = UIGraphicsImageRenderer(size: CGSize(width: 1_280, height: 720))
+                let data = renderer.pngData { context in
+                    UIColor(red: index == 1 ? 0.15 : 0.28, green: 0.3, blue: 0.28, alpha: 1).setFill()
+                    context.fill(CGRect(x: 0, y: 0, width: 1_280, height: 720))
+                    UIColor.lightGray.setFill()
+                    context.fill(CGRect(x: 430, y: 170, width: 420, height: 380))
+                    ("Синтетическая остановка \(index)\nНе результат съёмки" as NSString).draw(at: CGPoint(x: 50, y: 40), withAttributes: [.font: UIFont.systemFont(ofSize: 28), .foregroundColor: UIColor.white])
+                }
+                let photo = try await evidence.importPhoto(data: data, projectID: projectID, outputDirectory: captures, recognizeText: false)
+                var station = TourStation(photo: photo, number: index)
+                station.name = "Учебная остановка \(index)"
+                station.comment = "Синтетическая фотография для проверки переходов и карточек."
+                station.annotations = [
+                    TourAnnotation(featureID: graveID, vertices: [.init(x: 0.33, y: 0.23), .init(x: 0.67, y: 0.23), .init(x: 0.67, y: 0.77), .init(x: 0.33, y: 0.77)]),
+                    TourAnnotation(featureID: roadID, vertices: [.init(x: 0.05, y: 0.85), .init(x: 0.95, y: 0.85)], kind: .polyline)
+                ]
+                tour.stations.append(station)
+            }
+            _ = try await tourStore.save(tour, directory: captures, projectID: projectID)
+        } catch { issue = "Не удалось подготовить учебную прогулку: \(error.localizedDescription)" }
+    }
+
+    private func seedBuildingIfRequested() async {
+        guard ProcessInfo.processInfo.arguments.contains("--uitest-seed-building"), let store else { return }
+        let projectID = UUID(uuidString: "A71A5000-1234-4000-8000-000000000201")!
+        let frameID = UUID(uuidString: "A71A5000-1234-4000-8000-000000000202")!
+        do {
+            let project: AtlasProject
+            if let existing = try await store.project(id: projectID) { project = existing }
+            else {
+                project = try await store.saveProject(AtlasProject(id: projectID, name: "Демо · этажи здания", kind: .building,
+                    coordinateReference: .localMeters(frameID: frameID),
+                    notes: "Синтетические планы для проверки интерфейса. Не результат обмера."))
+                for floor in 1...2 {
+                    let localFrame = floor == 1 ? frameID : UUID(uuidString: "A71A5000-1234-4000-8000-000000000205")!
+                    let boundary = MetricPolygon(frameID: localFrame, vertices: [
+                        .init(x: 0, y: 0), .init(x: 4, y: 0), .init(x: 4, y: 3), .init(x: 0, y: 3)])
+                    let walls = boundary.vertices.indices.map { index in
+                        PlanWall(start: boundary.vertices[index], end: boundary.vertices[(index + 1) % boundary.vertices.count],
+                                 heightMeters: 2.5, thicknessMeters: 0.15)
+                    }
+                    let id = UUID(uuidString: String(format: "A71A5000-1234-4000-8000-%012d", 202 + floor))!
+                    _ = try await store.saveFloorPlan(AtlasFloorPlan(id: id, projectID: project.id, frameID: localFrame,
+                        name: "Учебный обмер · этаж \(floor)", floorIndex: floor,
+                        rooms: [PlanRoom(name: "Учебная комната", boundary: boundary)], walls: walls))
+                }
+            }
+            selectedProjectID = project.id
+            await reload()
+        } catch { issue = "Не удалось подготовить учебные планы: \(error.localizedDescription)" }
     }
 
     /// Twelve actual vertices: floor, three walls and a short inner partition.

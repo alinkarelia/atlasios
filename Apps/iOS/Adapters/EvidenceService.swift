@@ -32,6 +32,20 @@ struct PhotoEvidence: Identifiable, Codable, Sendable {
     var geoTag: GeoTag? = nil
     var capturedAt: Date? = nil
     var geoTimestampBasis: PhotoGeoTimestampBasis? = nil
+    /// Source EXIF may contain coordinates without a recoverable capture time.
+    /// Keep that observation separately rather than dating it at import time.
+    var sourceGeoMetadata: PhotoSourceGeoMetadata? = nil
+    /// Derived frames retain the exact source recording and sampled pose.
+    /// They never replace the original movie or acquire the importer’s GPS.
+    var videoFrameProvenance: VideoFrameProvenance? = nil
+}
+
+struct PhotoSourceGeoMetadata: Codable, Sendable {
+    var coordinate: GeographicCoordinate?
+    var altitudeMeters: Double?
+    var horizontalAccuracyMeters: Double?
+    var capturedAt: Date?
+    var timestampBasis: PhotoGeoTimestampBasis
 }
 
 struct EvidenceOCR: Codable, Sendable {
@@ -78,6 +92,17 @@ final class EvidenceService: ObservableObject {
         try await save(data: data, projectID: projectID, outputDirectory: outputDirectory,
                        source: "photoLibrary", cameraTransform: nil, cameraFrameID: nil,
                        geoFix: nil, capturedAt: nil, recognizeText: recognizeText)
+    }
+
+    func saveVideoFrame(data: Data, projectID: UUID, outputDirectory: URL,
+                        capturedAt: Date, cameraFrameID: UUID, cameraTransform: [Float],
+                        provenance: VideoFrameProvenance) async throws -> PhotoEvidence {
+        guard provenance.isValid, provenance.frameID == cameraFrameID,
+              provenance.sourceObservedAt == capturedAt,
+              VideoTourPolicy.validCameraTransform(cameraTransform) else { throw EvidenceError.unsupportedMetadata }
+        return try await save(data: data, projectID: projectID, outputDirectory: outputDirectory,
+            source: "videoDerivedFrame", cameraTransform: cameraTransform, cameraFrameID: cameraFrameID,
+            geoFix: nil, capturedAt: capturedAt, recognizeText: false, videoFrameProvenance: provenance)
     }
 
     /// Saves AVCapturePhotoOutput's original encoded file, including EXIF and
@@ -142,14 +167,16 @@ final class EvidenceService: ObservableObject {
 
     private func save(data: Data, projectID: UUID, outputDirectory: URL, source: String,
                       cameraTransform: [Float]?, cameraFrameID: UUID?, geoFix: GeoLocationFix?,
-                      capturedAt: Date?, recognizeText: Bool) async throws -> PhotoEvidence {
+                      capturedAt: Date?, recognizeText: Bool,
+                      videoFrameProvenance: VideoFrameProvenance? = nil) async throws -> PhotoEvidence {
         guard !isProcessing else { throw EvidenceError.alreadyProcessing }
         isProcessing = true; errorMessage = nil
         defer { isProcessing = false }
         do {
             let evidence = try await processor.save(data: data, projectID: projectID, directory: outputDirectory,
                 source: source, cameraTransform: cameraTransform, cameraFrameID: cameraFrameID,
-                geoFix: geoFix, capturedAt: capturedAt, recognizeText: recognizeText)
+                geoFix: geoFix, capturedAt: capturedAt, recognizeText: recognizeText,
+                videoFrameProvenance: videoFrameProvenance)
             latestEvidence = evidence
             photos.removeAll { $0.id == evidence.id }
             photos.insert(evidence, at: 0)
@@ -194,7 +221,8 @@ private actor EvidenceProcessor {
 
     func save(data: Data, projectID: UUID, directory: URL, source: String,
               cameraTransform: [Float]?, cameraFrameID: UUID?, geoFix: GeoLocationFix?,
-              capturedAt: Date?, recognizeText: Bool) throws -> PhotoEvidence {
+              capturedAt: Date?, recognizeText: Bool,
+              videoFrameProvenance: VideoFrameProvenance? = nil) throws -> PhotoEvidence {
         let directory = directory.standardizedFileURL.resolvingSymlinksInPath()
         guard data.count < 100 * 1_024 * 1_024 else { throw EvidenceError.imageTooLarge }
         guard let imageSource = CGImageSourceCreateWithData(data as CFData, nil), CGImageSourceGetCount(imageSource) > 0,
@@ -231,6 +259,7 @@ private actor EvidenceProcessor {
             sha256: SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined(),
             pixelWidth: width, pixelHeight: height, cameraTransform: cameraTransform,
             cameraFrameID: cameraFrameID, ocr: nil, recognitionIssue: nil)
+        evidence.videoFrameProvenance = videoFrameProvenance
         if source == "photoLibrary" {
             // An imported photograph uses only its own metadata, never the
             // phone's current location. The original file remains unchanged.
@@ -238,13 +267,24 @@ private actor EvidenceProcessor {
             let normalized = PhotoGeoMetadata.normalize(rawProperties)
             evidence.capturedAt = normalized.capturedAt
             evidence.geoTimestampBasis = normalized.timestampBasis
-            if let observation = normalized.observation {
+            evidence.sourceGeoMetadata = PhotoSourceGeoMetadata(
+                coordinate: normalized.observation.map { .init(longitude: $0.longitude, latitude: $0.latitude) },
+                altitudeMeters: normalized.observation?.altitudeMeters,
+                horizontalAccuracyMeters: normalized.observation?.horizontalAccuracyMeters,
+                capturedAt: normalized.capturedAt, timestampBasis: normalized.timestampBasis)
+            if let observation = normalized.observation, let captureTime = normalized.capturedAt {
                 evidence.geoTag = GeoTag(automaticFix: GeoLocationFix(
                     coordinate: .init(longitude: observation.longitude, latitude: observation.latitude),
                     altitudeMeters: observation.altitudeMeters,
                     horizontalAccuracyMeters: observation.horizontalAccuracyMeters,
-                    observedAt: normalized.capturedAt ?? importedAt, source: .photoEXIF))
+                    observedAt: captureTime, source: .photoEXIF))
             }
+        } else if source == "videoDerivedFrame" {
+            guard videoFrameProvenance != nil, let capturedAt,
+                  cameraFrameID != nil, cameraTransform?.count == 16,
+                  cameraTransform?.allSatisfy(\.isFinite) == true else { throw EvidenceError.unsupportedMetadata }
+            evidence.capturedAt = capturedAt
+            evidence.geoTimestampBasis = .cameraCapture
         } else {
             let rawProperties = Dictionary(uniqueKeysWithValues: properties.map { ($0.key as String, $0.value) })
             let normalized = PhotoGeoMetadata.normalize(rawProperties)

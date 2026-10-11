@@ -23,6 +23,7 @@ struct CaptureScreen: View {
     let onSaved: (URL) -> Void
     let onFloorPlan: ((AtlasFloorPlan) -> Void)?
     let onEvidenceSaved: (() -> Void)?
+    let lidarOnly: Bool
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
@@ -50,16 +51,19 @@ struct CaptureScreen: View {
     @State private var startTask: Task<Void, Never>?
     @State private var startGeneration = UUID()
     @State private var isSaving = false
+    @State private var continuations: [CaptureContinuationRecord] = []
+    @State private var showContinuations = false
 
     private let lime = Color.atlasAccent
     private let graphite = Color.atlasCanvas
 
     init(project: AtlasProject, outputDirectory: URL, onSaved: @escaping (URL) -> Void,
          onFloorPlan: ((AtlasFloorPlan) -> Void)? = nil,
-         onEvidenceSaved: (() -> Void)? = nil) {
+         onEvidenceSaved: (() -> Void)? = nil, lidarOnly: Bool = false) {
         self.project = project; self.outputDirectory = outputDirectory
         self.onSaved = onSaved; self.onFloorPlan = onFloorPlan
         self.onEvidenceSaved = onEvidenceSaved
+        self.lidarOnly = lidarOnly
     }
 
     var body: some View {
@@ -81,6 +85,7 @@ struct CaptureScreen: View {
         .task {
             schedulePreview()
             await evidence.loadEvidence(projectID: project.id, outputDirectory: outputDirectory)
+            continuations = await CaptureCoordinator.continuableCaptures(in: outputDirectory, projectID: project.id)
         }
         .onChange(of: mode) { _, _ in schedulePreview() }
         .onChange(of: scenePhase) { _, phase in
@@ -153,6 +158,29 @@ struct CaptureScreen: View {
         .sheet(isPresented: $showGallery) { EvidenceGallerySheet(evidence: evidence, root: outputDirectory) }
         .sheet(isPresented: $showTips) { captureHelp }
         .sheet(isPresented: $showDiagnostics) { diagnostics }
+        .sheet(isPresented: $showContinuations) {
+            NavigationStack {
+                List {
+                    Section {
+                        Text("Добавится новый фрагмент. Прежние модели и видео сохранятся; для общей модели фрагменты нужно совместить по опорным точкам.")
+                            .font(.footnote)
+                    }
+                    ForEach(continuations) { record in
+                        Button {
+                            showContinuations = false
+                            Task { await restoreCapture(record) }
+                        } label: {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(record.name).font(.headline)
+                                Text(record.updatedAt, format: .dateTime.day().month().year().hour().minute())
+                                Text("Фрагментов: \(record.segmentCount)").font(.caption)
+                            }
+                        }.disabled(working)
+                    }
+                }.navigationTitle("Продолжить обследование")
+                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Закрыть") { showContinuations = false } } }
+            }
+        }
 
     }
 
@@ -174,7 +202,7 @@ struct CaptureScreen: View {
 
     private var modeSelector: some View {
         HStack(spacing: 4) {
-            ForEach(Mode.allCases, id: \.self) { value in
+            ForEach(lidarOnly ? [.lidar] : Mode.allCases, id: \.self) { value in
                 Button {
                     guard !hasOpenCapture, !isStarting, !isSaving else { return }
                     mode = value; savedManifest = nil; shareableAssets = []
@@ -274,6 +302,18 @@ struct CaptureScreen: View {
                 .font(.caption2.weight(.bold)).tracking(1)
             Spacer(minLength: 4)
             if mode == .lidar {
+                if lidar.canChangeVideoSelection && savedManifest == nil {
+                    Toggle(isOn: Binding(get: { lidar.videoEnabled }, set: { lidar.setVideoEnabled($0) })) {
+                        Label("Видео", systemImage: "video")
+                    }.labelsHidden().tint(lime)
+                        .accessibilityLabel("Записывать видео вместе с LiDAR")
+                        .accessibilityIdentifier("capture.video.toggle")
+                        .disabled(working || !lidar.canChangeVideoSelection)
+                } else if lidar.videoEnabled {
+                    Label(lidar.videoIsRecording ? "ВИДЕО" : "Видео", systemImage: "video.fill")
+                        .font(.caption2.weight(.bold)).foregroundStyle(lidar.videoIsRecording ? .red : .white)
+                        .accessibilityIdentifier("capture.video.state")
+                }
                 Button { lidar.showRecordedSurfaces.toggle() } label: {
                     Label(lidar.showRecordedSurfaces ? "Заливка" : "Камера", systemImage: lidar.showRecordedSurfaces ? "cube.transparent.fill" : "eye")
                         .font(.caption.weight(.medium)).padding(.horizontal, 12).frame(minHeight: 44)
@@ -312,6 +352,10 @@ struct CaptureScreen: View {
             Text(lidar.overlayTriangleCount > 0 ? "Цвет — локально записанная сетка · пунктир — найденная плоскость"
                                                : "Получаем сетку · пунктир — найденная плоскость")
                 .font(.caption2).foregroundStyle(.white.opacity(0.85)).multilineTextAlignment(.center)
+            if lidar.videoEnabled {
+                Text(lidar.videoStatus).font(.caption2).foregroundStyle(.white.opacity(0.85))
+                    .accessibilityIdentifier("capture.video.status")
+            }
         }.padding(10).frame(maxWidth: .infinity)
             .background(.black.opacity(0.76), in: RoundedRectangle(cornerRadius: 14))
             .accessibilityIdentifier("capture.coverage.legend")
@@ -448,6 +492,11 @@ struct CaptureScreen: View {
                 }
             }
             Text(primaryTitle).font(.caption.weight(.medium)).foregroundStyle(Color.atlasMuted)
+            if mode == .lidar && !hasOpenCapture && savedManifest == nil && !continuations.isEmpty {
+                Button("Продолжить сохранённую съёмку", systemImage: "clock.arrow.circlepath") { showContinuations = true }
+                    .font(.caption).foregroundStyle(lime).disabled(working)
+                    .accessibilityIdentifier("capture.continueSaved")
+            }
         }.padding(.horizontal, 20).padding(.top, 10).padding(.bottom, 8)
     }
 
@@ -490,6 +539,8 @@ struct CaptureScreen: View {
                     Text("Нужен ровный свет. Зеркала, стекло, движущиеся люди и блестящие поверхности могут оставлять пробелы. Осмотрите модель после сохранения.")
                     Label("Геометка и точность", systemImage: "location").font(.headline)
                     Text("Геометка — положение телефона. Для точной привязки участка используйте контрольные точки; размеры для рабочего проекта проверяйте контрольным прибором.")
+                    Label("Видео и длительное обследование", systemImage: "video").font(.headline)
+                    Text("Включите видео перед началом LiDAR. Сохраняются изображение камеры и положения кадров; цветная заливка служит подсказкой на экране. Пауза закрывает видеофрагмент. Новые участки имеют собственные координаты и требуют совмещения, чтобы получить общую модель.")
                 }.padding(24).foregroundStyle(Color.atlasInk)
             }.background(Color.atlasCanvas).navigationTitle("Советы по съёмке")
                 .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Готово") { showTips = false } } }
@@ -507,6 +558,7 @@ struct CaptureScreen: View {
                 LabeledContent("iOS", value: UIDevice.current.systemVersion)
                 LabeledContent("LiDAR", value: CaptureCoordinator.isSupported ? "Доступен" : "Недоступен")
                 if mode == .lidar {
+                    LabeledContent("Видео", value: lidar.videoStatus)
                     LabeledContent("Заливка", value: "\(lidar.overlayAnchorCount) областей · \(lidar.overlayTriangleCount) треугольников")
                     if let checkpoint = lidar.lastCheckpoint { LabeledContent("Записано на устройство", value: checkpoint.formatted(date: .omitted, time: .standard)) }
                     if let issue = lidar.overlayIssue { Text(issue).foregroundStyle(.orange) }
@@ -559,7 +611,7 @@ struct CaptureScreen: View {
         VStack(alignment: .leading, spacing: 14) {
             Label("Съёмка сохранена", systemImage: "checkmark.circle.fill").font(.headline).foregroundStyle(lime)
             Text(mode == .room ? "RoomPlan JSON и USDZ. Обмер хранится в собственных локальных координатах."
-                              : "OBJ каждого фрагмента и исходные сетки. Файлы доступны без интернета.")
+                              : "Исходные сетки и доступные модели каждого фрагмента. При включённом видео — запись камеры и положения кадров. Файлы доступны без интернета.")
                 .font(.subheadline).foregroundStyle(.white.opacity(0.65))
             ForEach(shareableAssets, id: \.self) { asset in
                 ShareLink(item: asset) {
@@ -637,6 +689,18 @@ struct CaptureScreen: View {
         defer { isSaving = false }
         do { captureSaved(try await lidar.finish()) }
         catch { failure = error.localizedDescription; exitAfterSave = false }
+    }
+
+    private func restoreCapture(_ record: CaptureContinuationRecord) async {
+        guard !working, !hasOpenCapture else { return }
+        cancelPreview()
+        isStarting = true
+        defer { isStarting = false }
+        do {
+            try await lidar.restoreForContinuation(at: record.manifestURL, projectID: project.id, outputDirectory: outputDirectory)
+            savedManifest = nil; shareableAssets = []
+            refreshLocationActivity()
+        } catch { failure = error.localizedDescription; isStarting = false; schedulePreview() }
     }
 
     private func saveRoom() async {
@@ -757,7 +821,7 @@ struct CaptureScreen: View {
         let root = manifest.deletingLastPathComponent().standardizedFileURL
         return paths.compactMap { path in
             let url = root.appendingPathComponent(path).standardizedFileURL
-            guard url.path.hasPrefix(root.path + "/"), ["obj", "usdz"].contains(url.pathExtension),
+            guard url.path.hasPrefix(root.path + "/"), ["obj", "usdz", "mov", "mp4"].contains(url.pathExtension),
                   FileManager.default.fileExists(atPath: url.path) else { return nil }
             return url
         }

@@ -8,11 +8,14 @@ import XCTest
 /// Simulator cannot validate camera frames, LiDAR geometry, or measurement accuracy.
 final class AtlasUITests: XCTestCase {
     @MainActor
-    private func launch(seedMesh: Bool = false) -> XCUIApplication {
+    private func launch(seedMesh: Bool = false, seedCemetery: Bool = false, seedBuilding: Bool = false, seedTour: Bool = false) -> XCUIApplication {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = ["-AppleLanguages", "(ru)", "-AppleLocale", "ru_RU"]
         if seedMesh { app.launchArguments.append("--uitest-seed-mesh") }
+        if seedCemetery { app.launchArguments.append("--uitest-seed-cemetery") }
+        if seedBuilding { app.launchArguments.append("--uitest-seed-building") }
+        if seedTour { app.launchArguments.append("--uitest-seed-tour") }
         app.launch()
         return app
     }
@@ -209,6 +212,349 @@ final class AtlasUITests: XCTestCase {
         let picker = element("tools.project", in: app)
         return picker.label.contains(name) || (picker.value as? String)?.contains(name) == true ||
             app.staticTexts[name].firstMatch.exists
+    }
+
+    @MainActor
+    private func openSeededCemeteryMap(in app: XCUIApplication) {
+        XCTAssertTrue(app.staticTexts["Демо · полевое обследование"].firstMatch.waitForExistence(timeout: 15),
+                      "The labelled synthetic project must be stored through the normal project flow")
+        tap("projects.openSelected", in: app)
+        scrollAndTap("projects.cemetery", in: app)
+        XCTAssertTrue(app.staticTexts["Учебное кладбище"].firstMatch.waitForExistence(timeout: 15),
+                      "Fieldwork must load the actual saved cemetery rather than an empty demonstration screen")
+        tap("cemetery.map", in: app)
+        XCTAssertTrue(element("map.layers", in: app).waitForExistence(timeout: 15))
+    }
+
+    @MainActor
+    private func openMapCard(_ suffix: String, in app: XCUIApplication) {
+        let identifier = "map.card.A71A5000-1234-4000-8000-000000000" + suffix
+        let card = element(identifier, in: app)
+        XCTAssertTrue(card.waitForExistence(timeout: 15), "The saved map card is missing: \(identifier)")
+        for _ in 0..<4 {
+            if card.isHittable {
+                card.tap()
+                XCTAssertTrue(element("burial.status.summary", in: app).waitForExistence(timeout: 15),
+                              "The saved grave must open its real burial card")
+                return
+            }
+            let strip = app.scrollViews.containing(.button, identifier: identifier).firstMatch
+            XCTAssertTrue(strip.exists, "The map card must belong to the real object strip")
+            strip.swipeLeft()
+        }
+        XCTFail("The saved map card cannot be opened: \(identifier)")
+    }
+
+    @MainActor
+    private func waitForAbsence(_ control: XCUIElement,
+                                file: StaticString = #filePath, line: UInt = #line) {
+        let wait = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: control)
+        XCTAssertEqual(XCTWaiter.wait(for: [wait], timeout: 15), .completed, file: file, line: line)
+    }
+
+    @MainActor
+    private func scrollToControl(_ control: XCUIElement, in app: XCUIApplication,
+                                 towardTop: Bool = false,
+                                 file: StaticString = #filePath, line: UInt = #line) {
+        for _ in 0..<12 {
+            if control.exists && control.isHittable { return }
+            if towardTop { app.swipeDown() } else { app.swipeUp() }
+        }
+        XCTFail("Could not reveal control: \(control)", file: file, line: line)
+    }
+
+    @MainActor
+    private func assertUnknownBurialIdentity(in app: XCUIApplication) {
+        let identity = element("burial.identity.summary", in: app)
+        XCTAssertTrue(identity.waitForExistence(timeout: 10))
+        XCTAssertEqual(identity.label, "Личность неизвестна",
+                       "An observed or confirmed burial must never invent a person's identity")
+        scrollToControl(element("burial.person.add", in: app), in: app)
+        XCTAssertTrue(app.staticTexts["Сведения о людях пока не добавлены."].exists)
+        XCTAssertFalse(app.textFields["Фамилия, имя, отчество — если известны"].exists,
+                       "The app must not create a person when only an inscription or anomaly is recorded")
+    }
+
+    @MainActor
+    func testGeographicMapLayersAndSearchRemainAvailableWithoutSensorOrNetworkResults() {
+        let app = launch(seedCemetery: true)
+        openSeededCemeteryMap(in: app)
+        let grave = element("map.card.A71A5000-1234-4000-8000-000000000103", in: app)
+        XCTAssertTrue(grave.waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["WGS84 · карта местности"].exists)
+        XCTAssertTrue(element("map.locate", in: app).isEnabled)
+        XCTAssertTrue(element("map.track", in: app).isEnabled)
+        XCTAssertFalse(element("map.locationStatus", in: app).exists,
+                       "Opening the map must not claim that a GPS observation has been acquired")
+        screenshot("17-field-map", app: app)
+
+        tap("map.layers", in: app)
+        let graveLayer = app.switches["map.layer.grave"]
+        scrollToControl(graveLayer, in: app)
+        XCTAssertEqual(graveLayer.value as? String, "1")
+        graveLayer.tap()
+        XCTAssertEqual(graveLayer.value as? String, "0")
+        screenshot("20-map-layers", app: app)
+        app.navigationBars["Слои карты"].buttons["Готово"].tap()
+        waitForAbsence(grave)
+
+        tap("map.layers", in: app)
+        let restoredLayer = app.switches["map.layer.grave"]
+        scrollToControl(restoredLayer, in: app)
+        restoredLayer.tap()
+        XCTAssertEqual(restoredLayer.value as? String, "1")
+        app.navigationBars["Слои карты"].buttons["Готово"].tap()
+        XCTAssertTrue(grave.waitForExistence(timeout: 10), "Restoring a layer must restore its saved map cards")
+
+        tap("map.search", in: app)
+        XCTAssertTrue(element("map.search.query", in: app).waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Введите название. Поиск Apple Maps требует подключения к интернету."].exists,
+                      "The search must explain its network requirement before any address is requested")
+        screenshot("20b-map-search", app: app)
+        app.navigationBars["Поиск на карте"].buttons["Закрыть"].tap()
+        XCTAssertTrue(element("map.layers", in: app).waitForExistence(timeout: 10),
+                      "Closing search must return to the same saved map without requiring a network result")
+        XCTAssertTrue(grave.exists)
+    }
+
+    @MainActor
+    func testUnknownBurialInscriptionAndCommentsSurviveRestartWithoutInventingIdentity() {
+        let app = launch(seedCemetery: true)
+        openSeededCemeteryMap(in: app)
+        openMapCard("103", in: app)
+        XCTAssertEqual(element("burial.status.summary", in: app).label, "Захоронение подтверждено")
+        assertUnknownBurialIdentity(in: app)
+        let marker = String(UUID().uuidString.prefix(8))
+        let inscription = "QA-TRANSCRIPTION-\(marker)"
+        let comment = "QA-COMMENT-\(marker)"
+        let inscriptionField = element("burial.inscription", in: app)
+        scrollToControl(inscriptionField, in: app)
+        inscriptionField.tap(); inscriptionField.typeText(inscription)
+        let notesField = element("burial.notes", in: app)
+        scrollToControl(notesField, in: app)
+        notesField.tap(); notesField.typeText(comment)
+        tap("burial.save", in: app)
+        waitForAbsence(element("burial.save", in: app))
+
+        app.terminate()
+        app.launch()
+        openSeededCemeteryMap(in: app)
+        openMapCard("103", in: app)
+        XCTAssertEqual(element("burial.status.summary", in: app).label, "Захоронение подтверждено")
+        assertUnknownBurialIdentity(in: app)
+        let restoredInscription = element("burial.inscription", in: app)
+        scrollToControl(restoredInscription, in: app)
+        XCTAssertTrue((restoredInscription.value as? String ?? "").contains(inscription),
+                      "The transcription draft disappeared after a real process restart")
+        let restoredNotes = element("burial.notes", in: app)
+        scrollToControl(restoredNotes, in: app)
+        XCTAssertTrue((restoredNotes.value as? String ?? "").contains(comment),
+                      "The operator's comments disappeared after a real process restart")
+        scrollToControl(element("burial.status.summary", in: app), in: app, towardTop: true)
+        screenshot("18-burial-unknown", app: app)
+
+        scrollAndTap("burial.history", in: app)
+        XCTAssertTrue(app.navigationBars["История карточки"].waitForExistence(timeout: 10))
+        let revisions = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Версия "))
+        XCTAssertTrue(revisions.firstMatch.waitForExistence(timeout: 15))
+        XCTAssertGreaterThanOrEqual(revisions.count, 2, "A saved card edit must create a durable revision")
+        let latest = revisions.element(boundBy: revisions.count - 1)
+        scrollToControl(latest, in: app)
+        latest.tap()
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", inscription)).firstMatch.waitForExistence(timeout: 10),
+                      "The history must contain the actual saved inscription")
+        app.navigationBars["История карточки"].buttons["Готово"].tap()
+        tap("burial.cancel", in: app)
+    }
+
+    @MainActor
+    func testCandidateRejectionIsReversibleAndNeverConfirmsAnUnknownPerson() {
+        let app = launch(seedCemetery: true)
+        openSeededCemeteryMap(in: app)
+        openMapCard("104", in: app)
+        XCTAssertEqual(element("burial.status.summary", in: app).label, "Возможное захоронение · нужна проверка")
+        assertUnknownBurialIdentity(in: app)
+        let reject = app.buttons["Отклонить предположение"]
+        scrollToControl(reject, in: app)
+        reject.tap()
+        let confirmation = app.buttons["Подтвердить"].firstMatch
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 10))
+        confirmation.tap()
+        waitForAbsence(element("burial.save", in: app))
+        let candidate = element("map.card.A71A5000-1234-4000-8000-000000000104", in: app)
+        waitForAbsence(candidate)
+
+        tap("map.layers", in: app)
+        let inactive = app.switches["map.showInactive"]
+        XCTAssertTrue(inactive.waitForExistence(timeout: 10))
+        XCTAssertEqual(inactive.value as? String, "0")
+        inactive.tap()
+        app.navigationBars["Слои карты"].buttons["Готово"].tap()
+        openMapCard("104", in: app)
+        XCTAssertEqual(element("burial.status.summary", in: app).label, "Предположение отклонено")
+        assertUnknownBurialIdentity(in: app)
+        let restore = app.buttons["Восстановить карточку"]
+        scrollToControl(restore, in: app)
+        restore.tap()
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 10))
+        confirmation.tap()
+        waitForAbsence(element("burial.save", in: app))
+
+        tap("map.layers", in: app)
+        let restoredInactive = app.switches["map.showInactive"]
+        XCTAssertEqual(restoredInactive.value as? String, "1")
+        restoredInactive.tap()
+        app.navigationBars["Слои карты"].buttons["Готово"].tap()
+        openMapCard("104", in: app)
+        XCTAssertEqual(element("burial.status.summary", in: app).label, "Возможное захоронение · нужна проверка",
+                       "Restoring a rejected anomaly must preserve its unconfirmed burial status")
+        assertUnknownBurialIdentity(in: app)
+        scrollToControl(element("burial.status.summary", in: app), in: app, towardTop: true)
+        screenshot("19-burial-candidate-restored", app: app)
+        tap("burial.cancel", in: app)
+    }
+
+    @MainActor
+    func testEmptyRoomExplainsRealSimulatorLimitationAndReturnsToTheProject() {
+        let app = launch()
+        let name = createProject(in: app)
+        tap("projects.openSelected", in: app)
+        scrollAndTap("projects.emptyRoom", in: app)
+        let unavailable = element("emptyRoom.unavailable", in: app)
+        XCTAssertTrue(unavailable.waitForExistence(timeout: 15),
+                      "The designer flow must explain unsupported RoomPlan instead of pretending to create geometry")
+        scrollToControl(unavailable, in: app)
+        XCTAssertTrue(unavailable.isHittable)
+        let dimensions = app.switches["emptyRoom.dimensions"]
+        let storage = app.switches["emptyRoom.keepStorage"]
+        scrollToControl(dimensions, in: app, towardTop: true)
+        XCTAssertEqual(dimensions.value as? String, "1")
+        scrollToControl(storage, in: app)
+        XCTAssertEqual(storage.value as? String, "0")
+        storage.tap()
+        XCTAssertEqual(storage.value as? String, "1", "Keeping storage must be the operator's explicit choice")
+        storage.tap()
+        XCTAssertEqual(storage.value as? String, "0")
+        scrollToControl(unavailable, in: app)
+        screenshot("21-empty-room-unavailable", app: app)
+        tap("emptyRoom.close", in: app)
+        XCTAssertTrue(element("projects.emptyRoom", in: app).waitForExistence(timeout: 10))
+        XCTAssertTrue(app.navigationBars[name].firstMatch.exists,
+                      "Closing the designer flow must return to its exact project")
+    }
+
+    @MainActor
+    func testBuildingGroupsSavedFloorsAndDimensionsChangeTheRealDrawing() {
+        let app = launch(seedBuilding: true)
+        XCTAssertTrue(app.staticTexts["Демо · этажи здания"].firstMatch.waitForExistence(timeout: 15))
+        tap("projects.openSelected", in: app)
+        scrollAndTap("projects.buildingPlans", in: app)
+        XCTAssertTrue(element("building.catalog", in: app).waitForExistence(timeout: 15))
+        let secondPlan = element("building.plan.A71A5000-1234-4000-8000-000000000204", in: app)
+        scrollToControl(secondPlan, in: app)
+        XCTAssertTrue(element("building.floor.2", in: app).exists,
+                      "A saved floorIndex must produce its actual floor group")
+        let firstPlan = element("building.plan.A71A5000-1234-4000-8000-000000000203", in: app)
+        scrollToControl(firstPlan, in: app)
+        XCTAssertTrue(element("building.floor.1", in: app).exists)
+        XCTAssertTrue(app.staticTexts["Учебный обмер · этаж 1"].exists)
+        screenshot("22-building-plans", app: app)
+        firstPlan.tap()
+        XCTAssertTrue(app.staticTexts["Учебный обмер · этаж 1"].firstMatch.waitForExistence(timeout: 15),
+                      "Opening a catalog plan must select that exact saved plan, not an arbitrary floor")
+        let dimensions = app.switches["floorPlan.dimensions"]
+        scrollToControl(dimensions, in: app)
+        XCTAssertEqual(dimensions.value as? String, "1")
+        let drawing = element("floorPlan.drawing", in: app)
+        XCTAssertTrue(drawing.waitForExistence(timeout: 10))
+        XCTAssertTrue(drawing.label.contains("1 комнат") && drawing.label.contains("4 стен"),
+                      "The viewport must receive the actual persisted room and walls")
+        guard let withDimensions = drawingPixels(drawing.screenshot().image) else {
+            XCTFail("The real floor-plan viewport did not produce a readable image")
+            return
+        }
+        dimensions.tap()
+        XCTAssertEqual(dimensions.value as? String, "0")
+        guard let withoutDimensions = drawingPixels(drawing.screenshot().image) else {
+            XCTFail("The floor-plan viewport disappeared after hiding dimensions")
+            return
+        }
+        XCTAssertGreaterThan(changedDrawingPixels(withDimensions, withoutDimensions), 20,
+                             "Hiding dimensions must change the native drawing itself, not just the switch")
+        dimensions.tap()
+        XCTAssertEqual(dimensions.value as? String, "1")
+        screenshot("22b-plan-dimensions", app: app)
+        scrollToControl(app.staticTexts["Учебная комната"].firstMatch, in: app)
+        XCTAssertTrue(app.staticTexts["Учебная комната"].exists,
+                      "The room must still exist after the presentation-only dimension changes")
+
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.staticTexts["Демо · этажи здания"].firstMatch.waitForExistence(timeout: 15))
+        tap("projects.openSelected", in: app)
+        scrollAndTap("projects.buildingPlans", in: app)
+        scrollToControl(element("building.plan.A71A5000-1234-4000-8000-000000000203", in: app), in: app)
+        XCTAssertTrue(element("building.floor.1", in: app).exists,
+                      "Floor grouping must survive restarting the process")
+    }
+
+    @MainActor
+    func testTourLoadsOriginalsMovesBetweenStationsAndOpensTheSameBurialCard() {
+        let app = launch(seedCemetery: true, seedTour: true)
+        XCTAssertTrue(app.staticTexts["Демо · полевое обследование"].firstMatch.waitForExistence(timeout: 15))
+        tap("projects.openSelected", in: app)
+        scrollAndTap("projects.tour", in: app)
+        XCTAssertTrue(element("tour.play", in: app).waitForExistence(timeout: 15))
+        tap("tour.play", in: app)
+        XCTAssertTrue(app.staticTexts["1 / 2 · Учебная остановка 1"].waitForExistence(timeout: 15))
+        let card = element("tour.feature.card", in: app)
+        XCTAssertTrue(card.waitForExistence(timeout: 15), "The central reticle must select the saved operator contour")
+        XCTAssertTrue(app.staticTexts["Участок 001"].firstMatch.exists)
+        screenshot("23-tour-contours", app: app)
+        app.buttons["Вперёд"].firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["2 / 2 · Учебная остановка 2"].waitForExistence(timeout: 15))
+        XCTAssertTrue(element("tour.feature.card", in: app).waitForExistence(timeout: 15))
+        app.buttons["Назад"].firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["1 / 2 · Учебная остановка 1"].waitForExistence(timeout: 15))
+        tap("tour.feature.card", in: app)
+        XCTAssertTrue(element("burial.status.summary", in: app).waitForExistence(timeout: 15))
+        XCTAssertEqual(element("burial.label", in: app).value as? String, "Участок 001", "A contour must open its linked UUID, not create another grave")
+        screenshot("24-tour-linked-card", app: app)
+        tap("burial.cancel", in: app)
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.staticTexts["Демо · полевое обследование"].firstMatch.waitForExistence(timeout: 15))
+        tap("projects.openSelected", in: app)
+        scrollAndTap("projects.tour", in: app)
+        tap("tour.play", in: app)
+        XCTAssertTrue(app.staticTexts["1 / 2 · Учебная остановка 1"].waitForExistence(timeout: 15), "The original-backed tour must survive restart")
+    }
+
+    private func drawingPixels(_ image: UIImage) -> [UInt8]? {
+        guard let source = image.cgImage else { return nil }
+        let side = 128
+        var pixels = [UInt8](repeating: 0, count: side * side * 4)
+        let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(data: buffer.baseAddress, width: side, height: side,
+                                          bitsPerComponent: 8, bytesPerRow: side * 4,
+                                          space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            context.draw(source, in: CGRect(x: 0, y: 0, width: CGFloat(side), height: CGFloat(side)))
+            return true
+        }
+        return drawn ? pixels : nil
+    }
+
+    private func changedDrawingPixels(_ first: [UInt8], _ second: [UInt8]) -> Int {
+        guard first.count == second.count else { return 0 }
+        var changed = 0
+        for offset in stride(from: 0, to: first.count, by: 4) {
+            let difference = abs(Int(first[offset]) - Int(second[offset])) +
+                abs(Int(first[offset + 1]) - Int(second[offset + 1])) +
+                abs(Int(first[offset + 2]) - Int(second[offset + 2]))
+            if difference > 24 { changed += 1 }
+        }
+        return changed
     }
 
     @MainActor

@@ -260,14 +260,65 @@ final class RoomCaptureAdapter: NSObject, ObservableObject, RoomCaptureViewDeleg
         if let pendingWrite { await pendingWrite.value }
         metadata.status = "exporting"
         do {
-            try await writer.export(roomJSON: data, metadata: metadata)
-            metadata.status = "ready"
-            metadata.completedAssets = ["room.json", "room.usdz", "room-data.json"]
+            metadata = try await writer.export(roomJSON: data, metadata: metadata)
             manifest = metadata
             state = .saved
             instruction = "План и модель сохранены на устройстве"
             return directory.appendingPathComponent("manifest.json")
         } catch { state = previousState; errorMessage = error.localizedDescription; throw error }
+    }
+
+    func structuralSnapshot(keepStorage: Bool) throws -> EmptyRoomDocument {
+        guard let room = capturedRoom, let source = roomJSON, let metadata = manifest else { throw RoomCaptureError.noRoom }
+        return try EmptyRoomNativeDocument.make(room: room, source: source, captureID: metadata.id,
+            projectID: metadata.projectID, frameID: metadata.frameID, capturedAt: metadata.createdAt, keepStorage: keepStorage)
+    }
+
+    /// A derivative of the same capture, never a replacement for its observed
+    /// room.json / room-data.json and never an independently registered frame.
+    func exportStructuralRoom(keepStorage: Bool) async throws -> EmptyRoomExport {
+        guard state != .exporting else { throw CaptureError.operationInProgress }
+        if state != .saved { _ = try await export() }
+        guard let source = roomJSON, let writer, let metadata = manifest else { throw RoomCaptureError.noRoom }
+        let previous = state; state = .exporting
+        do {
+            let (updated, result) = try await writer.exportStructuralRoom(source: source, metadata: metadata, keepStorage: keepStorage)
+            manifest = updated; state = .saved
+            instruction = "Чистая структурная модель сохранена. Проверьте черновик перед проектированием."
+            return result
+        } catch { state = previous; errorMessage = error.localizedDescription; throw error }
+    }
+
+    func saveStructuralPresentation(_ result: EmptyRoomExport, png: Data, pdf: Data) async throws -> URL {
+        guard state == .saved, let writer, let metadata = manifest,
+              result.document.captureID == metadata.id else { throw RoomCaptureError.noRoom }
+        state = .exporting
+        do {
+            let updated = try await writer.savePresentation(result: result, metadata: metadata, png: png, pdf: pdf)
+            manifest = updated; state = .saved
+            return result.manifestURL
+        } catch { state = .saved; errorMessage = error.localizedDescription; throw error }
+    }
+
+    /// Explicitly reopens a durable RoomPlan source; no camera session starts.
+    func loadSavedRoom(at directory: URL, projectID: UUID) async throws {
+        guard state != .recording, state != .processing, state != .exporting, state != .preparing else { throw CaptureError.operationInProgress }
+        suspendPreview()
+        let previous = state; state = .exporting
+        let reader = RoomCheckpointWriter(root: directory)
+        do {
+            let (metadata, source) = try await reader.savedSource(projectID: projectID)
+            let decoded = try JSONDecoder().decode(CapturedRoom.self, from: source)
+            writer = reader; manifest = metadata; roomJSON = source; capturedRoom = decoded
+            captureDirectory = directory; frameID = metadata.frameID; hasCheckpoint = true
+            wallCount = decoded.walls.count; openingCount = decoded.windows.count + decoded.doors.count + decoded.openings.count
+            state = metadata.status == "ready" ? .saved : .captured
+            errorMessage = nil; instruction = "Открыт исходный обмер. Его файлы не изменяются при очистке."
+        } catch { state = previous; errorMessage = error.localizedDescription; throw error }
+    }
+
+    static func savedRooms(in directory: URL, projectID: UUID) async throws -> SavedEmptyRoomListing {
+        try await RoomCheckpointWriter(root: directory).savedRooms(projectID: projectID)
     }
 
     /// Exports a draft into its true room-local frame. The caller must register
@@ -510,7 +561,7 @@ private actor RoomCheckpointWriter {
     func persistRaw(_ data: Data) throws {
         try data.write(to: root.appendingPathComponent("room-data.json"), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }
-    func export(roomJSON: Data, metadata: RoomManifest) throws {
+    func export(roomJSON: Data, metadata: RoomManifest) throws -> RoomManifest {
         try checkpoint(roomJSON)
         try saveManifest(metadata)
         let room = try JSONDecoder().decode(CapturedRoom.self, from: roomJSON)
@@ -526,7 +577,116 @@ private actor RoomCheckpointWriter {
         if FileManager.default.fileExists(atPath: root.appendingPathComponent("room-data.json").path) {
             finished.completedAssets.append("room-data.json")
         }
+        finished.completedAssets += metadata.completedAssets.filter {
+            $0.hasPrefix("empty-room/") && FileManager.default.fileExists(atPath: root.appendingPathComponent($0).path)
+        }
         try saveManifest(finished)
+        return finished
+    }
+
+    func savedSource(projectID: UUID) throws -> (RoomManifest, Data) {
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        let metadata = try decoder.decode(RoomManifest.self, from: boundedManifest(root.appendingPathComponent("manifest.json")))
+        guard metadata.schemaVersion == 1, metadata.source == "RoomPlan" else { throw EmptyRoomError.unsupportedSchema }
+        guard metadata.projectID == projectID else { throw EmptyRoomError.wrongProject }
+        let sourceURL = root.appendingPathComponent("room.json")
+        let values = try sourceURL.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey, .isSymbolicLinkKey])
+        guard values.isRegularFile == true, values.isSymbolicLink != true,
+              let size = values.fileSize else { throw EmptyRoomError.noSource }
+        guard size <= 32 * 1024 * 1024 else { throw EmptyRoomError.sourceLimit }
+        return (metadata, try Data(contentsOf: sourceURL))
+    }
+
+    func savedRooms(projectID: UUID) throws -> SavedEmptyRoomListing {
+        guard FileManager.default.fileExists(atPath: root.path) else { return .init(rooms: [], issues: []) }
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        var result: [SavedEmptyRoomSource] = []
+        var issues: [String] = []
+        let directories = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey], options: .skipsHiddenFiles)
+        for directory in directories where directory.lastPathComponent.hasPrefix("room-") {
+            do {
+            let values = try directory.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            guard values.isDirectory == true, values.isSymbolicLink != true else { continue }
+            let metadata = try decoder.decode(RoomManifest.self, from: boundedManifest(directory.appendingPathComponent("manifest.json")))
+            guard metadata.source == "RoomPlan", metadata.projectID == projectID else { continue }
+            guard metadata.schemaVersion == 1 else { throw EmptyRoomError.unsupportedSchema }
+            guard directory.lastPathComponent == "room-\(metadata.id.uuidString)",
+                  FileManager.default.fileExists(atPath: directory.appendingPathComponent("room.json").path) else { throw EmptyRoomError.noSource }
+            result.append(.init(id: metadata.id, directory: directory, createdAt: metadata.createdAt, name: metadata.projectName))
+            } catch { issues.append("\(directory.lastPathComponent): \(error.localizedDescription)") }
+        }
+        return .init(rooms: result.sorted { $0.createdAt > $1.createdAt }, issues: issues)
+    }
+
+    private func boundedManifest(_ url: URL) throws -> Data {
+        let values = try url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey, .isSymbolicLinkKey])
+        guard values.isRegularFile == true, values.isSymbolicLink != true,
+              let size = values.fileSize, size <= 1024 * 1024 else { throw EmptyRoomError.unsupportedSchema }
+        return try Data(contentsOf: url)
+    }
+
+    func exportStructuralRoom(source: Data, metadata: RoomManifest, keepStorage: Bool) throws -> (RoomManifest, EmptyRoomExport) {
+        let original = try JSONDecoder().decode(CapturedRoom.self, from: source)
+        var document = try EmptyRoomNativeDocument.make(room: original, source: source, captureID: metadata.id,
+            projectID: metadata.projectID, frameID: metadata.frameID, capturedAt: metadata.createdAt, keepStorage: keepStorage)
+        let retainedIDs = Set(document.storage.map(\.id))
+        let filtered = try EmptyRoomJSONFilter.filter(source, retaining: retainedIDs)
+        let clean = try JSONDecoder().decode(CapturedRoom.self, from: filtered)
+        guard Set(clean.objects.map(\.identifier)) == retainedIDs,
+              clean.identifier == original.identifier,
+              Set(clean.walls.map(\.identifier)) == Set(original.walls.map(\.identifier)),
+              Set(clean.floors.map(\.identifier)) == Set(original.floors.map(\.identifier)),
+              Set(clean.windows.map(\.identifier)) == Set(original.windows.map(\.identifier)),
+              Set(clean.doors.map(\.identifier)) == Set(original.doors.map(\.identifier)),
+              Set(clean.openings.map(\.identifier)) == Set(original.openings.map(\.identifier)) else { throw EmptyRoomError.unsupportedSchema }
+        let exportID = UUID()
+        let relative = "empty-room/\(exportID.uuidString)"
+        let stage = root.appendingPathComponent(".empty-room-stage-\(exportID.uuidString)", isDirectory: true)
+        let destination = root.appendingPathComponent(relative, isDirectory: true)
+        try FileManager.default.createDirectory(at: stage, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: stage) }
+        try filtered.write(to: stage.appendingPathComponent("structural-room.json"), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        try clean.export(to: stage.appendingPathComponent("structural-room.usdz"), exportOptions: .mesh)
+        try Task.checkCancellation()
+        var hasOBJ = false
+        do {
+            let mesh = try OBJPreviewLoader.load(stage.appendingPathComponent("structural-room.usdz"))
+            try EmptyRoomOBJWriter.write(mesh, to: stage.appendingPathComponent("structural-room.obj"), frameID: metadata.frameID)
+            hasOBJ = true
+        } catch is CancellationError { throw CancellationError() }
+        catch {
+            document.objExportIssue = "OBJ не создан: \(error.localizedDescription). Нативный USDZ сохранён без ограничения предпросмотра."
+            try? FileManager.default.removeItem(at: stage.appendingPathComponent("structural-room.obj"))
+        }
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]; encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(document).write(to: stage.appendingPathComponent("dimensions.json"), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.moveItem(at: stage, to: destination)
+        var updated = metadata; updated.status = "ready"
+        var assets = ["structural-room.json", "structural-room.usdz", "dimensions.json"]
+        if hasOBJ { assets.append("structural-room.obj") }
+        updated.completedAssets += assets.map { "\(relative)/\($0)" }
+        updated.notes = Array(Set(updated.notes + ["Clean RoomPlan derivatives preserve this capture's local frame and immutable originals. Semantic draft requires independent review; ceilings are not inferred."])).sorted()
+        do { try saveManifest(updated) }
+        catch { try? FileManager.default.removeItem(at: destination); throw error }
+        return (updated, .init(manifestURL: root.appendingPathComponent("manifest.json"), documentURL: destination.appendingPathComponent("dimensions.json"),
+            usdzURL: destination.appendingPathComponent("structural-room.usdz"), objURL: hasOBJ ? destination.appendingPathComponent("structural-room.obj") : nil, document: document))
+    }
+
+    func savePresentation(result: EmptyRoomExport, metadata: RoomManifest, png: Data, pdf: Data) throws -> RoomManifest {
+        let folder = result.documentURL.deletingLastPathComponent()
+        let id = folder.lastPathComponent
+        guard UUID(uuidString: id) != nil,
+              folder.deletingLastPathComponent() == root.appendingPathComponent("empty-room", isDirectory: true),
+              png.count <= 32 * 1024 * 1024, pdf.count <= 64 * 1024 * 1024,
+              png.starts(with: [137, 80, 78, 71]), pdf.starts(with: Data("%PDF".utf8)) else { throw EmptyRoomError.invalidGeometry }
+        try png.write(to: folder.appendingPathComponent("model.png"), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        try pdf.write(to: folder.appendingPathComponent("measurements.pdf"), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        var updated = metadata
+        let paths = ["empty-room/\(id)/model.png", "empty-room/\(id)/measurements.pdf"]
+        updated.completedAssets = Array(Set(updated.completedAssets + paths)).sorted()
+        try saveManifest(updated)
+        return updated
     }
     func recoverCheckpoint() throws -> URL {
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
@@ -536,7 +696,7 @@ private actor RoomCheckpointWriter {
         if metadata.status != "ready" {
             metadata.notes.append("Recovered from the last committed semantic checkpoint; draft requires independent validation.")
         }
-        try export(roomJSON: Data(contentsOf: roomURL), metadata: metadata)
+        _ = try export(roomJSON: Data(contentsOf: roomURL), metadata: metadata)
         return root.appendingPathComponent("manifest.json")
     }
     func saveManifest(_ metadata: RoomManifest) throws {

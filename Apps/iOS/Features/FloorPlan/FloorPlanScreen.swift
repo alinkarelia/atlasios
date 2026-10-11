@@ -21,6 +21,7 @@ private struct PlanShareRecord: Identifiable { let id = UUID(); let url: URL }
 struct FloorPlanScreen: View {
     @ObservedObject var model: AtlasAppModel
     let project: AtlasProject
+    let initialPlanID: UUID?
     @State private var plans: [AtlasFloorPlan] = []
     @State private var selectedID: UUID?
     @State private var editor: FloorPlanEditor?
@@ -31,6 +32,12 @@ struct FloorPlanScreen: View {
     @State private var pan: CGSize = .zero
     @GestureState private var drag: CGSize = .zero
     @State private var isSaving = false
+    @State private var showDimensions = true
+
+    init(model: AtlasAppModel, project: AtlasProject, initialPlanID: UUID? = nil) {
+        self.model = model; self.project = project; self.initialPlanID = initialPlanID
+        _selectedID = State(initialValue: initialPlanID)
+    }
 
     private var selected: AtlasFloorPlan? { plans.first { $0.id == selectedID } }
     var body: some View {
@@ -39,7 +46,10 @@ struct FloorPlanScreen: View {
                 if let plan = selected {
                     planSelector
                     planHeader(plan)
-                    PlanDrawingView(plan: plan, zoom: zoom, offset: CGSize(width: pan.width + drag.width, height: pan.height + drag.height)).frame(height: 320)
+                    Toggle("Размеры на модели", isOn: $showDimensions).accessibilityIdentifier("floorPlan.dimensions")
+                    PlanDrawingView(plan: plan, zoom: zoom, offset: CGSize(width: pan.width + drag.width, height: pan.height + drag.height), showDimensions: showDimensions).frame(height: 320)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityIdentifier("floorPlan.drawing")
                         .background(.background, in: RoundedRectangle(cornerRadius: 20))
                         .clipShape(RoundedRectangle(cornerRadius: 20))
                         .gesture(DragGesture().updating($drag) { value, state, _ in state = value.translation }.onEnded { value in
@@ -217,7 +227,7 @@ struct FloorPlanScreen: View {
             let directory = model.directory.appendingPathComponent("Exports", isDirectory: true)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let url: URL
-            if pdf { url = try PlanPDFExporter.export(plan, directory: directory) }
+            if pdf { url = try PlanPDFExporter.export(plan, directory: directory, showDimensions: showDimensions) }
             else {
                 let artifact = try AtlasExporter.exportFloorPlan(plan, format: format)
                 url = directory.appendingPathComponent(artifact.fileName)
@@ -232,6 +242,7 @@ private struct PlanDrawingView: View {
     let plan: AtlasFloorPlan
     let zoom: Double
     let offset: CGSize
+    let showDimensions: Bool
     var body: some View {
         Canvas { context, size in
             let viewport = PlanViewport(plan: plan, rect: CGRect(origin: .zero, size: size), zoom: zoom, offset: offset)
@@ -261,11 +272,28 @@ private struct PlanDrawingView: View {
                 let center = PlanViewport.labelPoint(room.boundary)
                 let area = (try? PolygonGeometry.area(of: room.boundary)) ?? 0
                 context.draw(Text("\(room.name)\n\(area.formatted(.number.precision(.fractionLength(2)))) м²").font(.system(size: 11, weight: .medium)).foregroundStyle(Color.atlasInk), at: viewport.point(center))
+                if showDimensions {
+                    let edges = EmptyRoomRingGeometry.edges(outer: room.boundary.vertices.map { .init(x: $0.x, y: 0, z: $0.y) }, holes: room.boundary.holes.map { ring in ring.map { .init(x: $0.x, y: 0, z: $0.y) } })
+                    for edge in edges {
+                        let a = viewport.point(.init(x: edge.start.x, y: edge.start.z))
+                        let b = viewport.point(.init(x: edge.end.x, y: edge.end.z))
+                        let midpoint = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
+                        let length = hypot(b.x - a.x, b.y - a.y)
+                        let offset = length > 0 ? CGSize(width: -(b.y - a.y) / length * 13, height: (b.x - a.x) / length * 13) : .zero
+                        context.draw(Text("\(edge.holeIndex == nil ? "" : "Отв. ")\(edge.length.formatted(.number.precision(.fractionLength(2)))) м").font(.system(size: 10, weight: .semibold)).foregroundStyle(Color.atlasAccent), at: CGPoint(x: midpoint.x + offset.width, y: midpoint.y + offset.height))
+                    }
+                }
             }
             for wall in plan.walls {
                 var path = Path()
                 path.move(to: viewport.point(wall.start)); path.addLine(to: viewport.point(wall.end))
                 context.stroke(path, with: .color(.atlasInk), lineWidth: max(2, min(12, CGFloat(wall.thicknessMeters ?? 0.05) * viewport.scale)))
+                if showDimensions {
+                    let start = viewport.point(wall.start), end = viewport.point(wall.end)
+                    let length = hypot(wall.end.x - wall.start.x, wall.end.y - wall.start.y)
+                    let height = wall.heightMeters.map { " · h \($0.formatted(.number.precision(.fractionLength(2)))) м" } ?? ""
+                    context.draw(Text("\(length.formatted(.number.precision(.fractionLength(2)))) м\(height)").font(.system(size: 10, weight: .medium)).foregroundStyle(Color.atlasInk), at: CGPoint(x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 - 25))
+                }
             }
         }
     }

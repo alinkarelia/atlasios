@@ -55,6 +55,29 @@ import AtlasCore
         precondition(modeled[0].assets.contains { $0.kind == .mesh })
         let retained = try Data(contentsOf: images.appendingPathComponent("original.HEIC"))
         precondition(retained == original)
-        print("CaptureCatalog: 14 dataset readiness, metadata, model-reference, stable identity and path isolation checks passed.")
+        // Structural derivatives belong to the original semantic capture/frame.
+        // A fixed filename inside a UUID namespace is permitted, arbitrary paths are not.
+        let derivativeID = UUID()
+        let relative = "empty-room/\(derivativeID.uuidString)/"
+        let derived = folder.appendingPathComponent(relative)
+        try FileManager.default.createDirectory(at: derived, withIntermediateDirectories: true)
+        for name in ["room.json", "room-data.json", "room.usdz"] {
+            try Data(name.utf8).write(to: folder.appendingPathComponent(name))
+        }
+        let names = ["structural-room.json", "structural-room.usdz", "structural-room.obj", "dimensions.json", "model.png", "measurements.pdf"]
+        for name in names { try Data(name.utf8).write(to: derived.appendingPathComponent(name)) }
+        object["source"] = "RoomPlan"
+        object["completedAssets"] = ["room.json", "room-data.json", "room.usdz"] + names.map { relative + $0 }
+        let structural = try records()
+        precondition(structural.count == 1 && structural[0].id == scan && structural[0].frameID == frame)
+        precondition(structural[0].assets.filter { $0.kind == .mesh }.count == 3)
+        precondition(structural[0].assets.contains { $0.relativePath.hasSuffix("dimensions.json") })
+        let derivedAgain = try records()
+        precondition(structural[0].assets.map(\.id) == derivedAgain[0].assets.map(\.id))
+        try rejects { object["completedAssets"] = ["room.json", "room.usdz", relative + "unexpected.json"] }
+        try rejects { object["completedAssets"] = ["room.json", "room.usdz", "empty-room/not-a-uuid/dimensions.json"] }
+        try rejects { object["completedAssets"] = ["room.json", "room.usdz", relative + "../dimensions.json"] }
+        try rejects { object["completedAssets"] = ["room.json", "room.usdz", "/" + relative + "dimensions.json"] }
+        print("CaptureCatalog: 22 dataset readiness, original/derivative identity and path isolation checks passed.")
     }
 }

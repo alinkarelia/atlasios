@@ -12,8 +12,8 @@ settings:
     SWIFT_VERSION: "6.0"
     SWIFT_STRICT_CONCURRENCY: complete
     IPHONEOS_DEPLOYMENT_TARGET: "17.0"
-    MARKETING_VERSION: "0.5.0"
-    CURRENT_PROJECT_VERSION: "7"
+    MARKETING_VERSION: "0.6.0"
+    CURRENT_PROJECT_VERSION: "8"
     DEVELOPMENT_TEAM: ""
 targets:
   Atlas:
@@ -26,6 +26,7 @@ targets:
           - Resources/PrivacyInfo.xcprivacy
           - Features/Business/Tests
           - Features/Projects/Tests
+          - Features/FloorPlan/Tests
           - Adapters/Tests
           - UITests
           - Adapters/PurchaseService.swift
@@ -38,7 +39,7 @@ targets:
       properties:
         CFBundleDisplayName: TerraView
         NSCameraUsageDescription: "Камера нужна для 3D-съёмки, AR-рулетки, обмеров и фотофиксации объекта."
-        NSLocationWhenInUseUsageDescription: "Во время съёмки положение, время и точность автоматически сохраняются с геометкой сканов и фото. Метку можно исправить вручную."
+        NSLocationWhenInUseUsageDescription: "Положение используется для карты, записи обхода границ и дорожек, геометок съёмок и фото. Время и точность сохраняются с наблюдением; координаты можно исправить вручную."
         NSMotionUsageDescription: "Гироскоп и акселерометр используются для уровня и определения наклона устройства во время обмеров."
         NSPhotoLibraryAddUsageDescription: "По вашему выбору изображение 3D-модели можно сохранить в Фото через меню Поделиться."
         UILaunchScreen: {}

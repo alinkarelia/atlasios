@@ -23,7 +23,9 @@ enum CaptureCatalog {
                   Set(manifest.segments.map(\.frameID)).count == manifest.segments.count else {
                 throw CatalogError.invalidManifest
             }
-            let segmentPrefixes = Set(manifest.segments.map { "segments/\($0.id.uuidString)/model.obj" })
+            let segmentPrefixes = Set(manifest.segments.flatMap { segment in
+                ["model.obj", "video.mov", "video.json"].map { "segments/\(segment.id.uuidString)/" + $0 }
+            })
             guard manifest.completedAssets.allSatisfy(segmentPrefixes.contains) else { throw CatalogError.invalidAssetPath }
             var completed = [String: FileReference]()
             for path in manifest.completedAssets {
@@ -34,13 +36,27 @@ enum CaptureCatalog {
                 if let geoTag = segment.geoTag { try GeoTagPolicy.validate(geoTag) }
                 var assets = [asset(manifestFile, kind: .cameraMetadata, namespace: segment.id, root: managedRoot)]
                 let modelPath = "segments/\(segment.id.uuidString)/model.obj"
+                let videoPath = "segments/\(segment.id.uuidString)/video.mov"
+                let videoMetadataPath = "segments/\(segment.id.uuidString)/video.json"
                 if let model = completed[modelPath] { assets.append(asset(model, kind: .mesh, namespace: segment.id, root: managedRoot)) }
+                if let video = completed[videoPath] {
+                    guard let metadata = completed[videoMetadataPath] else { throw CatalogError.invalidManifest }
+                    guard video.byteCount > 0, metadata.byteCount > 0, metadata.byteCount <= 16 * 1_024 * 1_024 else { throw CatalogError.invalidManifest }
+                    let videoDocument = try decoder.decode(CaptureVideoDocument.self, from: Data(contentsOf: metadata.url))
+                    guard videoDocument.isCompleted,
+                          videoDocument.identity.captureID == manifest.id,
+                          videoDocument.identity.projectID == manifest.projectID,
+                          videoDocument.identity.segmentID == segment.id,
+                          videoDocument.identity.frameID == segment.frameID else { throw CatalogError.invalidManifest }
+                    assets.append(asset(video, kind: .video, namespace: segment.id, root: managedRoot))
+                    assets.append(asset(metadata, kind: .cameraMetadata, namespace: segment.id, root: managedRoot))
+                } else if completed[videoMetadataPath] != nil { throw CatalogError.invalidManifest }
                 let meshesRoot = captureRoot.appendingPathComponent("segments/\(segment.id.uuidString)/meshes", isDirectory: true)
                 let meshes = try regularFiles(in: meshesRoot, within: managedRoot, suffix: ".mesh.json")
                 assets += meshes.map { asset($0, kind: .mesh, namespace: segment.id, root: managedRoot) }
                 assets += try photoAssets(projectID: manifest.projectID, frameID: segment.frameID,
                     captureRoot: captureRoot, namespace: segment.id, root: managedRoot)
-                let segmentStatus: ScanStatus = status == .ready && completed[modelPath] == nil ? .interrupted : status
+                let segmentStatus: ScanStatus = status == .ready && completed[modelPath] == nil && completed[videoPath] == nil ? .interrupted : status
                 return ScanRecord(id: segment.id, projectID: manifest.projectID, source: .liDAR,
                     status: segmentStatus, frameID: segment.frameID, assets: assets,
                     createdAt: segment.startedAt, revision: 0, geoTag: segment.geoTag)
@@ -49,13 +65,18 @@ enum CaptureCatalog {
             let manifest = try decoder.decode(RoomManifest.self, from: data)
             if let geoTag = manifest.geoTag { try GeoTagPolicy.validate(geoTag) }
             let permitted = Set(["room.json", "room-data.json", "room.usdz"])
-            guard manifest.completedAssets.allSatisfy(permitted.contains) else { throw CatalogError.invalidAssetPath }
+            guard manifest.completedAssets.count <= 2_048,
+                  manifest.completedAssets.allSatisfy({ permitted.contains($0) || isStructuralRoomAsset($0) }) else {
+                throw CatalogError.invalidAssetPath
+            }
             var assets = [asset(manifestFile, kind: .cameraMetadata, namespace: manifest.id, root: managedRoot)]
             let paths = Set(manifest.completedAssets).union(permitted.filter { FileManager.default.fileExists(atPath: captureRoot.appendingPathComponent($0).path) })
             if status == .ready && !paths.isSuperset(of: ["room.json", "room.usdz"]) { throw CatalogError.invalidManifest }
             for path in paths.sorted() {
                 let file = try regularFile(try child(path, in: captureRoot), within: managedRoot)
-                assets.append(asset(file, kind: path.hasSuffix(".usdz") ? .mesh : .roomPlanJSON, namespace: manifest.id, root: managedRoot))
+                let kind: SourceAssetKind = ["usdz", "obj"].contains(file.url.pathExtension.lowercased()) ? .mesh
+                    : (["png", "pdf"].contains(file.url.pathExtension.lowercased()) ? .cameraMetadata : .roomPlanJSON)
+                assets.append(asset(file, kind: kind, namespace: manifest.id, root: managedRoot))
             }
             assets += try photoAssets(projectID: manifest.projectID, frameID: manifest.frameID,
                 captureRoot: captureRoot, namespace: manifest.id, root: managedRoot)
@@ -94,6 +115,13 @@ enum CaptureCatalog {
                 revision: 0, geoTag: manifest.geoTag)]
         default: throw CatalogError.unsupportedSource
         }
+    }
+
+    private static func isStructuralRoomAsset(_ path: String) -> Bool {
+        let parts = path.split(separator: "/", omittingEmptySubsequences: false)
+        guard parts.count == 3, parts[0] == "empty-room", UUID(uuidString: String(parts[1])) != nil else { return false }
+        return ["structural-room.json", "structural-room.usdz", "structural-room.obj", "dimensions.json",
+                "model.png", "measurements.pdf"].contains(String(parts[2]))
     }
 
     private static func scanStatus(_ value: String) throws -> ScanStatus {
@@ -188,6 +216,7 @@ enum CaptureCatalog {
     private struct Header: Decodable { var schemaVersion: Int; var source: String; var status: String }
     private struct LiDARManifest: Decodable {
         struct Segment: Decodable { var id: UUID; var frameID: UUID; var startedAt: Date; var geoTag: GeoTag? }
+        var id: UUID
         var projectID: UUID
         var segments: [Segment]
         var completedAssets: [String]

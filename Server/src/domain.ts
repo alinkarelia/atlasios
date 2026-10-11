@@ -109,61 +109,90 @@ function ringsIntersect(a: Point[], b: Point[]) {
   return false;
 }
 
-/** Validate both synthesized Swift enum JSON and a tagged DTO without rewriting the snapshot. */
+/** Accept genuine points, open lines and polygons; never expand a point into a synthetic ring. */
 export function geometry(input: unknown, reference: Reference): void {
   const value = object(input, 'geometry');
-  let kind: 'metricPolygon' | 'geographicPolygon';
-  let polygon: Record<string, unknown>;
-  if (value.type === 'metricPolygon' || value.type === 'geographicPolygon') {
-    kind = value.type;
-    keys(value, ['type', 'frameID', 'vertices', 'holes']);
-    polygon = value;
+  const kinds = ['metricPolygon', 'geographicPolygon', 'metricPoint', 'geographicPoint', 'metricPolyline', 'geographicPolyline'] as const;
+  type Kind = typeof kinds[number];
+  let kind: Kind;
+  let shape: Record<string, unknown>;
+  if (typeof value.type === 'string' && kinds.includes(value.type as Kind)) {
+    kind = value.type as Kind;
+    shape = { ...value }; delete shape.type;
   } else {
     const variants = Object.keys(value);
-    if (variants.length !== 1 || !['metricPolygon', 'geographicPolygon'].includes(variants[0]!)) invalid('Unsupported geometry');
-    kind = variants[0] as typeof kind;
-    polygon = object(value[kind]);
-    if ('_0' in polygon) { keys(polygon, ['_0']); polygon = object(polygon._0); }
-    keys(polygon, kind === 'metricPolygon' ? ['frameID', 'vertices', 'holes'] : ['vertices', 'holes']);
+    if (variants.length !== 1 || !kinds.includes(variants[0] as Kind)) invalid('Unsupported geometry');
+    kind = variants[0] as Kind;
+    shape = object(value[kind]);
+    if ('_0' in shape) { keys(shape, ['_0']); shape = object(shape._0); }
   }
-  if (kind === 'metricPolygon') {
-    if (reference.type !== 'localMeters' || id(polygon.frameID, 'frameID') !== reference.frameID) invalid('Metric polygon frame must match the project');
+  const metric = kind.startsWith('metric');
+  const point = kind.endsWith('Point');
+  const line = kind.endsWith('Polyline');
+  keys(shape, point ? (metric ? ['frameID', 'point'] : ['point', 'longitude', 'latitude'])
+    : (metric ? ['frameID', 'vertices', ...(line ? [] : ['holes'])] : ['vertices', ...(line ? [] : ['holes'])]));
+  if (metric) {
+    if (reference.type !== 'localMeters' || id(shape.frameID, 'frameID') !== reference.frameID) invalid('Metric geometry frame must match the project');
   } else if (reference.type !== 'wgs84') invalid('Geographic geometry requires a WGS84 project');
-  if (!Array.isArray(polygon.vertices)) invalid('vertices must be an array');
-  const holes = polygon.holes ?? [];
-  if (!Array.isArray(holes) || holes.length > 64) invalid('Invalid holes');
-  const rawRings = [polygon.vertices, ...holes];
-  if (rawRings.some(r => !Array.isArray(r)) || rawRings.reduce((sum, r) => sum + (r as unknown[]).length, 0) > 2048) invalid('Geometry supports at most 2048 vertices');
-  let originLongitude = 0; let originLatitude = 0;
-  if (kind === 'geographicPolygon' && polygon.vertices.length) {
-    const first = object(polygon.vertices[0]);
-    originLongitude = finite(first.longitude, 'longitude'); originLatitude = finite(first.latitude, 'latitude');
+  const readPoint = (item: unknown): Point => {
+    const p = object(item, 'coordinate');
+    if (metric) {
+      keys(p, ['x', 'y']);
+      const x = finite(p.x, 'x'); const y = finite(p.y, 'y');
+      if (Math.abs(x) > 1e12 || Math.abs(y) > 1e12) invalid('Metric coordinate outside supported range');
+      return { x, y };
+    }
+    keys(p, ['longitude', 'latitude']);
+    const x = finite(p.longitude, 'longitude'); const y = finite(p.latitude, 'latitude');
+    if (Math.abs(x) > 180 || Math.abs(y) > 90) invalid('WGS84 coordinate outside bounds');
+    return { x, y };
+  };
+  if (point) {
+    if (metric) { readPoint(shape.point); return; }
+    if ('point' in shape) {
+      if ('longitude' in shape || 'latitude' in shape) invalid('Use one geographic point representation');
+      readPoint(shape.point);
+    } else readPoint(shape);
+    return;
   }
-  const rings = rawRings.map(raw => {
-    const points = (raw as unknown[]).map(item => {
-      const p = object(item, 'vertex');
-      if (kind === 'metricPolygon') {
-        keys(p, ['x', 'y']);
-        const x = finite(p.x, 'x'); const y = finite(p.y, 'y');
-        if (Math.abs(x) > 1e9 || Math.abs(y) > 1e9) invalid('Metric coordinate outside supported range');
-        return { x, y };
-      }
-      keys(p, ['longitude', 'latitude']);
-      const longitude = finite(p.longitude, 'longitude'); const latitude = finite(p.latitude, 'latitude');
-      if (Math.abs(longitude) > 180 || Math.abs(latitude) > 90) invalid('WGS84 coordinate outside bounds');
-      if (Math.abs(longitude - originLongitude) > 180) invalid('Split polygons crossing the antimeridian before import');
-      return { x: (longitude - originLongitude) * Math.cos(originLatitude * Math.PI / 180) * 111320, y: (latitude - originLatitude) * 110574 };
-    });
-    if (points.length > 1 && equal(points[0]!, points.at(-1)!)) points.pop();
-    validateRing(points);
-    return points;
-  });
-  const outer = rings[0]!;
-  for (let i = 1; i < rings.length; i++) {
-    const hole = rings[i]!;
+  if (!Array.isArray(shape.vertices)) invalid('vertices must be an array');
+  const holes = line ? [] : shape.holes ?? [];
+  if (!Array.isArray(holes) || holes.length > 64) invalid('Invalid holes');
+  const rawRings = [shape.vertices, ...holes];
+  if (rawRings.some(r => !Array.isArray(r)) || rawRings.reduce((sum, r) => sum + (r as unknown[]).length, 0) > 2048) invalid('Geometry supports at most 2048 vertices');
+  const rings = rawRings.map(raw => (raw as unknown[]).map(readPoint));
+  for (const ring of rings) {
+    if (!metric) {
+      for (let i = 1; i < ring.length; i++) if (Math.abs(ring[i]!.x - ring[i - 1]!.x) > 180) invalid('Split geometry crossing the antimeridian before import');
+      if (!line && ring.length && Math.abs(ring[0]!.x - ring.at(-1)!.x) > 180) invalid('Split geometry crossing the antimeridian before import');
+    }
+  }
+  if (line) {
+    const vertices = rings[0]!;
+    if (vertices.length < 2) invalid('Polyline requires at least two vertices');
+    for (let i = 1; i < vertices.length; i++) if (equal(vertices[i - 1]!, vertices[i]!)) invalid('Consecutive line vertices must differ');
+    return;
+  }
+  const origin = rings[0]![0];
+  if (!origin) invalid('Polygon ring requires at least three vertices');
+  if (!metric) for (const ring of rings) for (const p of ring) {
+    if (Math.abs(p.x - origin.x) > 180) invalid('Split polygons crossing the antimeridian before import');
+  }
+  // Topology checks use a local geographic projection rather than square degrees.
+  const projected = metric ? rings : rings.map(ring => ring.map(p => ({
+    x: (p.x - origin.x) * Math.cos(origin.y * Math.PI / 180) * 111320,
+    y: (p.y - origin.y) * 110574,
+  })));
+  for (const ring of projected) {
+    if (ring.length > 1 && equal(ring[0]!, ring.at(-1)!)) ring.pop();
+    validateRing(ring);
+  }
+  const outer = projected[0]!;
+  for (let i = 1; i < projected.length; i++) {
+    const hole = projected[i]!;
     if (!inside(hole[0]!, outer) || ringsIntersect(outer, hole)) invalid('Hole must be strictly inside its polygon');
     for (let j = 1; j < i; j++) {
-      const previous = rings[j]!;
+      const previous = projected[j]!;
       if (ringsIntersect(hole, previous) || inside(hole[0]!, previous) || inside(previous[0]!, hole)) invalid('Polygon holes overlap');
     }
   }
@@ -173,7 +202,7 @@ export function featureData(input: unknown, reference: Reference): Record<string
   const data = object(input);
   keys(data, ['label', 'category', 'geometry', 'attributes', 'notes', 'reviewStatus', 'links']);
   text(data.label, 'label', 160, 1);
-  enumeration(data.category, ['grave', 'sector', 'path', 'building', 'boundary', 'other'], 'category');
+  enumeration(data.category, ['grave', 'sector', 'path', 'building', 'boundary', 'other', 'cemetery', 'road', 'entrance', 'wasteBin', 'fence', 'wasteDump'], 'category');
   geometry(data.geometry, reference);
   const attributes = object(data.attributes ?? {}, 'attributes');
   if (Object.keys(attributes).length > 64) invalid('Too many attributes');

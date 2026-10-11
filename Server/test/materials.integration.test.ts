@@ -52,6 +52,32 @@ async function chunk(app: App, project: Project, body: ReturnType<typeof manifes
   return app.inject({ method: 'PUT', url: `${route(project, body.id, assetID)}?offset=${offset}`, headers: { ...headers(token), 'content-type': 'application/octet-stream' }, payload: bytes });
 }
 
+test('original video and camera-pose metadata retain their types, clocks and exact binary bytes', async t => {
+  const fx = await fixture(t); const owner = await register(fx.app); const p = await project(fx.app, owner);
+  // Transfer treats source video as opaque bytes; physical AVAssetWriter validation belongs to native checks.
+  const bytes = Buffer.from('opaque original movie binary\\0unchanged');
+  const poses = Buffer.from('{"frameID":"local-frame","timestamps":[0,0.033],"coordinateSystem":"ARKit Y up"}');
+  const base = manifest(p.id, bytes);
+  const body = { ...base,
+    materials: [{ ...base.materials[0]!, kind: 'video', endedAt: base.materials[0]!.capturedAt + 18_000 }],
+    assets: [{ ...base.assets[0]!, relativePath: 'scans/segment-01/original.mov', mediaType: 'video/quicktime', kind: 'originalVideo' },
+      { id: randomUUID(), materialID: base.materials[0]!.id, relativePath: 'scans/segment-01/poses.json', mediaType: 'application/json',
+        byteCount: poses.length, sha256: sha(poses), kind: 'metadata' }] };
+  success(await request(fx.app, 'POST', route(p), owner.token, body));
+  success(await chunk(fx.app, p, body, owner.token, bytes, 0));
+  success(await chunk(fx.app, p, body, owner.token, poses, 0, body.assets[1]!.id));
+  const finalized = await request(fx.app, 'POST', `${route(p, body.id)}/finalize`, owner.token, {}); success(finalized);
+  assert.deepEqual(finalized.json().manifest, body);
+  await fx.restart();
+  const movie = await request(fx.app, 'GET', `${route(p, body.id, body.assets[0]!.id)}?offset=0&length=1048576`, owner.token);
+  success(movie); assert.deepEqual(movie.rawPayload, bytes);
+  assert.match(String(movie.headers['content-type']), /^video\/quicktime/);
+  assert.equal(movie.headers['x-asset-sha256'], sha(bytes));
+  const sidecar = await request(fx.app, 'GET', `${route(p, body.id, body.assets[1]!.id)}?offset=0&length=1048576`, owner.token);
+  success(sidecar); assert.deepEqual(sidecar.rawPayload, poses);
+  const originalPhoto = manifest(p.id); success(await request(fx.app, 'POST', route(p), owner.token, originalPhoto));
+});
+
 test('material packages preserve originals, capture clocks, GPS provenance, corrections and authenticated operator', async t => {
   const fx = await fixture(t); const owner = await register(fx.app, 'Actual operator'); const p = await project(fx.app, owner);
   const bytes = Buffer.from('original HEIC binary\0 with unchanged EXIF'); const body = manifest(p.id, bytes);

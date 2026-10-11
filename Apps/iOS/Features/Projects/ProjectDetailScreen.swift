@@ -41,6 +41,22 @@ struct ProjectDetailScreen: View {
             }.listRowBackground(Color.atlasCard)
             Section("Работа с объектом") {
                 NavigationLink {
+                    TourScreen(model: model, project: project)
+                } label: { Label("Прогулка · фото и карточки", systemImage: "figure.walk") }
+                    .accessibilityIdentifier("projects.tour")
+                NavigationLink {
+                    BuildingPlansScreen(model: model, project: project)
+                } label: { Label("Здание · этажи и квартиры", systemImage: "building.2") }
+                    .accessibilityIdentifier("projects.buildingPlans")
+                NavigationLink {
+                    CemeteryFieldworkScreen(model: model, project: project)
+                } label: { Label("Обследование кладбища", systemImage: "map.fill") }
+                    .accessibilityIdentifier("projects.cemetery")
+                NavigationLink {
+                    EmptyRoomScreen(model: model, project: project)
+                } label: { Label("Чистое помещение · для дизайнера", systemImage: "square.dashed") }
+                    .accessibilityIdentifier("projects.emptyRoom")
+                NavigationLink {
                     CaptureScreen(project: project, outputDirectory: model.captureDirectory(for: project), onSaved: { manifest in
                         Task { await model.registerCapture(manifest: manifest, project: project); await refresh() }
                     }, onFloorPlan: { plan in Task { await model.savePlan(plan); await refresh() } },
@@ -112,7 +128,7 @@ struct ProjectDetailScreen: View {
                     Task { exportURL = await model.exportArchive(project: project); exporting = false }
                 } label: {
                     if exporting { HStack { ProgressView(); Text("Собираем архив…") } }
-                    else { Label("Проект с исходниками ZIP", systemImage: "archivebox") }
+                    else { Label("Проект для работы с ИИ и исходники ZIP", systemImage: "archivebox") }
                 }.disabled(exporting)
                 exportButton("Метаданные проекта JSON", format: .projectJSON)
                 exportButton("План и полигоны DXF", format: .dxf)
@@ -124,11 +140,12 @@ struct ProjectDetailScreen: View {
                     Task { exportURL = await model.exportMaterialTable(project: project); exporting = false }
                 }.disabled(exporting).accessibilityIdentifier("export.materialsCSV")
                 exportButton("Геометки и полигоны KML", format: .kml)
+                exportButton("Географические точки и треки GPX", format: .gpx)
                 if let exportURL {
                     ShareLink(item: exportURL) { Label("Сохранить файл в Файлы", systemImage: "square.and.arrow.up") }
                 }
             } header: { Text("Экспорт") } footer: {
-                Text("ZIP содержит карточки, планы и исходники съёмки. До 4 ГБ. DXF и SVG сохраняют локальные метры; независимые планы экспортируются отдельно из редактора. GeoJSON и KML сохраняют географические координаты. Форматы 3D доступны в просмотре модели.")
+                Text("ZIP содержит JSON-индекс для работы с ИИ, карточки с историей, планы, треки и исходники съёмки. До 4 ГБ. DXF и SVG сохраняют локальные метры; независимые планы экспортируются отдельно из редактора. GeoJSON, KML и GPX сохраняют географические координаты. Форматы 3D доступны в просмотре модели.")
             }.listRowBackground(Color.atlasCard)
         }
         .scrollContentBackground(.hidden).background(Color.atlasCanvas)

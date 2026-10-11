@@ -3,7 +3,7 @@ import UIKit
 
 @MainActor
 enum PlanPDFExporter {
-    static func export(_ plan: AtlasFloorPlan, directory: URL) throws -> URL {
+    static func export(_ plan: AtlasFloorPlan, directory: URL, showDimensions: Bool = true) throws -> URL {
         try PolygonGeometry.validate(plan, in: .localMeters(frameID: plan.frameID))
         let page = CGRect(x: 0, y: 0, width: 595, height: 842)
         let renderer = UIGraphicsPDFRenderer(bounds: page)
@@ -13,7 +13,7 @@ enum PlanPDFExporter {
             @MainActor func beginPage(_ title: String) {
                 pdf.beginPage(); pageNumber += 1
                 drawText(title, rect: CGRect(x: 42, y: 38, width: 511, height: 52), font: .systemFont(ofSize: 22, weight: .bold))
-                drawText("ATLAS · \(plan.name) · Этаж \(plan.floorIndex)", rect: CGRect(x: 42, y: 93, width: 511, height: 35), font: .systemFont(ofSize: 11))
+                drawText("TerraView · \(plan.name) · Этаж \(plan.floorIndex)", rect: CGRect(x: 42, y: 93, width: 511, height: 35), font: .systemFont(ofSize: 11))
                 drawText("Отдельный локальный обмер · Метры · Ревизия \(plan.revision)", rect: CGRect(x: 42, y: 780, width: 470, height: 18), font: .systemFont(ofSize: 9), color: .gray)
                 drawText("\(pageNumber)", rect: CGRect(x: 522, y: 780, width: 30, height: 18), font: .systemFont(ofSize: 9), color: .gray)
                 y = 138
@@ -39,12 +39,28 @@ enum PlanPDFExporter {
                 let center = viewport.point(PlanViewport.labelPoint(room.boundary))
                 let area = (try? PolygonGeometry.area(of: room.boundary)) ?? 0
                 drawText("\(room.name)\n\(number(area)) м²", rect: CGRect(x: center.x - 60, y: center.y - 15, width: 120, height: 40), font: .systemFont(ofSize: 8, weight: .medium), alignment: .center)
+                if showDimensions {
+                    let edges = EmptyRoomRingGeometry.edges(outer: room.boundary.vertices.map { .init(x: $0.x, y: 0, z: $0.y) }, holes: room.boundary.holes.map { ring in ring.map { .init(x: $0.x, y: 0, z: $0.y) } })
+                    for edge in edges {
+                        let a = viewport.point(.init(x: edge.start.x, y: edge.start.z)), b = viewport.point(.init(x: edge.end.x, y: edge.end.z))
+                        let midpoint = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
+                        let length = hypot(b.x - a.x, b.y - a.y)
+                        let dx = length > 0 ? -(b.y - a.y) / length * 10 : 0
+                        let dy = length > 0 ? (b.x - a.x) / length * 10 : 0
+                        drawText("\(edge.holeIndex == nil ? "" : "Отв. ")\(number(edge.length)) м", rect: CGRect(x: midpoint.x + dx - 40, y: midpoint.y + dy - 5, width: 80, height: 16), font: .systemFont(ofSize: 7, weight: .medium), alignment: .center)
+                    }
+                }
             }
             for wall in plan.walls {
                 let path = UIBezierPath()
                 path.move(to: viewport.point(wall.start)); path.addLine(to: viewport.point(wall.end))
                 path.lineWidth = max(1.5, min(10, CGFloat(wall.thicknessMeters ?? 0.05) * viewport.scale))
                 UIColor.black.setStroke(); path.stroke()
+                if showDimensions {
+                    let a = viewport.point(wall.start), b = viewport.point(wall.end)
+                    let height = wall.heightMeters.map { " · h \(number($0)) м" } ?? ""
+                    drawText("\(number(hypot(wall.end.x - wall.start.x, wall.end.y - wall.start.y))) м\(height)", rect: CGRect(x: (a.x + b.x) / 2 - 75, y: (a.y + b.y) / 2 - 21, width: 150, height: 17), font: .systemFont(ofSize: 7), alignment: .center)
+                }
             }
             pdf.cgContext.restoreGState()
             let area = plan.rooms.reduce(0) { $0 + ((try? PolygonGeometry.area(of: $1.boundary)) ?? 0) }

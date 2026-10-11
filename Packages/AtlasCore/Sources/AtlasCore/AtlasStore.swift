@@ -29,7 +29,7 @@ public enum AtlasStoreError: Error, LocalizedError, Equatable, Sendable {
 /// Date-bearing records are decoded from their committed payload, matching later reads
 /// even when the compatible millisecond JSON format rounds a Date's Double value.
 public actor AtlasStore {
-    public static let schemaVersion = 2
+    public static let schemaVersion = 4
     private let database: SQLiteDatabase
 
     public init(path: String) throws {
@@ -72,11 +72,26 @@ public actor AtlasStore {
 
     public func features(projectID: UUID) throws -> [AtlasFeature] { try records("features", projectID: projectID) }
 
+    /// Retain operator edits after delivery acknowledgement, including rejected
+    /// candidates and reversible removals. Results are chronological and bounded.
+    public func featureHistory(featureID: UUID, projectID: UUID, limit: Int = 100, beforeRevision: Int64? = nil) throws -> [AtlasFeature] {
+        guard (1...100).contains(limit) else { throw AtlasStoreError.invalidRecord("история ограничена 100 версиями за запрос") }
+        if let beforeRevision, beforeRevision < 1 { throw AtlasStoreError.invalidRecord("курсор истории должен содержать положительную версию") }
+        _ = try requireProject(projectID)
+        var values: [SQLValue] = [.text(featureID.uuidString), .text(projectID.uuidString)]
+        let cursor = beforeRevision == nil ? "" : " AND revision < ?"
+        if let beforeRevision { values.append(.integer(beforeRevision)) }
+        values.append(.integer(Int64(limit)))
+        let rows = try database.query("SELECT payload FROM feature_revisions WHERE feature_id = ? AND project_id = ?" + cursor + " ORDER BY revision DESC LIMIT ?", values)
+        return try rows.reversed().map { try AtlasJSON.decode(AtlasFeature.self, from: $0[0].data) }
+    }
+
     @discardableResult
     public func saveFeature(_ incoming: AtlasFeature) throws -> AtlasFeature {
         try database.transaction {
             let project = try requireProject(incoming.projectID)
             try PolygonGeometry.validate(incoming.geometry, in: project.coordinateReference)
+            try validateFeatureMetadata(incoming)
             let existing: AtlasFeature? = try record("features", id: incoming.id)
             guard existing == nil || existing?.projectID == incoming.projectID else {
                 throw AtlasStoreError.invalidRecord("перенос объекта в другой проект требует отдельного импорта")
@@ -85,6 +100,13 @@ public actor AtlasStore {
             saved.revision = try nextRevision(id: saved.id, expected: incoming.revision, existing: existing?.revision)
             let payload = try AtlasJSON.encode(saved)
             try write("features", id: saved.id, projectID: saved.projectID, revision: saved.revision, payload: payload)
+            try database.execute("DELETE FROM cemetery_feature_links WHERE child_id = ?", [.text(saved.id.uuidString)])
+            for parentID in try cemeteryParents(saved.attributes) {
+                try database.execute("INSERT INTO cemetery_feature_links(child_id, parent_id, project_id) VALUES (?, ?, ?)",
+                                     [.text(saved.id.uuidString), .text(parentID.uuidString), .text(saved.projectID.uuidString)])
+            }
+            try database.execute("INSERT INTO feature_revisions(feature_id, project_id, revision, payload) VALUES (?, ?, ?, ?)",
+                                 [.text(saved.id.uuidString), .text(saved.projectID.uuidString), .integer(saved.revision), .blob(payload)])
             try enqueue(entityID: saved.id, projectID: saved.projectID, kind: .feature, base: incoming.revision, revision: saved.revision, payload: payload)
             return saved
         }
@@ -216,6 +238,47 @@ public actor AtlasStore {
         try database.execute("INSERT INTO outbox(event_id, payload) VALUES (?, ?)", [.text(event.id.uuidString), .blob(try AtlasJSON.encode(event))])
     }
 
+    private func validateFeatureMetadata(_ feature: AtlasFeature) throws {
+        guard !feature.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              feature.label.utf16.count <= 160, feature.notes.utf16.count <= 4096,
+              feature.attributes.count <= 64 else { throw AtlasStoreError.invalidRecord("название, заметки или атрибуты объекта превышают допустимый размер") }
+        for (key, value) in feature.attributes {
+            guard !key.isEmpty, key.utf16.count <= 80, value.utf16.count <= 2048,
+                  !["__proto__", "constructor", "prototype"].contains(key) else {
+                throw AtlasStoreError.invalidRecord("недопустимое имя или размер атрибута объекта")
+            }
+        }
+        for parentID in try cemeteryParents(feature.attributes) {
+            guard parentID != feature.id else {
+                throw AtlasStoreError.invalidRecord("родительское кладбище должно иметь корректный отдельный идентификатор")
+            }
+            // A partial archive may carry an unresolved parent, but an existing
+            // parent may never point into a different project or object category.
+            if let parent: AtlasFeature = try record("features", id: parentID) {
+                guard parent.projectID == feature.projectID, parent.category == .cemetery else {
+                    throw AtlasStoreError.invalidRecord("родительское кладбище относится к другому проекту или типу объекта")
+                }
+            }
+        }
+        let incompatibleChildren = try database.query("SELECT count(*) FROM cemetery_feature_links WHERE parent_id = ? AND child_id <> ? AND (project_id <> ? OR ? <> 'cemetery')",
+                                                       [.text(feature.id.uuidString), .text(feature.id.uuidString), .text(feature.projectID.uuidString), .text(feature.category.rawValue)]).first?.first?.integer ?? 0
+        guard incompatibleChildren == 0 else {
+            throw AtlasStoreError.invalidRecord("объекты уже ссылаются на это кладбище: нельзя менять его тип или создавать родителя в другом проекте")
+        }
+    }
+
+    private func cemeteryParents(_ attributes: [String:String]) throws -> Set<UUID> {
+        var parents = Set<UUID>()
+        for key in [CemeteryAttribute.cemeteryID,CemeteryAttribute.legacyParentCemeteryID] {
+            if let text = attributes[key] {
+                guard let parent = UUID(uuidString:text) else { throw AtlasStoreError.invalidRecord("недопустимый идентификатор родительского кладбища") }
+                parents.insert(parent)
+            }
+        }
+        guard parents.count <= 1 else { throw AtlasStoreError.invalidRecord("карточка ссылается на два разных родительских кладбища") }
+        return parents
+    }
+
     private static func migrate(_ database: SQLiteDatabase) throws {
         let version = Int(try database.query("PRAGMA user_version").first?.first?.integer ?? 0)
         guard version <= schemaVersion else { throw AtlasStoreError.unsupportedSchema(version) }
@@ -233,6 +296,44 @@ public actor AtlasStore {
             try database.transaction {
                 try database.execute("CREATE TABLE outbox (sequence INTEGER PRIMARY KEY AUTOINCREMENT, event_id TEXT UNIQUE NOT NULL, payload BLOB NOT NULL)")
                 try database.execute("PRAGMA user_version = 2")
+            }
+        }
+        if version < 3 {
+            try database.transaction {
+                try database.execute("CREATE TABLE feature_revisions (feature_id TEXT NOT NULL REFERENCES features(id) ON DELETE CASCADE, project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE, revision INTEGER NOT NULL, payload BLOB NOT NULL, PRIMARY KEY(feature_id, revision))")
+                try database.execute("CREATE INDEX feature_revisions_project ON feature_revisions(project_id)")
+                try database.execute("INSERT INTO feature_revisions(feature_id, project_id, revision, payload) SELECT id, project_id, revision, payload FROM features")
+                try database.execute("PRAGMA user_version = 3")
+            }
+        }
+        if version < 4 {
+            try database.transaction {
+                try database.execute("CREATE TABLE cemetery_feature_links (child_id TEXT NOT NULL REFERENCES features(id) ON DELETE CASCADE, parent_id TEXT NOT NULL, project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE, PRIMARY KEY(child_id, parent_id))")
+                try database.execute("CREATE INDEX cemetery_feature_links_parent ON cemetery_feature_links(parent_id)")
+                // Existing records remain byte-for-byte unchanged. Seed each valid
+                // canonical/legacy reference, even if an older card was ambiguous;
+                // later edits must explicitly repair it before changing a parent.
+                var cursor: String?
+                while true {
+                    let rows = try database.query("SELECT id, project_id, payload FROM features" + (cursor == nil ? "" : " WHERE id > ?") + " ORDER BY id LIMIT 32",
+                                                  cursor.map { [.text($0)] } ?? [])
+                    if rows.isEmpty { break }
+                    for row in rows {
+                        guard case let .text(childID) = row[0], case let .text(projectID) = row[1] else {
+                            throw AtlasStoreError.invalidRecord("повреждённый идентификатор сохранённой карточки")
+                        }
+                        cursor = childID
+                        guard let feature = try? AtlasJSON.decode(AtlasFeature.self, from:row[2].data) else { continue }
+                        let parents = Set([CemeteryAttribute.cemeteryID,CemeteryAttribute.legacyParentCemeteryID].compactMap {
+                            feature.attributes[$0].flatMap(UUID.init(uuidString:))
+                        })
+                        for parent in parents {
+                            try database.execute("INSERT OR IGNORE INTO cemetery_feature_links(child_id,parent_id,project_id) VALUES (?, ?, ?)",
+                                                 [.text(childID),.text(parent.uuidString),.text(projectID)])
+                        }
+                    }
+                }
+                try database.execute("PRAGMA user_version = 4")
             }
         }
     }

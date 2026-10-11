@@ -2,236 +2,392 @@ import SwiftUI
 import MapKit
 import AtlasCore
 
+@MainActor
 struct GeometryEditorScreen: View {
     @ObservedObject var model: AtlasAppModel
     let project: AtlasProject
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.openURL) private var openURL
+    @StateObject private var location: SurveyLocationService
+    @StateObject private var search = MapSearchService()
     @State private var features: [AtlasFeature] = []
-    @State private var editing: AtlasFeature?
-    @State private var showCreate = false
-    @State private var draw = false
+    @State private var visibleFeatures: [AtlasFeature] = []
+    @State private var geographicIndex = SurveyGeographicIndex()
+    @State private var geographicPlan = SurveyMapRenderPlan()
+    @State private var positionedGeographicMap = false
+    @State private var editor: MapFeatureEditorRequest?
+    @State private var position: MapCameraPosition = .automatic
+    @State private var visibleRegion: MKCoordinateRegion?
+    @State private var showSearch = false
+    @State private var showLayers = false
+    @State private var showTrack = false
+    @State private var showGeographicProject = false
+    @State private var geographicName = ""
+    @State private var createdProject: AtlasProject?
+    @State private var creatingProject = false
+    @State private var selectedCemeteryID: UUID?
+    @State private var layers = Set(FeatureCategory.allCases)
+    @State private var showUnassigned = true
+    @State private var showInactive = false
+    @State private var draftKind: MapDraftKind?
+    @State private var draftCategory: FeatureCategory = .grave
     @State private var metricDraft: [MetricPoint2D] = []
     @State private var geographicDraft: [GeographicCoordinate] = []
-    @State private var zoom = 1.0
     @State private var newLabel = ""
-    @State private var saving = false
+    @State private var zoom = 1.0
+    @State private var localIssue: String?
+
+    init(model: AtlasAppModel, project: AtlasProject, cemeteryID: UUID? = nil) {
+        self.model = model; self.project = project
+        _selectedCemeteryID = State(initialValue: cemeteryID)
+        _location = StateObject(wrappedValue: SurveyLocationService.shared(projectID: project.id,
+            draftDirectory: model.captureDirectory(for: project).appendingPathComponent("SurveyDrafts", isDirectory: true)))
+    }
+
+    private var isGeographic: Bool { project.coordinateReference == .wgs84 }
+    private var selectedCemetery: AtlasFeature? { features.first { $0.id == selectedCemeteryID && $0.category == .cemetery } }
+    private var cemeteries: [AtlasFeature] { features.filter { $0.category == .cemetery } }
+    private func updateVisibleFeatures() {
+        visibleFeatures = features.filter { feature in
+            guard showInactive || SurveyFeatureLifecycle.isActive(feature) else { return false }
+            guard layers.contains(feature.category) else { return false }
+            guard let selectedCemeteryID, feature.category != .cemetery else { return true }
+            let parent = SurveyMapStyle.cemeteryID(feature)
+            return parent == selectedCemeteryID || (parent == nil && showUnassigned)
+        }
+        geographicIndex = SurveyGeographicIndex(features: visibleFeatures)
+        if isGeographic, !positionedGeographicMap, let viewport = geographicIndex.fittedViewport {
+            positionedGeographicMap = true
+            let region = MKCoordinateRegion(center: SurveyMapStyle.coordinate(viewport.center),
+                span: MKCoordinateSpan(latitudeDelta: viewport.latitudeSpan, longitudeDelta: viewport.longitudeSpan))
+            visibleRegion = region
+            position = .region(region)
+        }
+        updateGeographicPlan()
+    }
+    private func updateGeographicPlan() {
+        let viewport = visibleRegion.map {
+            SurveyGeographicViewport(center: GeographicCoordinate(longitude: $0.center.longitude, latitude: $0.center.latitude),
+                latitudeSpan: $0.span.latitudeDelta, longitudeSpan: $0.span.longitudeDelta)
+        }
+        geographicPlan = geographicIndex.plan(in: viewport)
+    }
+    private var draftCount: Int { metricDraft.count + geographicDraft.count }
+
     var body: some View {
         VStack(spacing: 0) {
-            ZStack(alignment: .topLeading) {
-                if case .wgs84 = project.coordinateReference {
-                    geographicMap
-                } else {
-                    MetricPlotCanvas(features: features, draft: metricDraft, zoom: zoom, selectedID: editing?.id,
-                        onTap: { point in
-                            if draw { metricDraft.append(point) }
-                            else { editing = hitFeature(point) }
-                        })
+            mapArea
+            controls
+        }
+        .background(Color.atlasCanvas)
+        .navigationTitle(project.name).navigationBarTitleDisplayMode(.inline)
+        .toolbarColorScheme(.dark, for: .navigationBar)
+        .toolbarBackground(Color.atlasCanvas, for: .navigationBar)
+        .task {
+            await refresh()
+            if isGeographic { await location.restoreDraft() }
+        }
+        .onChange(of: location.fix) { _, fix in
+            guard location.recenterRequested, let fix else { return }
+            recenter(fix.coordinate, span: max(0.002, (fix.horizontalAccuracyMeters ?? 10) / 20_000))
+            location.didRecenter()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background { location.leaveScreen(); search.cancel() }
+        }
+        .onChange(of: selectedCemeteryID) { _, _ in updateVisibleFeatures() }
+        .onChange(of: layers) { _, _ in updateVisibleFeatures() }
+        .onChange(of: showUnassigned) { _, _ in updateVisibleFeatures() }
+        .onChange(of: showInactive) { _, _ in updateVisibleFeatures() }
+        .onDisappear { location.leaveScreen(); search.cancel() }
+        .sheet(item: $editor) { request in
+            FeatureEditScreen(model: model, project: project, feature: request.feature,
+                cemetery: selectedCemetery, initialGeoTag: request.geoTag, isNew: request.isNew) {
+                    resetDraft()
+                    Task { await refresh() }
                 }
-                Text(draw ? "Добавьте углы участка" : coordinateLabel)
-                    .font(.caption.weight(.semibold)).padding(10)
-                    .background(.regularMaterial, in: Capsule()).padding(14)
-            }.frame(minHeight: 260, maxHeight: .infinity)
-            VStack(alignment: .leading, spacing: 12) {
-                if draw {
-                    HStack {
-                        Text("Вершин: \(metricDraft.count + geographicDraft.count)").font(.headline)
-                        Spacer()
-                        Button("Отменить угол", systemImage: "arrow.uturn.backward") {
-                            if !metricDraft.isEmpty { metricDraft.removeLast() }
-                            if !geographicDraft.isEmpty { geographicDraft.removeLast() }
-                        }.labelStyle(.iconOnly)
+        }
+        .sheet(isPresented: $showSearch, onDismiss: { search.cancel() }) {
+            MapPlaceSearchScreen(search: search, region: visibleRegion) { place in
+                recenter(place.coordinate, span: 0.006)
+                showSearch = false
+            }
+        }
+        .sheet(isPresented: $showLayers) { layerSheet }
+        .sheet(isPresented: $showTrack) {
+            SurveyTrackScreen(model: model, project: project, cemetery: selectedCemetery, service: location) {
+                Task { await refresh() }
+            }
+        }
+        .sheet(isPresented: $showGeographicProject) { geographicProjectSheet }
+        .navigationDestination(item: $createdProject) { project in
+            GeometryEditorScreen(model: model, project: project)
+        }
+    }
+
+    private var mapArea: some View {
+        ZStack(alignment: .topLeading) {
+            if isGeographic {
+                SurveyMapSurface(position: $position, features: geographicPlan.features, prominentIDs: geographicPlan.prominentIDs, draft: geographicDraft,
+                    location: location, isDrawing: draftKind != nil,
+                    onTap: appendGeographic, onSelect: openExisting, onRegion: {
+                        visibleRegion = $0; updateGeographicPlan()
+                    })
+            } else {
+                MetricPlotCanvas(features: visibleFeatures, draft: metricDraft, zoom: zoom) { point, tolerance, rendered in
+                    if draftKind != nil {
+                        metricDraft.append(point)
+                        if draftKind == .point { reviewDraft() }
+                    } else if let feature = rendered.reversed().first(where: {
+                        SurveyMapStyle.metricHit(point, feature: $0, tolerance: tolerance)
+                    }) { openExisting(feature) }
+                }
+            }
+            HStack(alignment: .top) {
+                Text(draftKind?.instruction ?? (isGeographic ? "WGS84 · карта местности" : "Локальный план · метры"))
+                    .font(.caption.weight(.semibold)).foregroundStyle(Color.atlasInk)
+                    .padding(.horizontal, 12).padding(.vertical, 9)
+                    .background(Color.atlasCanvas.opacity(0.92), in: Capsule())
+                Spacer(minLength: 8)
+                VStack(spacing: 8) {
+                    mapButton("Моё положение", symbol: "location.north.fill", id: "map.locate") {
+                        if isGeographic { location.locate() } else { offerGeographicProject() }
                     }
-                    TextField("Номер или название участка", text: $newLabel).textFieldStyle(.roundedBorder)
-                    HStack {
-                        Button("Отмена") { resetDraft() }
-                        Spacer()
-                        Button("Сохранить полигон") { Task { await saveDrawn() } }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(saving || newLabel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || metricDraft.count + geographicDraft.count < 3)
+                    mapButton("Найти населённый пункт или адрес", symbol: "magnifyingglass", id: "map.search") {
+                        if isGeographic { showSearch = true } else { offerGeographicProject() }
                     }
-                } else {
-                    HStack {
-                        AtlasSectionLabel(title: "Участки · \(features.count)")
-                        Spacer()
-                        Menu {
-                            Button("Нарисовать на плане", systemImage: "pencil.tip") { draw = true }
-                            Button("Ввести координаты", systemImage: "number") { showCreate = true }
-                        } label: { Label("Добавить", systemImage: "plus") }
-                    }
-                    if features.isEmpty {
-                        Text("Добавьте углы касанием или введите точные координаты. Границы подтверждает специалист.")
-                            .font(.subheadline).foregroundStyle(Color.atlasMuted)
-                    } else {
-                        ScrollView(.horizontal) {
-                            HStack(spacing: 8) {
-                                ForEach(features) { feature in
-                                    Button { editing = feature } label: {
-                                        VStack(alignment: .leading, spacing: 4) {
-                                            Text(feature.label).font(.subheadline.bold())
-                                            Text(areaText(feature)).font(.caption).foregroundStyle(Color.atlasMuted)
-                                        }.padding(12).background(Color.atlasCanvas, in: RoundedRectangle(cornerRadius: 12))
-                                    }.buttonStyle(.plain)
-                                }
-                            }
+                    mapButton("Слои и кладбище", symbol: "square.3.layers.3d", id: "map.layers") { showLayers = true }
+                }
+            }.padding(12)
+            if isGeographic, geographicPlan.isLimited {
+                VStack {
+                    Spacer()
+                    Text("В окне \(geographicPlan.matchingCount) объектов · показано \(geographicPlan.features.count). Приблизьте карту; все карточки доступны ниже.")
+                        .font(.caption).foregroundStyle(Color.orange).padding(10)
+                        .background(Color.atlasCanvas.opacity(0.94), in: RoundedRectangle(cornerRadius: 10))
+                        .accessibilityIdentifier("map.renderLimit")
+                }.padding(12).allowsHitTesting(false)
+            }
+        }
+        .frame(minHeight: 220, maxHeight: .infinity)
+    }
+
+    private func mapButton(_ title: String, symbol: String, id: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol).font(.system(size: 18, weight: .semibold))
+                .frame(width: 44, height: 44).foregroundStyle(Color.atlasInk)
+                .background(Color.atlasCanvas.opacity(0.94), in: RoundedRectangle(cornerRadius: 14))
+        }.buttonStyle(.plain).accessibilityLabel(title).accessibilityIdentifier(id)
+    }
+
+    private var controls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let draftKind { draftControls(draftKind) }
+            else {
+                HStack(spacing: 12) {
+                    Button { begin(.point, category: .grave) } label: { Label("Могила", systemImage: "plus") }
+                        .buttonStyle(.borderedProminent).accessibilityIdentifier("map.addgrave")
+                    Menu {
+                        Button("Граница кладбища", systemImage: "square.dashed") { begin(.polygon, category: .cemetery) }
+                        Button("Участок могилы", systemImage: "rectangle") { begin(.polygon, category: .grave) }
+                        Button("Вход", systemImage: "door.left.hand.open") { begin(.point, category: .entrance) }
+                        Button("Урна", systemImage: "trash") { begin(.point, category: .wasteBin) }
+                        Button("Свалка — точка", systemImage: "exclamationmark.triangle") { begin(.point, category: .wasteDump) }
+                        Button("Граница свалки", systemImage: "square.dashed") { begin(.polygon, category: .wasteDump) }
+                        Button("Дорога", systemImage: "road.lanes") { begin(.polyline, category: .road) }
+                        Button("Дорожка", systemImage: "figure.walk") { begin(.polyline, category: .path) }
+                        Button("Ограда", systemImage: "line.3.horizontal") { begin(.polyline, category: .fence) }
+                        Button("Координаты вручную", systemImage: "number") {
+                            editor = MapFeatureEditorRequest(feature: nil, isNew: true)
+                        }
+                    } label: { Image(systemName: "ellipsis.circle").font(.title3).frame(minWidth: 44, minHeight: 44) }
+                    .accessibilityLabel("Добавить другой объект").accessibilityIdentifier("map.add")
+                    Spacer(minLength: 0)
+                    Button {
+                        if isGeographic { showTrack = true } else { offerGeographicProject() }
+                    } label: { Label("GPS-трек", systemImage: "figure.walk") }
+                    .buttonStyle(.bordered).accessibilityIdentifier("map.track")
+                }
+                HStack {
+                    Button { showLayers = true } label: {
+                        Text(selectedCemetery?.label ?? "Все кладбища").font(.subheadline.weight(.semibold))
+                    }.accessibilityIdentifier("map.cemeteryContext")
+                    Spacer()
+                    Text("Объектов: \(visibleFeatures.count)").font(.caption).foregroundStyle(Color.atlasMuted)
+                }
+                if !visibleFeatures.isEmpty { featureStrip }
+            }
+            if let issue = localIssue ?? location.issue {
+                Text(issue).font(.caption).foregroundStyle(Color.orange).accessibilityIdentifier("map.issue")
+            }
+            if isGeographic {
+                if location.hasLocationActivity || location.fix != nil || location.session != nil || location.issue != nil {
+                    HStack(alignment: .top) {
+                        Text(location.statusMessage).font(.caption).foregroundStyle(Color.atlasMuted)
+                            .accessibilityIdentifier("map.locationStatus")
+                        Spacer(minLength: 8)
+                        if location.canOpenSettings {
+                            Button("Настройки") {
+                                if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+                            }.font(.caption)
                         }
                     }
-                    if case .localMeters = project.coordinateReference {
-                        HStack {
-                            Image(systemName: "minus.magnifyingglass")
-                            Slider(value: $zoom, in: 1...4).accessibilityLabel("Масштаб локального плана")
-                            Image(systemName: "plus.magnifyingglass")
-                        }.foregroundStyle(Color.atlasMuted)
+                } else {
+                    Text("Границы проверяет специалист. GPS телефона — ориентир, точность указана в метрах.")
+                        .font(.caption).foregroundStyle(Color.atlasMuted)
+                }
+            } else {
+                HStack {
+                    Text("GPS требует карты WGS84").font(.caption).foregroundStyle(Color.atlasMuted)
+                    Spacer()
+                    Slider(value: $zoom, in: 1...4).frame(maxWidth: 140)
+                        .accessibilityLabel("Масштаб локального плана")
+                }
+            }
+        }
+        .padding(16).background(Color.atlasCanvas)
+    }
+
+    private func draftControls(_ kind: MapDraftKind) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(draftCategory.title + " · точек: \(draftCount)").font(.subheadline.weight(.semibold))
+                Spacer()
+                Button("Убрать последнюю точку", systemImage: "arrow.uturn.backward") {
+                    if !metricDraft.isEmpty { metricDraft.removeLast() }
+                    if !geographicDraft.isEmpty { geographicDraft.removeLast() }
+                }.labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44).disabled(draftCount == 0)
+            }
+            TextField("Номер или название", text: $newLabel).textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("map.draft.name")
+            HStack {
+                Button("Отмена") { resetDraft() }
+                Spacer()
+                Button("Проверить геометрию") { reviewDraft() }.buttonStyle(.borderedProminent)
+                    .disabled(draftCount < kind.minimum).accessibilityIdentifier("map.draft.review")
+            }
+        }
+    }
+
+    private var featureStrip: some View {
+        ScrollView(.horizontal) {
+            LazyHStack(spacing: 8) {
+                ForEach(visibleFeatures) { feature in
+                    Button { openExisting(feature) } label: {
+                        Label(feature.label, systemImage: SurveyMapStyle.symbol(feature.category))
+                            .font(.caption.weight(.semibold)).lineLimit(1).padding(10)
+                            .background(SurveyMapStyle.color(feature.category).opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                    }.buttonStyle(.plain).accessibilityIdentifier("map.card." + feature.id.uuidString)
+                }
+            }
+        }.scrollIndicators(.hidden).accessibilityIdentifier("map.featureStrip")
+    }
+
+    private var layerSheet: some View {
+        NavigationStack {
+            Form {
+                Section("Кладбище") {
+                    Picker("Рабочая территория", selection: $selectedCemeteryID) {
+                        Text("Все кладбища").tag(Optional<UUID>.none)
+                        ForEach(cemeteries) { Text($0.label).tag(Optional($0.id)) }
+                    }.accessibilityIdentifier("map.cemetery")
+                    Toggle("Показывать объекты без привязки", isOn: $showUnassigned)
+                    Toggle("Отклонённые и удалённые записи", isOn: $showInactive)
+                        .accessibilityIdentifier("map.showInactive")
+                    Text("Новые карточки получают выбранное кладбище. Старые объекты без привязки остаются доступными.")
+                        .font(.footnote).foregroundStyle(Color.atlasMuted)
+                }
+                Section("Слои") {
+                    ForEach(FeatureCategory.allCases, id: \.self) { category in
+                        Toggle(isOn: Binding(get: { layers.contains(category) }, set: { enabled in
+                            if enabled { layers.insert(category) } else { layers.remove(category) }
+                        })) {
+                            Label(category.title, systemImage: SurveyMapStyle.symbol(category))
+                                .foregroundStyle(SurveyMapStyle.color(category))
+                        }.accessibilityIdentifier("map.layer." + category.rawValue)
                     }
                 }
-            }.padding(18).background(Color(uiColor: .systemBackground))
-        }
-        .navigationTitle(project.name).navigationBarTitleDisplayMode(.inline)
-        .task { await refresh() }
-        .sheet(isPresented: $showCreate) {
-            FeatureEditScreen(model: model, project: project, feature: nil) { Task { await refresh() } }
-        }
-        .sheet(item: $editing) { feature in
-            FeatureEditScreen(model: model, project: project, feature: feature) { Task { await refresh() } }
-        }
+            }
+            .scrollContentBackground(.hidden).background(Color.atlasCanvas)
+            .navigationTitle("Слои карты").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Готово") { showLayers = false } } }
+        }.preferredColorScheme(.dark)
     }
-    private var coordinateLabel: String {
-        switch project.coordinateReference { case .wgs84: "WGS84 · границы на карте"; case .localMeters: "Локальная система · метры" }
-    }
-    private var geographicMap: some View {
-        MapReader { proxy in
-            Map {
-                ForEach(features) { feature in
-                    if case let .geographicPolygon(polygon) = feature.geometry {
-                        MapPolygon(mapPolygon(polygon))
-                            .foregroundStyle(Color.atlasBlue.opacity(0.17)).stroke(Color.atlasBlue, lineWidth: 2)
+
+    private var geographicProjectSheet: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Text("Этот проект хранит координаты в локальных метрах. GPS и адресный поиск работают на отдельной карте WGS84.")
+                    Text("Создайте географический проект для кладбища или маршрута. Геометрия текущего плана сохранится в своей системе координат.")
+                        .font(.footnote).foregroundStyle(Color.atlasMuted)
+                    TextField("Название карты", text: $geographicName)
+                } header: { Text("Карта местности") }
+                Button {
+                    Task {
+                        creatingProject = true
+                        let result = await model.createProject(name: geographicName, kind: project.kind, geographic: true)
+                        creatingProject = false
+                        if let result { showGeographicProject = false; createdProject = result }
                     }
-                }
-                if geographicDraft.count > 1 {
-                    MapPolyline(coordinates: geographicDraft.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) })
-                        .stroke(Color.orange, lineWidth: 3)
-                }
+                } label: {
+                    if creatingProject { ProgressView() } else { Text("Создать карту WGS84") }
+                }.disabled(creatingProject || geographicName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .accessibilityIdentifier("map.createGeographicProject")
             }
-            .mapControls { MapCompass(); MapScaleView() }
-            .onTapGesture(coordinateSpace: .local) { point in
-                guard draw, let coordinate = proxy.convert(point, from: .local) else { return }
-                geographicDraft.append(GeographicCoordinate(longitude: coordinate.longitude, latitude: coordinate.latitude))
-            }
-        }
+            .scrollContentBackground(.hidden).background(Color.atlasCanvas)
+            .navigationTitle("GPS на карте").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Закрыть") { showGeographicProject = false } } }
+        }.preferredColorScheme(.dark)
     }
-    private func mapPolygon(_ polygon: GeographicPolygon) -> MKPolygon {
-        let coordinates = polygon.vertices.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
-        let holes = polygon.holes.map { ring in
-            let points = ring.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
-            return MKPolygon(coordinates: points, count: points.count)
-        }
-        return MKPolygon(coordinates: coordinates, count: coordinates.count, interiorPolygons: holes)
+
+    private func offerGeographicProject() {
+        geographicName = project.name + " · карта"
+        showGeographicProject = true
     }
-    private func refresh() async { features = await model.features(in: project) }
-    private func areaText(_ feature: AtlasFeature) -> String {
-        if case let .metricPolygon(polygon) = feature.geometry, let area = try? PolygonGeometry.area(of: polygon) {
-            return area.formatted(.number.precision(.fractionLength(1))) + " м²"
-        }
-        return "Географический полигон"
+    private func begin(_ kind: MapDraftKind, category: FeatureCategory) {
+        resetDraft(); draftKind = kind; draftCategory = category
     }
-    private func hitFeature(_ point: MetricPoint2D) -> AtlasFeature? {
-        features.first { feature in
-            guard case let .metricPolygon(polygon) = feature.geometry else { return false }
-            return contains(point, ring: polygon.vertices) && !polygon.holes.contains { contains(point, ring: $0) }
-        }
+    private func resetDraft() {
+        draftKind = nil; metricDraft = []; geographicDraft = []; newLabel = ""; localIssue = nil
     }
-    private func contains(_ point: MetricPoint2D, ring points: [MetricPoint2D]) -> Bool {
-            var inside = false
-            guard points.count >= 3 else { return false }
-            var j = points.count - 1
-            for i in points.indices {
-                let a = points[i], b = points[j]
-                if (a.y > point.y) != (b.y > point.y), point.x < (b.x - a.x) * (point.y - a.y) / (b.y - a.y) + a.x { inside.toggle() }
-                j = i
-            }
-            return inside
+    private func appendGeographic(_ point: GeographicCoordinate) {
+        geographicDraft.append(point)
+        if draftKind == .point { reviewDraft() }
     }
-    private func saveDrawn() async {
-        guard !saving else { return }
-        saving = true
-        defer { saving = false }
+    private func openExisting(_ feature: AtlasFeature) { editor = MapFeatureEditorRequest(feature: feature, isNew: false) }
+    private func recenter(_ point: GeographicCoordinate, span: Double) {
+        position = .region(MKCoordinateRegion(center: SurveyMapStyle.coordinate(point),
+            span: MKCoordinateSpan(latitudeDelta: span, longitudeDelta: span)))
+    }
+    private func refresh() async {
+        features = await model.features(in: project)
+        updateVisibleFeatures()
+    }
+    private func reviewDraft() {
+        guard let kind = draftKind, draftCount >= kind.minimum else { return }
         let geometry: FeatureGeometry
         switch project.coordinateReference {
-        case let .localMeters(frameID): geometry = .metricPolygon(MetricPolygon(frameID: frameID, vertices: metricDraft))
-        case .wgs84: geometry = .geographicPolygon(GeographicPolygon(vertices: geographicDraft))
-        }
-        if await model.saveFeature(AtlasFeature(projectID: project.id, label: newLabel, category: .grave, geometry: geometry,
-            attributes: ["boundaryBasis": "digitized", "accuracyBasis": "unknown"])) != nil {
-            resetDraft(); await refresh()
-        }
-    }
-    private func resetDraft() { draw = false; metricDraft = []; geographicDraft = []; newLabel = "" }
-}
-
-private struct MetricPlotCanvas: View {
-    let features: [AtlasFeature]
-    let draft: [MetricPoint2D]
-    let zoom: Double
-    let selectedID: UUID?
-    let onTap: (MetricPoint2D) -> Void
-    private var points: [MetricPoint2D] {
-        features.flatMap { feature -> [MetricPoint2D] in
-            guard case let .metricPolygon(polygon) = feature.geometry else { return [] }
-            return polygon.vertices
-        }
-    }
-    var body: some View {
-        GeometryReader { geometry in
-            let transform = PlotTransform(points: points, size: geometry.size, zoom: zoom)
-            Canvas { context, size in
-                context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Color.atlasCanvas))
-                for feature in features {
-                    guard case let .metricPolygon(polygon) = feature.geometry else { continue }
-                    var path = polygonPath(polygon.vertices, transform: transform, closed: true)
-                    for ring in polygon.holes { path.addPath(polygonPath(ring, transform: transform, closed: true)) }
-                    context.fill(path, with: .color(Color.atlasBlue.opacity(0.12)), style: FillStyle(eoFill: true))
-                    context.stroke(path, with: .color(feature.id == selectedID ? .orange : .atlasBlue), lineWidth: 2)
-                    if !polygon.vertices.isEmpty {
-                        let center = MetricPoint2D(x: polygon.vertices.map(\.x).reduce(0, +) / Double(polygon.vertices.count),
-                            y: polygon.vertices.map(\.y).reduce(0, +) / Double(polygon.vertices.count))
-                        context.draw(Text(feature.label).font(.caption.weight(.medium)).foregroundStyle(Color.atlasInk), at: transform.screen(center))
-                    }
-                }
-                context.stroke(polygonPath(draft, transform: transform, closed: false), with: .color(.orange), lineWidth: 3)
-                for point in draft {
-                    let screen = transform.screen(point)
-                    context.fill(Path(ellipseIn: CGRect(x: screen.x - 5, y: screen.y - 5, width: 10, height: 10)), with: .color(.orange))
-                }
-                context.draw(Text("\(Int(transform.visibleWidth.rounded())) м по ширине").font(.caption).foregroundStyle(Color.atlasMuted),
-                    at: CGPoint(x: size.width / 2, y: size.height - 16))
+        case let .localMeters(frame):
+            switch kind {
+            case .point: geometry = .metricPoint(frameID: frame, point: metricDraft[0])
+            case .polyline: geometry = .metricPolyline(MetricPolyline(frameID: frame, vertices: metricDraft))
+            case .polygon: geometry = .metricPolygon(MetricPolygon(frameID: frame, vertices: metricDraft))
             }
-            .contentShape(Rectangle())
-            .onTapGesture(coordinateSpace: .local) { point in onTap(transform.metric(point)) }
-            .accessibilityLabel("Редактор полигонов в локальных метрах. Точные вершины доступны в карточке объекта.")
+        case .wgs84:
+            switch kind {
+            case .point: geometry = .geographicPoint(geographicDraft[0])
+            case .polyline: geometry = .geographicPolyline(GeographicPolyline(vertices: geographicDraft))
+            case .polygon: geometry = .geographicPolygon(GeographicPolygon(vertices: geographicDraft))
+            }
         }
+        do { try PolygonGeometry.validate(geometry, in: project.coordinateReference) }
+        catch { localIssue = error.localizedDescription; return }
+        var attributes = ["boundaryBasis": "digitized", "accuracyBasis": "unknown"]
+        if let selectedCemeteryID, draftCategory != .cemetery { attributes["cemeteryID"] = selectedCemeteryID.uuidString }
+        let label = newLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+        editor = MapFeatureEditorRequest(feature: AtlasFeature(projectID: project.id,
+            label: label.isEmpty ? draftCategory.title : label, category: draftCategory,
+            geometry: geometry, attributes: attributes), isNew: true)
     }
-    private func polygonPath(_ points: [MetricPoint2D], transform: PlotTransform, closed: Bool) -> Path {
-        Path { path in
-            guard let first = points.first else { return }
-            path.move(to: transform.screen(first))
-            for point in points.dropFirst() { path.addLine(to: transform.screen(point)) }
-            if closed { path.closeSubpath() }
-        }
-    }
-}
-
-struct PlotTransform {
-    let minX: Double
-    let minY: Double
-    let scale: Double
-    let height: Double
-    let visibleWidth: Double
-    init(points: [MetricPoint2D], size: CGSize, zoom: Double = 1) {
-        let lowerX = points.map(\.x).min() ?? 0, upperX = points.map(\.x).max() ?? 16
-        let lowerY = points.map(\.y).min() ?? 0, upperY = points.map(\.y).max() ?? 16
-        minX = lowerX - 2; minY = lowerY - 2
-        height = Double(size.height)
-        scale = max(0.000_001, min(Double(size.width) / max(upperX - lowerX + 4, 8), Double(size.height) / max(upperY - lowerY + 4, 8))) * zoom
-        visibleWidth = Double(size.width) / scale
-    }
-    func screen(_ point: MetricPoint2D) -> CGPoint { CGPoint(x: (point.x - minX) * scale, y: height - (point.y - minY) * scale) }
-    func metric(_ point: CGPoint) -> MetricPoint2D { MetricPoint2D(x: Double(point.x) / scale + minX, y: (height - Double(point.y)) / scale + minY) }
 }

@@ -13,6 +13,9 @@ public enum GeometryError: Error, LocalizedError, Equatable, Sendable {
     case antimeridianRequiresSplitting
     case coordinateFrameMismatch
     case invalidWall
+    case tooManyVertices
+    case tooFewLineVertices
+    case metricCoordinateOutOfRange
 
     public var errorDescription: String? {
         switch self {
@@ -28,6 +31,9 @@ public enum GeometryError: Error, LocalizedError, Equatable, Sendable {
         case .antimeridianRequiresSplitting: "Контур пересекает линию 180° долготы. Перед экспортом разделите его на отдельные части."
         case .coordinateFrameMismatch: "Геометрия относится к другой системе координат. Выполните привязку или экспортируйте отдельный локальный обмер."
         case .invalidWall: "У стены должны быть разные конечные точки и положительные размеры."
+        case .tooManyVertices: "Один объект может содержать не более 2048 вершин и 64 внутренних контуров. Разделите большой объект."
+        case .tooFewLineVertices: "У линии должны быть не менее двух разных последовательных точек."
+        case .metricCoordinateOutOfRange: "Локальные координаты слишком велики для безопасного расчёта."
         }
     }
 }
@@ -35,17 +41,22 @@ public enum GeometryError: Error, LocalizedError, Equatable, Sendable {
 /// Planar calculations are only available for metric geometry. WGS84 degrees are not meters.
 /// This initial engine deliberately rejects touching rings and unsplit antimeridian polygons.
 public enum PolygonGeometry {
+    public static let maximumVertices = 2048
+    public static let maximumHoles = 64
+
     public static func validate(_ polygon: MetricPolygon) throws {
+        try validateBounds(polygon.vertices, holes: polygon.holes)
         try validateRings(polygon.vertices, holes: polygon.holes)
     }
 
     public static func validate(_ polygon: GeographicPolygon) throws {
         let rings = [polygon.vertices] + polygon.holes
+        try validateCount(polygon.vertices.count, holeCounts: polygon.holes.map(\.count))
         for ring in rings {
             for point in ring {
-                guard point.longitude.isFinite, point.latitude.isFinite else { throw GeometryError.nonFiniteCoordinate }
-                guard (-180...180).contains(point.longitude), (-90...90).contains(point.latitude) else {
-                    throw GeometryError.geographicCoordinateOutOfRange
+                try validate(point)
+                if let origin = polygon.vertices.first, abs(point.longitude - origin.longitude) > 180 {
+                    throw GeometryError.antimeridianRequiresSplitting
                 }
             }
             for index in ring.indices where ring.count > 1 {
@@ -58,11 +69,54 @@ public enum PolygonGeometry {
         try validateRings(polygon.vertices.map(metric), holes: polygon.holes.map { $0.map(metric) })
     }
 
+    public static func validate(_ point: MetricPoint2D) throws {
+        guard point.x.isFinite, point.y.isFinite else { throw GeometryError.nonFiniteCoordinate }
+        guard abs(point.x) <= 1e12, abs(point.y) <= 1e12 else { throw GeometryError.metricCoordinateOutOfRange }
+    }
+
+    public static func validate(_ point: GeographicCoordinate) throws {
+        guard point.longitude.isFinite, point.latitude.isFinite else { throw GeometryError.nonFiniteCoordinate }
+        guard (-180...180).contains(point.longitude), (-90...90).contains(point.latitude) else {
+            throw GeometryError.geographicCoordinateOutOfRange
+        }
+    }
+
+    public static func validate(_ line: MetricPolyline) throws {
+        try validateCount(line.vertices.count, holeCounts: [])
+        guard line.vertices.count >= 2 else { throw GeometryError.tooFewLineVertices }
+        for point in line.vertices { try validate(point) }
+        for index in 1..<line.vertices.count {
+            guard line.vertices[index] != line.vertices[index - 1] else { throw GeometryError.duplicateVertex }
+        }
+    }
+
+    public static func validate(_ line: GeographicPolyline) throws {
+        try validateCount(line.vertices.count, holeCounts: [])
+        guard line.vertices.count >= 2 else { throw GeometryError.tooFewLineVertices }
+        for point in line.vertices { try validate(point) }
+        for index in 1..<line.vertices.count {
+            guard line.vertices[index] != line.vertices[index - 1] else { throw GeometryError.duplicateVertex }
+            guard abs(line.vertices[index].longitude - line.vertices[index - 1].longitude) <= 180 else {
+                throw GeometryError.antimeridianRequiresSplitting
+            }
+        }
+    }
+
+    /// Open lines do not acquire an implicit closing segment or enclosed area.
+    public static func length(of line: MetricPolyline) throws -> Double {
+        try validate(line)
+        return (1..<line.vertices.count).reduce(0) { $0 + distance(line.vertices[$1 - 1], line.vertices[$1]) }
+    }
+
     public static func validate(_ geometry: FeatureGeometry, in reference: CoordinateReference) throws {
         guard geometry.coordinateReference == reference else { throw GeometryError.coordinateFrameMismatch }
         switch geometry {
         case let .metricPolygon(polygon): try validate(polygon)
         case let .geographicPolygon(polygon): try validate(polygon)
+        case let .metricPoint(_, point): try validate(point)
+        case let .geographicPoint(point): try validate(point)
+        case let .metricPolyline(line): try validate(line)
+        case let .geographicPolyline(line): try validate(line)
         }
     }
 
@@ -114,6 +168,17 @@ public enum PolygonGeometry {
 
     private static func metric(_ point: GeographicCoordinate) -> MetricPoint2D {
         MetricPoint2D(x: point.longitude, y: point.latitude)
+    }
+
+    private static func validateCount(_ exteriorCount: Int, holeCounts: [Int]) throws {
+        guard holeCounts.count <= maximumHoles, exteriorCount <= maximumVertices,
+              holeCounts.reduce(exteriorCount, +) <= maximumVertices else { throw GeometryError.tooManyVertices }
+    }
+
+    private static func validateBounds(_ exterior: [MetricPoint2D], holes: [[MetricPoint2D]]) throws {
+        try validateCount(exterior.count, holeCounts: holes.map(\.count))
+        for point in exterior { try validate(point) }
+        for hole in holes { for point in hole { try validate(point) } }
     }
 
     private static func validateRings(_ exterior: [MetricPoint2D], holes: [[MetricPoint2D]]) throws {
