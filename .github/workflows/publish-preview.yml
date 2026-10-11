@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       visual_review:
-        description: 'Both actual runtime screenshot sets have been reviewed and accepted'
+        description: 'Both actual 13-image runtime sets, including manual/automatic project transfer, have been reviewed and accepted'
         required: true
         default: false
         type: boolean
@@ -30,7 +30,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - name: Verify accepted source run, review record, and IPA provenance
+      - name: Verify accepted source run, five UI tests, current review record, and IPA provenance
         id: verify
         env:
           GH_TOKEN: ${{ github.token }}

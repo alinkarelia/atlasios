@@ -22,6 +22,7 @@ struct CaptureScreen: View {
     let outputDirectory: URL
     let onSaved: (URL) -> Void
     let onFloorPlan: ((AtlasFloorPlan) -> Void)?
+    let onEvidenceSaved: (() -> Void)?
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
@@ -54,9 +55,11 @@ struct CaptureScreen: View {
     private let graphite = Color.atlasCanvas
 
     init(project: AtlasProject, outputDirectory: URL, onSaved: @escaping (URL) -> Void,
-         onFloorPlan: ((AtlasFloorPlan) -> Void)? = nil) {
+         onFloorPlan: ((AtlasFloorPlan) -> Void)? = nil,
+         onEvidenceSaved: (() -> Void)? = nil) {
         self.project = project; self.outputDirectory = outputDirectory
         self.onSaved = onSaved; self.onFloorPlan = onFloorPlan
+        self.onEvidenceSaved = onEvidenceSaved
     }
 
     var body: some View {
@@ -112,6 +115,7 @@ struct CaptureScreen: View {
                 do {
                     guard let data = try await item.loadTransferable(type: Data.self) else { throw EvidenceError.invalidImage }
                     _ = try await evidence.importPhoto(data: data, projectID: project.id, outputDirectory: outputDirectory)
+                    onEvidenceSaved?()
                     showEvidence = true
                 } catch { failure = error.localizedDescription }
                 selectedPhoto = nil
@@ -357,7 +361,9 @@ struct CaptureScreen: View {
                             let fix = location.currentFix
                             Task {
                                 do { _ = try await evidence.captureCameraPhoto(from: lidar.arView, projectID: project.id,
-                                    frameID: lidar.currentFrameID, outputDirectory: outputDirectory, geoFix: fix) }
+                                    frameID: lidar.currentFrameID, outputDirectory: outputDirectory, geoFix: fix)
+                                    onEvidenceSaved?()
+                                }
                                 catch { failure = error.localizedDescription }
                             }
                         } label: { Image(systemName: "camera").font(.title2).frame(width: 48, height: 48) }
@@ -587,6 +593,7 @@ struct CaptureScreen: View {
                 let data = try await photoCamera.takePhoto()
                 _ = try await evidence.capturePhoto(data: data, projectID: project.id,
                     outputDirectory: outputDirectory, geoFix: fix, capturedAt: capturedAt)
+                onEvidenceSaved?()
             } catch { if !(error is CancellationError) { failure = error.localizedDescription } }
         }
     }

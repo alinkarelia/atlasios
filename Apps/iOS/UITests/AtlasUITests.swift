@@ -102,6 +102,81 @@ final class AtlasUITests: XCTestCase {
     }
 
     @MainActor
+    func testFieldDeliveryDefaultsManualAndPersistsWithoutAnAccount() {
+        let app = launch()
+        let name = createProject(in: app)
+        tap("projects.openSelected", in: app)
+        scrollAndTap("projects.fieldTransfer", in: app)
+        scrollTo("transfer.mode", in: app)
+        let picker = app.segmentedControls["transfer.mode"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 15))
+        let manual = picker.buttons["Вручную"]
+        let automatic = picker.buttons["Автоматически"]
+        waitUntilEnabled(manual)
+        XCTAssertTrue(manual.isSelected, "An unconnected project must default to manual delivery")
+        screenshot("11-transfer-manual-initial", app: app)
+
+        automatic.tap()
+        waitUntilEnabled(automatic)
+        XCTAssertTrue(automatic.isSelected)
+        let wifi = app.switches["transfer.wifiOnly"]
+        XCTAssertTrue(wifi.waitForExistence(timeout: 10))
+        waitUntilEnabled(wifi)
+        if wifi.value as? String != "1" { wifi.tap(); waitUntilEnabled(wifi) }
+        XCTAssertEqual(wifi.value as? String, "1")
+        screenshot("12-transfer-auto-wifi", app: app)
+
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.staticTexts[name].firstMatch.waitForExistence(timeout: 15))
+        tap("projects.openSelected", in: app)
+        scrollAndTap("projects.fieldTransfer", in: app)
+        scrollTo("transfer.mode", in: app)
+        let restored = app.segmentedControls["transfer.mode"]
+        XCTAssertTrue(restored.waitForExistence(timeout: 15))
+        let restoredAuto = restored.buttons["Автоматически"]
+        waitUntilEnabled(restoredAuto)
+        XCTAssertTrue(restoredAuto.isSelected, "Delivery choice disappeared after process restart")
+        XCTAssertEqual(app.switches["transfer.wifiOnly"].value as? String, "1")
+        restored.buttons["Вручную"].tap()
+        waitUntilEnabled(restored.buttons["Вручную"])
+        XCTAssertTrue(restored.buttons["Вручную"].isSelected)
+        screenshot("13-transfer-restored-manual", app: app)
+
+        scrollAndTap("transfer.createArchive", in: app, towardTop: true)
+        XCTAssertTrue(element("transfer.shareArchive", in: app).waitForExistence(timeout: 30),
+                      "The offline project must produce a real shareable archive without a team account")
+        scrollTo("transfer.send", in: app)
+        XCTAssertFalse(element("transfer.send", in: app).isEnabled,
+                       "No server account must never look like an available cloud upload")
+    }
+
+    @MainActor
+    private func waitUntilEnabled(_ control: XCUIElement,
+                                  file: StaticString = #filePath, line: UInt = #line) {
+        let wait = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: control)
+        XCTAssertEqual(XCTWaiter.wait(for: [wait], timeout: 10), .completed, file: file, line: line)
+    }
+
+    @MainActor
+    private func scrollTo(_ identifier: String, in app: XCUIApplication, towardTop: Bool = false,
+                          file: StaticString = #filePath, line: UInt = #line) {
+        for _ in 0..<7 {
+            let control = element(identifier, in: app)
+            if control.exists && control.isHittable { return }
+            if towardTop { app.swipeDown() } else { app.swipeUp() }
+        }
+        XCTFail("Could not reveal control: \(identifier)", file: file, line: line)
+    }
+
+    @MainActor
+    private func scrollAndTap(_ identifier: String, in app: XCUIApplication, towardTop: Bool = false,
+                              file: StaticString = #filePath, line: UInt = #line) {
+        scrollTo(identifier, in: app, towardTop: towardTop, file: file, line: line)
+        tap(identifier, in: app, file: file, line: line)
+    }
+
+    @MainActor
     func testThreeDViewerRotatesWalksAndResets() {
         let app = launch(seedMesh: true)
         var surface = element("viewer.scene", in: app)

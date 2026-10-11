@@ -4,6 +4,8 @@ const port = Number(process.env.PORT ?? 3000);
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT must be a valid port');
 const app = await buildApp({
   databasePath: process.env.DATABASE_PATH ?? './data/atlas.sqlite',
+  assetDirectory: process.env.ASSET_DIRECTORY ?? './data/assets',
+  maxOrganizationAssetBytes: process.env.MAX_ORGANIZATION_ASSET_BYTES === undefined ? undefined : Number(process.env.MAX_ORGANIZATION_ASSET_BYTES),
   corsOrigins: (process.env.CORS_ORIGINS ?? '').split(',').map(value => value.trim()).filter(Boolean),
 });
 async function shutdown() { await app.close(); }

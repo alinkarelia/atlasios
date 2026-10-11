@@ -12,10 +12,13 @@ final class AtlasAppModel: ObservableObject {
     let purchases = PurchaseService()
     let team = TeamService()
     let directory: URL
+    lazy var transfers = FieldTransferCoordinator(team: team, directory: directory)
     let business: BusinessStore?
     private var measurementRepository: MeasurementRepository?
     private var store: AtlasStore?
     private var started = false
+    private var transferPreparationTasks: [UUID: Task<Void, Never>] = [:]
+    private var transferPreparationTickets: [UUID: UUID] = [:]
 
     init() {
         directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -48,6 +51,8 @@ final class AtlasAppModel: ObservableObject {
         await purchases.startup()
         if team.connected { await team.refresh() }
         await configureCommerceAccount()
+        await transfers.refresh()
+        transfers.sceneBecameActive()
     }
 
     func reload() async {
@@ -98,7 +103,11 @@ final class AtlasAppModel: ObservableObject {
     func saveMeasurement(_ measurement: MeasurementRecord) async -> MeasurementRecord? {
         guard projects.contains(where: { $0.id == measurement.projectID }) else { issue = "Проект измерения не найден."; return nil }
         guard let measurementRepository else { issue = "Журнал измерений недоступен."; return nil }
-        do { return try await measurementRepository.save(measurement) }
+        do {
+            let saved = try await measurementRepository.save(measurement)
+            fieldMaterialsDidChange(projectID: measurement.projectID)
+            return saved
+        }
         catch { issue = error.localizedDescription; return nil }
     }
 
@@ -109,7 +118,9 @@ final class AtlasAppModel: ObservableObject {
         tag.corrections.append(correction)
         try GeoTagPolicy.validate(tag)
         updated.geoTag = tag
-        return try await store.saveScan(updated)
+        let saved = try await store.saveScan(updated)
+        fieldMaterialsDidChange(projectID: scan.projectID)
+        return saved
     }
 
     func configureCommerceAccount() async {
@@ -151,19 +162,28 @@ final class AtlasAppModel: ObservableObject {
                 _ = try await store.saveScan(record)
             }
             await reload()
+            fieldMaterialsDidChange(projectID: project.id)
             return true
         } catch { issue = "Файлы съёмки сохранены, но каталог не обновился: \(error.localizedDescription). Откройте восстановление съёмок."; return false }
     }
 
     @discardableResult
     func saveFeature(_ feature: AtlasFeature) async -> AtlasFeature? {
-        do { return try await store?.saveFeature(feature) }
+        do {
+            let saved = try await store?.saveFeature(feature)
+            if saved != nil { fieldMaterialsDidChange(projectID: feature.projectID) }
+            return saved
+        }
         catch { issue = error.localizedDescription; return nil }
     }
 
     @discardableResult
     func savePlan(_ plan: AtlasFloorPlan) async -> AtlasFloorPlan? {
-        do { return try await store?.saveFloorPlan(plan) }
+        do {
+            let saved = try await store?.saveFloorPlan(plan)
+            if saved != nil { fieldMaterialsDidChange(projectID: plan.projectID) }
+            return saved
+        }
         catch { issue = error.localizedDescription; return nil }
     }
 
@@ -177,6 +197,60 @@ final class AtlasAppModel: ObservableObject {
             try artifact.data.write(to: url, options: .atomic)
             if !artifact.warnings.isEmpty { issue = artifact.warnings.joined(separator: "\n") }
             return url
+        } catch { issue = error.localizedDescription; return nil }
+    }
+
+    /// Saving a source is separate from consenting to publish it. The coordinator
+    /// applies the project's durable manual/automatic policy and account scope.
+    func fieldMaterialsDidChange(projectID: UUID) {
+        transferPreparationTasks[projectID]?.cancel()
+        guard let originalContext = try? team.transferContext() else { return }
+        let ticket = UUID()
+        transferPreparationTickets[projectID] = ticket
+        transferPreparationTasks[projectID] = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(800)) } catch { return }
+            guard let self, !Task.isCancelled, self.team.connected,
+                  let project = self.projects.first(where: { $0.id == projectID }) else { return }
+            do { try self.team.requireCurrentTransfer(originalContext) } catch { return }
+            _ = await self.prepareFieldTransfer(project: project)
+            if self.transferPreparationTickets[projectID] == ticket {
+                self.transferPreparationTasks[projectID] = nil
+                self.transferPreparationTickets[projectID] = nil
+            }
+        }
+    }
+
+    @discardableResult
+    func prepareFieldTransfer(project: AtlasProject) async -> Bool {
+        guard let snapshot = await snapshot(of: project) else { return false }
+        return await transfers.prepare(snapshot: snapshot, assetDirectory: directory)
+    }
+
+    func sendFieldMaterials(project: AtlasProject) async {
+        transferPreparationTasks[project.id]?.cancel()
+        transferPreparationTasks[project.id] = nil
+        transferPreparationTickets[project.id] = nil
+        guard await prepareFieldTransfer(project: project) else { return }
+        await transfers.send(projectID: project.id)
+    }
+
+    func openSharedProject(_ remote: RemoteProject) async -> AtlasProject? {
+        guard let store else { return nil }
+        do {
+            let incoming = try await team.sharedProject(remote)
+            if let existing = projects.first(where: { $0.id == incoming.id }) {
+                guard existing.coordinateReference == incoming.coordinateReference else {
+                    throw TeamError.rejected("Система координат локального проекта отличается. Исходники сохранены; автоматическое объединение остановлено.")
+                }
+                selectedProjectID = existing.id
+                return existing
+            }
+            var local = incoming
+            local.revision = 0
+            let saved = try await store.saveProject(local)
+            selectedProjectID = saved.id
+            await reload()
+            return saved
         } catch { issue = error.localizedDescription; return nil }
     }
 
@@ -196,10 +270,13 @@ final class AtlasAppModel: ObservableObject {
             defer { try? FileManager.default.removeItem(at: staging) }
             let metadata = staging.appendingPathComponent("project.json")
             try AtlasExporter.export(snapshot, format: .projectJSON).data.write(to: metadata, options: .atomic)
+            let passport = staging.appendingPathComponent("delivery-passport.json")
+            try await transfers.deliveryPassport(snapshot: snapshot, assetDirectory: directory)
+                .write(to: passport, options: .atomic)
             let captureRoot = captureDirectory(for: project)
             let destination = exportDirectory.appendingPathComponent("Atlas-\(project.id.uuidString).zip")
             return try await Task.detached(priority: .utility) {
-                try Self.writeArchive(metadata: metadata, captureRoot: captureRoot, destination: destination)
+                try Self.writeArchive(metadata: metadata, passport: passport, captureRoot: captureRoot, destination: destination)
             }.value
         } catch { issue = error.localizedDescription; return nil }
     }
@@ -207,8 +284,17 @@ final class AtlasAppModel: ObservableObject {
     /// DirectoryEnumerator's iterator is synchronous on current Apple SDKs.
     /// The detached utility task calls this helper without moving file IO onto
     /// MainActor or allowing the enumerator to cross a suspension point.
-    private nonisolated static func writeArchive(metadata: URL, captureRoot: URL, destination: URL) throws -> URL {
-        var entries = [AtlasArchiveEntry(relativePath: "project.json", fileURL: metadata)]
+    private nonisolated static func writeArchive(metadata: URL, passport: URL, captureRoot: URL, destination: URL) throws -> URL {
+        let delivery = try FieldTransferJSON.decode(FieldDeliveryPassport.self, from: Data(contentsOf: passport))
+        var hashes: [String: String] = [:]
+        for asset in delivery.assets {
+            guard hashes.updateValue(asset.sha256, forKey: asset.relativePath) == nil else {
+                throw AtlasArchiveError.duplicatePath(asset.relativePath)
+            }
+        }
+        var entries = [AtlasArchiveEntry(relativePath: "project.json", fileURL: metadata,
+                                        expectedSHA256: hashes["project.json"]),
+                       AtlasArchiveEntry(relativePath: "delivery-passport.json", fileURL: passport)]
         if let enumerator = FileManager.default.enumerator(at: captureRoot,
             includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey], options: [.skipsHiddenFiles]) {
             for case let url as URL in enumerator {
@@ -222,8 +308,13 @@ final class AtlasAppModel: ObservableObject {
                     }
                 }
                 let components = url.standardizedFileURL.pathComponents.dropFirst(captureRoot.standardizedFileURL.pathComponents.count)
-                entries.append(AtlasArchiveEntry(relativePath: "Captures/" + components.joined(separator: "/"), fileURL: url))
+                let path = "Captures/" + components.joined(separator: "/")
+                guard let hash = hashes[path] else { throw AtlasArchiveError.sourceChanged(path) }
+                entries.append(AtlasArchiveEntry(relativePath: path, fileURL: url, expectedSHA256: hash))
             }
+        }
+        guard Set(entries.map(\.relativePath).filter { $0 != "delivery-passport.json" }) == Set(hashes.keys) else {
+            throw AtlasArchiveError.sourceChanged("delivery-passport.json")
         }
         try AtlasArchiveWriter.write(entries: entries, to: destination)
         return destination

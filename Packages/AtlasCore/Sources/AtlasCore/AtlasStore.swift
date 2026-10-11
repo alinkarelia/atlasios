@@ -252,14 +252,15 @@ enum AtlasJSON {
     }
 }
 
-private enum SQLValue {
+enum SQLValue {
     case text(String), integer(Int64), real(Double), blob(Data), null
     var integer: Int64? { if case let .integer(value) = self { return value }; return nil }
     var data: Data { if case let .blob(value) = self { return value }; return Data() }
 }
 
-/// The pointer is confined to AtlasStore. FULLMUTEX and close_v2 also make teardown safe.
-private final class SQLiteDatabase: @unchecked Sendable {
+/// A database pointer is confined to its owning actor. FULLMUTEX and close_v2
+/// also make teardown safe for the project store and independent transfer queue.
+final class SQLiteDatabase: @unchecked Sendable {
     let handle: OpaquePointer
 
     init(path: String) throws {

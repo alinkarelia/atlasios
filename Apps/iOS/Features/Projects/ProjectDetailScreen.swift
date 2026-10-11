@@ -43,7 +43,8 @@ struct ProjectDetailScreen: View {
                 NavigationLink {
                     CaptureScreen(project: project, outputDirectory: model.captureDirectory(for: project), onSaved: { manifest in
                         Task { await model.registerCapture(manifest: manifest, project: project); await refresh() }
-                    }, onFloorPlan: { plan in Task { await model.savePlan(plan); await refresh() } })
+                    }, onFloorPlan: { plan in Task { await model.savePlan(plan); await refresh() } },
+                    onEvidenceSaved: { model.fieldMaterialsDidChange(projectID: project.id) })
                 } label: { Label("Начать съёмку", systemImage: "viewfinder") }
                     .accessibilityIdentifier("projects.startCapture")
                 NavigationLink {
@@ -55,6 +56,10 @@ struct ProjectDetailScreen: View {
                 NavigationLink {
                     CaptureRecoveryScreen(model: model, project: project)
                 } label: { Label("Восстановить прерванную съёмку", systemImage: "arrow.clockwise") }
+                NavigationLink {
+                    TeamProjectTransferScreen(model: model, project: project)
+                } label: { Label("Материалы и отправка", systemImage: "arrow.up.doc") }
+                    .accessibilityIdentifier("projects.fieldTransfer")
                 NavigationLink {
                     ProjectLocationScreen(model: model, project: project)
                 } label: { Label("Геометки съёмок и фото", systemImage: "mappin.and.ellipse") }

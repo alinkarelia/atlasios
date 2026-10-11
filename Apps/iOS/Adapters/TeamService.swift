@@ -20,6 +20,10 @@ struct RemoteProject: Codable, Identifiable, Sendable {
     var name: String
     var kind: String
     var revision: Int
+    var coordinateReference: CoordinateReference? = nil
+    var notes: String? = nil
+    var createdAt: String? = nil
+    var updatedAt: String? = nil
 }
 struct RemoteMember: Codable, Identifiable, Sendable {
     var userID: UUID
@@ -297,6 +301,53 @@ final class TeamService: ObservableObject {
         }
     }
 
+    /// Bootstrap preserves the server's UUID and real coordinate reference.
+    /// This method does not silently replace an existing local project.
+    func sharedProject(_ remote: RemoteProject) async throws -> AtlasProject {
+        let transfer = try transferContext()
+        guard remote.organizationID == transfer.organizationID else { throw TeamError.rejected("Выберите рабочее пространство этого проекта.") }
+        let context = try self.context()
+        let detail: RemoteProject = try await request(context: context, path: "v1/projects/\(remote.id.uuidString)")
+        try requireCurrentTransfer(transfer)
+        guard detail.id == remote.id, detail.organizationID == transfer.organizationID,
+              let reference = detail.coordinateReference, let kind = ProjectKind(rawValue: detail.kind),
+              let createdAt = detail.createdAt.flatMap(Self.serverDate),
+              let updatedAt = detail.updatedAt.flatMap(Self.serverDate) else {
+            throw TeamError.rejected("Сервер не подтвердил паспорт общего проекта.")
+        }
+        return AtlasProject(id: detail.id, name: detail.name, kind: kind, coordinateReference: reference,
+            notes: detail.notes ?? "", createdAt: createdAt, updatedAt: updatedAt, revision: Int64(detail.revision))
+    }
+
+    /// Read-only baseline; callers decide whether importing would overwrite a
+    /// local edit. Every page is checked against the original account/workspace.
+    func sharedFeatures(projectID: UUID) async throws -> [AtlasFeature] {
+        struct Page: Decodable { var features: [AtlasFeature]; var hasMore: Bool; var nextOffset: Int }
+        let transfer = try transferContext()
+        let context = try self.context()
+        var offset = 0, features: [AtlasFeature] = []
+        while true {
+            try requireCurrentTransfer(transfer)
+            let response: Page = try await request(context: context,
+                path: "v1/projects/\(projectID.uuidString)/features?limit=20&offset=\(offset)")
+            try requireCurrentTransfer(transfer)
+            guard response.features.allSatisfy({ $0.projectID == projectID }) else { throw FieldTransportError.invalidResponse }
+            features.append(contentsOf: response.features)
+            guard features.count <= 10_000 else { throw FieldTransportError.tooLarge }
+            if !response.hasMore { return features }
+            guard response.nextOffset > offset else { throw FieldTransportError.invalidResponse }
+            offset = response.nextOffset
+        }
+    }
+
+    private static func serverDate(_ value: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: value) { return date }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: value)
+    }
+
     func signOut() async {
         let previous = stored
         sessionGeneration &+= 1
@@ -311,9 +362,55 @@ final class TeamService: ObservableObject {
                 var request = URLRequest(url: previous.baseURL.appendingPathComponent("v1/auth/logout"))
                 request.httpMethod = "POST"; request.timeoutInterval = 10
                 request.setValue("Bearer \(previous.session.token)", forHTTPHeaderField: "Authorization")
-                _ = try? await URLSession.shared.data(for: request)
+                _ = try? await TeamHTTP.session.data(for: request)
             }
         }
+    }
+
+    /// A fixed destination binds every queued package to its original workspace.
+    /// The bearer stays private to the request context and never becomes UI text.
+    func transferContext() throws -> TeamTransferContext {
+        guard let stored, let organizationID = selectedOrganizationID else { throw TeamError.notConnected }
+        return TeamTransferContext(baseURL: stored.baseURL, token: stored.session.token,
+            userID: stored.session.user.id, organizationID: organizationID, generation: sessionGeneration)
+    }
+
+    func requireCurrentTransfer(_ context: TeamTransferContext) throws {
+        guard context.generation == sessionGeneration, context.baseURL == stored?.baseURL,
+              context.userID == stored?.session.user.id, context.organizationID == selectedOrganizationID,
+              context.matchesToken(stored?.session.token) else { throw CancellationError() }
+    }
+
+    /// Creates the shared project with the same UUID; an existing project in a
+    /// different organization cannot receive this local project's materials.
+    func ensureTransferProject(_ snapshot: AtlasProjectSnapshot, context: TeamTransferContext) async throws {
+        try requireCurrentTransfer(context)
+        let current = try self.context()
+        let list: ProjectsResponse = try await request(context: current, path: "v1/projects")
+        try requireCurrentTransfer(context)
+        if let existing = list.projects.first(where: { $0.id == snapshot.project.id }) {
+            guard existing.organizationID == context.organizationID else {
+                throw TeamError.rejected("Проект относится к другому рабочему пространству.")
+            }
+            guard existing.coordinateReference == snapshot.project.coordinateReference,
+                  existing.kind == snapshot.project.kind.rawValue else {
+                throw TeamError.rejected("Паспорт проекта на сервере отличается от локального. Сверьте систему координат; исходники сохранены.")
+            }
+            return
+        }
+        struct Create: Encodable {
+            let id: UUID; let organizationID: UUID; let name: String; let kind: ProjectKind
+            let coordinateReference: CoordinateReference; let notes: String
+        }
+        let body = Create(id: snapshot.project.id, organizationID: context.organizationID,
+            name: snapshot.project.name, kind: snapshot.project.kind,
+            coordinateReference: snapshot.project.coordinateReference, notes: snapshot.project.notes)
+        let _: RemoteProject = try await request(context: current, path: "v1/projects", method: "POST",
+            body: JSONEncoder().encode(body))
+        try requireCurrentTransfer(context)
+        let updated: ProjectsResponse = try await request(context: current, path: "v1/projects")
+        try requireCurrentTransfer(context)
+        projects = updated.projects.filter { $0.organizationID == context.organizationID }
     }
 
     private func fetchOrganizations(_ context: TeamRequestContext) async throws {
@@ -356,12 +453,16 @@ final class TeamService: ObservableObject {
 
     private func request<Response: Decodable>(base: URL, path: String, method: String = "GET", body: Data? = nil, token: String?, generation: UInt64) async throws -> Response {
         guard generation == sessionGeneration else { throw CancellationError() }
-        var request = URLRequest(url: base.appendingPathComponent(path))
+        let split = path.split(separator: "?", maxSplits: 1).map(String.init)
+        guard var components = URLComponents(url: base.appendingPathComponent(split[0]), resolvingAgainstBaseURL: false) else { throw TeamError.invalidURL }
+        if split.count == 2 { components.percentEncodedQuery = split[1] }
+        guard let url = components.url else { throw TeamError.invalidURL }
+        var request = URLRequest(url: url)
         request.httpMethod = method; request.httpBody = body; request.timeoutInterval = 30
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
         if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await TeamHTTP.session.data(for: request)
         guard generation == sessionGeneration else { throw CancellationError() }
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             if let error = try? JSONDecoder().decode(APIErrorResponse.self, from: data) {
@@ -382,7 +483,7 @@ final class TeamService: ObservableObject {
         try JSONEncoder().encode(state).write(to: publicationURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }
 
-    private static func validatedURL(_ text: String) throws -> URL {
+    static func validatedURL(_ text: String) throws -> URL {
         guard let url = URL(string: text.trimmingCharacters(in: .whitespacesAndNewlines)),
               let host = url.host, url.user == nil, url.password == nil, url.query == nil, url.fragment == nil,
               url.scheme == "https" || (url.scheme == "http" && ["localhost", "127.0.0.1", "::1"].contains(host)) else { throw TeamError.invalidURL }
@@ -430,7 +531,7 @@ private struct TeamPurchaseSink: StoreKitEvidenceSink {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(Payload(signedTransaction: evidence.signedTransactionJWS))
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await TeamHTTP.session.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw TeamError.rejected("Сервер не подтвердил командную подписку. Персональные права Apple доступны независимо.")
         }

@@ -107,6 +107,7 @@ struct ProjectLocationScreen: View {
                     automaticTimeLabel: photo.geoTimestampBasis == .importedAtUnknownCaptureTime ? "Время исходного положения неизвестно; сохранено время импорта." : nil) { correction in
                     _ = try await evidence.updateGeoTag(photoID: photo.id, correction: correction,
                         expectedGeoTag: photo.geoTag, outputDirectory: model.captureDirectory(for: project))
+                    model.fieldMaterialsDidChange(projectID: project.id)
                     await reload()
                 }
             }

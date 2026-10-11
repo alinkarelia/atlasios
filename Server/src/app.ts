@@ -2,8 +2,10 @@ import Fastify, { type FastifyInstance, type FastifyRequest, type FastifyReply, 
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import { randomUUID } from 'node:crypto';
+import { dirname, join } from 'node:path';
 import { Store } from './store.js';
 import { AppleBilling } from './billing.js';
+import { registerMaterialRoutes } from './materials.js';
 import { hashPassword, verifyPassword, tokenHash, newToken, contentHash, canonical } from './auth.js';
 import { ApiError, type Role, type Entity, roles, object, keys, text, id, enumeration, integer,
   coordinateReference, featureData, taskData, workorderData, bodySchema, stringSchema,
@@ -36,6 +38,7 @@ declare module 'fastify' { interface FastifyRequest { atlasPrincipal?: SessionPr
 
 export interface AppOptions {
   databasePath?: string; logger?: boolean; rateLimit?: boolean; corsOrigins?: string[]; billingEnvironment?: NodeJS.ProcessEnv;
+  assetDirectory?: string; maxOrganizationAssetBytes?: number;
 }
 
 const managers: Role[] = ['owner', 'admin', 'manager'];
@@ -81,7 +84,7 @@ export async function buildApp(options: AppOptions = {}): Promise<FastifyInstanc
     const pending: { value: unknown; depth: number; normalize: boolean }[] = [request.body, request.params, request.query].map(value => ({ value, depth: 0, normalize: true }));
     while (pending.length) {
       const { value, depth, normalize } = pending.pop()!;
-      if (!value || typeof value !== 'object') continue;
+      if (!value || typeof value !== 'object' || Buffer.isBuffer(value)) continue;
       if (depth > 64) throw new ApiError(400, 'invalid_input', 'JSON nesting exceeds the limit');
       for (const [key, item] of Object.entries(value)) {
         if (normalize && uuidKeys.has(key) && typeof item === 'string' && pattern.test(item)) (value as Record<string, unknown>)[key] = item.toLowerCase();
@@ -162,6 +165,12 @@ export async function buildApp(options: AppOptions = {}): Promise<FastifyInstanc
     return Number(store.run('INSERT INTO changes (organization_id, project_id, entity, record_id, version, kind, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
       row.organization_id, row.id, entity, recordID, revision, kind, JSON.stringify(payload), now()).lastInsertRowid);
   }
+
+  await registerMaterialRoutes(app, store, {
+    assetDirectory: options.assetDirectory ?? join(dirname(options.databasePath ?? './data/atlas.sqlite'), 'assets'),
+    maxOrganizationBytes: options.maxOrganizationAssetBytes,
+    scope: project, user, audit,
+  });
 
   app.get('/health', async () => ({ status: 'ok', storage: 'sqlite', version: '0.1.0' }));
   const authConfig: FastifyContextConfig = options.rateLimit === false ? {} : { rateLimit: { max: 12, timeWindow: '1 minute' } };

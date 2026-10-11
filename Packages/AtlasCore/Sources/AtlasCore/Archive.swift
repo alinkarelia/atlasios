@@ -8,7 +8,12 @@ import Glibc
 public struct AtlasArchiveEntry: Sendable {
     public let relativePath: String
     public let fileURL: URL
-    public init(relativePath: String, fileURL: URL) { self.relativePath = relativePath; self.fileURL = fileURL }
+    /// Optional passport digest. When supplied, the archive is published only
+    /// if the exact streamed member bytes match this SHA-256.
+    public let expectedSHA256: String?
+    public init(relativePath: String, fileURL: URL, expectedSHA256: String? = nil) {
+        self.relativePath = relativePath; self.fileURL = fileURL; self.expectedSHA256 = expectedSHA256
+    }
 }
 
 public enum AtlasArchiveError: Error, LocalizedError, Equatable, Sendable {
@@ -80,6 +85,7 @@ public enum AtlasArchiveWriter {
 
             let input = try FileHandle(forReadingFrom: entry.source)
             var crc = CRC32()
+            var digest: FieldTransferDigest.Stream? = entry.expectedSHA256 == nil ? nil : .init()
             var size: UInt64 = 0
             do {
                 while let chunk = try input.read(upToCount: chunkSize), !chunk.isEmpty {
@@ -87,11 +93,15 @@ public enum AtlasArchiveWriter {
                     size += UInt64(chunk.count)
                     guard size <= entry.expectedSize else { throw AtlasArchiveError.sourceChanged(entry.path) }
                     crc.update(chunk)
+                    digest?.update(chunk)
                     try emit(chunk)
                 }
                 try input.close()
             } catch { try? input.close(); throw error }
             guard size == entry.expectedSize else { throw AtlasArchiveError.sourceChanged(entry.path) }
+            if let expected = entry.expectedSHA256, digest?.finalize() != expected {
+                throw AtlasArchiveError.sourceChanged(entry.path)
+            }
             var descriptor = Data()
             descriptor.littleEndian(UInt32(0x08074b50)); descriptor.littleEndian(crc.value)
             descriptor.littleEndian(UInt32(size)); descriptor.littleEndian(UInt32(size))
@@ -143,12 +153,15 @@ public enum AtlasArchiveWriter {
             guard attributes[.type] as? FileAttributeType == .typeRegular,
                   let bytes = attributes[.size] as? NSNumber else { throw AtlasArchiveError.sourceMustBeRegularFile(path) }
             let size = bytes.uint64Value
+            if let expected = entry.expectedSHA256, !FieldTransferDigest.isSHA256(expected) {
+                throw AtlasArchiveError.sourceChanged(path)
+            }
             guard size < limit else { throw AtlasArchiveError.requiresZIP64 }
             let overhead = UInt64(30 + 16 + 46 + name.count * 2)
             guard minimumSize < limit - overhead, size < limit - minimumSize - overhead else { throw AtlasArchiveError.requiresZIP64 }
             minimumSize += size + overhead
             let timestamp = dosTimestamp(attributes[.modificationDate] as? Date ?? Date())
-            return PreparedEntry(path: path, name: name, source: entry.fileURL, expectedSize: size,
+            return PreparedEntry(path: path, name: name, source: entry.fileURL, expectedSize: size, expectedSHA256: entry.expectedSHA256,
                                  time: timestamp.time, date: timestamp.date)
         }
     }
@@ -169,6 +182,7 @@ public enum AtlasArchiveWriter {
         let name: Data
         let source: URL
         let expectedSize: UInt64
+        let expectedSHA256: String?
         let time: UInt16
         let date: UInt16
     }

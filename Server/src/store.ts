@@ -12,7 +12,7 @@ export class Store {
     this.db = new DatabaseSync(path);
     if (path !== ':memory:') chmodSync(path, 0o600);
     const schemaVersion = this.db.prepare('PRAGMA user_version').get() as { user_version: number };
-    if (schemaVersion.user_version > 2) { this.db.close(); throw new Error('Database schema is newer than this server'); }
+    if (schemaVersion.user_version > 3) { this.db.close(); throw new Error('Database schema is newer than this server'); }
     this.db.exec(`
       PRAGMA foreign_keys = ON;
       PRAGMA busy_timeout = 5000;
@@ -113,6 +113,30 @@ export class Store {
         organization_id TEXT PRIMARY KEY REFERENCES organizations(id), revision INTEGER NOT NULL,
         updated_at TEXT NOT NULL
       ) STRICT;
+      CREATE TABLE IF NOT EXISTS material_packages (
+        id TEXT PRIMARY KEY, organization_id TEXT NOT NULL REFERENCES organizations(id),
+        project_id TEXT NOT NULL, author_id TEXT NOT NULL REFERENCES users(id),
+        author_name TEXT NOT NULL, manifest_json TEXT NOT NULL, manifest_hash TEXT NOT NULL,
+        total_bytes INTEGER NOT NULL, state TEXT NOT NULL CHECK(state IN ('incomplete','complete')),
+        received_at TEXT NOT NULL, completed_at TEXT,
+        FOREIGN KEY (project_id, organization_id) REFERENCES projects(id, organization_id)
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS material_packages_project ON material_packages(project_id, state, received_at, id);
+      CREATE TABLE IF NOT EXISTS material_assets (
+        package_id TEXT NOT NULL REFERENCES material_packages(id), id TEXT NOT NULL,
+        byte_count INTEGER NOT NULL, sha256 TEXT NOT NULL, uploaded_bytes INTEGER NOT NULL DEFAULT 0,
+        verified INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (package_id, id),
+        CHECK(byte_count >= 0 AND uploaded_bytes >= 0 AND uploaded_bytes <= byte_count)
+      ) STRICT;
+      CREATE TRIGGER IF NOT EXISTS immutable_material_manifest BEFORE UPDATE ON material_packages
+        WHEN NEW.id <> OLD.id OR NEW.organization_id <> OLD.organization_id OR NEW.project_id <> OLD.project_id
+          OR NEW.author_id <> OLD.author_id OR NEW.author_name <> OLD.author_name
+          OR NEW.manifest_json <> OLD.manifest_json OR NEW.manifest_hash <> OLD.manifest_hash
+          OR NEW.total_bytes <> OLD.total_bytes OR NEW.received_at <> OLD.received_at OR OLD.state = 'complete'
+        BEGIN SELECT RAISE(ABORT, 'material manifests are immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS immutable_material_asset_identity BEFORE UPDATE ON material_assets
+        WHEN NEW.package_id <> OLD.package_id OR NEW.id <> OLD.id OR NEW.byte_count <> OLD.byte_count OR NEW.sha256 <> OLD.sha256
+        BEGIN SELECT RAISE(ABORT, 'material asset identities are immutable'); END;
       CREATE TRIGGER IF NOT EXISTS immutable_revision_update BEFORE UPDATE ON revisions
         BEGIN SELECT RAISE(ABORT, 'revisions are immutable'); END;
       CREATE TRIGGER IF NOT EXISTS immutable_revision_delete BEFORE DELETE ON revisions
@@ -121,7 +145,7 @@ export class Store {
         BEGIN SELECT RAISE(ABORT, 'reviews are immutable'); END;
       CREATE TRIGGER IF NOT EXISTS immutable_review_delete BEFORE DELETE ON reviews
         BEGIN SELECT RAISE(ABORT, 'reviews are immutable'); END;
-      PRAGMA user_version = 2;
+      PRAGMA user_version = 3;
     `);
   }
 

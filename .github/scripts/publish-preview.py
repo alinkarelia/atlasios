@@ -19,9 +19,19 @@ import urllib.request
 import zipfile
 
 REPOSITORY = 'alinkarelia/atlasios'
-TAG = 'v0.3.1-preview.4'
-RELEASE_ID = 408669631
 IPA_ARTIFACT = 'Atlas-unsigned-device-IPA-candidate'
+MINIMUM_UI_TESTS = 5
+REQUIRED_VISUAL_STATES = {
+    'initial_3D', 'orbit_rotated', 'foreground_return', 'walk_forward',
+    'transfer_manual', 'transfer_automatic', 'transfer_restored_manual',
+}
+REQUIRED_SCREENSHOT_LABELS = {
+    '01-project-created', '02-project-reopened', '03-capture-lidar-unavailable',
+    '04-capture-room-unavailable', '05-capture-photo-unavailable', '06-viewer-orbit-initial',
+    '07-viewer-orbit-rotated', '07b-viewer-foreground', '08-viewer-walk-forward',
+    '09-viewer-reset', '11-transfer-manual-initial', '12-transfer-auto-wifi',
+    '13-transfer-restored-manual',
+}
 EXPECTED_JOBS = {
     'Source project and Server',
     'Swift 6 core and native SDK',
@@ -87,6 +97,28 @@ def collection(path, key=None):
     raise SystemExit('GitHub collection is unexpectedly large.')
 
 
+def release_configuration(record):
+    """Fail before any release mutation unless the record identifies one version."""
+    version = record.get('version', '')
+    build = record.get('build', '')
+    require(isinstance(version, str) and re.fullmatch(r'0\.[0-9]+\.[0-9]+', version) is not None,
+            'A preview requires an explicit pre-1.0 semantic application version.')
+    require(isinstance(build, str) and re.fullmatch(r'[1-9][0-9]{0,8}', build) is not None,
+            'A preview requires an explicit positive application build number.')
+    tag = record.get('release_tag')
+    require(tag == f'v{version}-preview.{build}', 'Release tag differs from the reviewed application version.')
+    release_id = record.get('release_id')
+    require(type(release_id) is int and release_id > 0, 'An explicit draft release ID is required.')
+    require(record.get('application_id') == 'com.atlasfield.app'
+            and record.get('minimum_iOS') == '17.0'
+            and record.get('platform') == 'iPhoneOS' and record.get('architecture') == 'arm64',
+            'Unexpected reviewed application identity or platform.')
+    required_tests = record.get('required_ui_tests')
+    require(type(required_tests) is int and required_tests >= MINIMUM_UI_TESTS,
+            'The review record must require the new project-transfer UI test.')
+    return tag, release_id, version, build, required_tests
+
+
 def verify_context():
     require(os.environ.get('GITHUB_REPOSITORY') == REPOSITORY, 'Wrong publication repository.')
     require(os.environ.get('GITHUB_REF') == 'refs/heads/main', 'Publication requires main.')
@@ -98,22 +130,36 @@ def verify_context():
     record = json.loads((ROOT / '.github/preview-verification.json').read_text())
     require(record.get('repository') == REPOSITORY and record.get('run_id') == run_id,
             'Review record does not identify this source run.')
+    _, _, _, _, required_tests = release_configuration(record)
     source_sha = record.get('source_sha', '')
-    require(re.fullmatch(r'[0-9a-f]{40}', source_sha) is not None, 'Invalid reviewed source commit.')
+    require(isinstance(source_sha, str) and re.fullmatch(r'[0-9a-f]{40}', source_sha) is not None,
+            'Invalid reviewed source commit.')
     require(record.get('all_CI_checks') == 'success' and record.get('manual_current_screenshot_review') == 'passed',
             'Complete CI and actual manual screenshot review are required.')
+    require(type(record.get('ipa_bytes')) is int and 0 < record['ipa_bytes'] <= 512 * 1024 * 1024
+            and isinstance(record.get('ipa_sha256'), str)
+            and re.fullmatch(r'[0-9a-f]{64}', record['ipa_sha256']) is not None,
+            'Exact reviewed IPA size and SHA256 are required.')
     require(record.get('personally_signed') is False and record.get('physical_camera_LiDAR_tested') is False,
             'Unexpected signing or physical-hardware claim in the review record.')
     for key, major in (('runtime_iOS18', '18'), ('runtime_iOS26', '26')):
         runtime = record.get(key, {})
         require(str(runtime.get('iOS', '')).split('.')[0] == major,
                 'Review record contains the wrong runtime generation.')
-        require(runtime.get('tests', 0) >= 4 and runtime.get('passed') == runtime.get('tests')
-                and runtime.get('failed') == 0 and runtime.get('skipped') == 0,
-                'Review record must include all four passing UI tests without failures or skips.')
+        require(type(runtime.get('tests')) is int and runtime['tests'] >= required_tests
+                and runtime.get('passed') == runtime.get('tests')
+                and runtime.get('failed') == 0 and runtime.get('skipped') == 0
+                and runtime.get('expected_failures') == 0,
+                'Review record must include every required passing UI test without failures or skips.')
+        require(type(runtime.get('screenshots_count')) is int
+                and runtime['screenshots_count'] >= len(REQUIRED_SCREENSHOT_LABELS)
+                and REQUIRED_SCREENSHOT_LABELS <= set(runtime.get('screenshot_labels', []))
+                and isinstance(runtime.get('screenshots_archive_sha256'), str)
+                and re.fullmatch(r'[0-9a-f]{64}', runtime['screenshots_archive_sha256']) is not None,
+                'All thirteen actual runtime screenshot labels and their archive digest are required.')
         require(runtime.get('manual_visual_review') == 'passed'
-                and {'initial_3D', 'orbit_rotated', 'foreground_return', 'walk_forward'}
-                <= set(runtime.get('reviewed', [])), 'Incomplete actual screenshot review.')
+                and REQUIRED_VISUAL_STATES <= set(runtime.get('reviewed', [])),
+                'Incomplete actual 3D and project-transfer screenshot review.')
     repository = api('GET', f'/repos/{REPOSITORY}')
     require(repository.get('private') is False and repository.get('full_name') == REPOSITORY,
             'Publication requires the public source repository.')
@@ -151,12 +197,15 @@ def verify_context():
         matching = [artifact for artifact in artifacts if artifact.get('name') == name]
         require(len(matching) == 1 and matching[0].get('expired') is False
                 and matching[0].get('id') == runtime.get('screenshots_artifact')
-                and matching[0].get('digest') == 'sha256:' + runtime.get('screenshots_archive_sha256', ''),
+                and matching[0].get('digest') == 'sha256:' + runtime.get('screenshots_archive_sha256', '')
+                and matching[0].get('workflow_run', {}).get('id') == run_id
+                and matching[0].get('workflow_run', {}).get('head_sha') == source_sha,
                 'Actual reviewed screenshots do not match this source run.')
     return run_id, source_sha, record
 
 
-def validate_ipa(ipa, source_sha):
+def validate_ipa(ipa, source_sha, record):
+    _, _, version, build, _ = release_configuration(record)
     require(ipa.is_file() and not ipa.is_symlink() and 0 < ipa.stat().st_size <= 512 * 1024 * 1024,
             'IPA must be a bounded regular file.')
     with zipfile.ZipFile(ipa) as archive:
@@ -180,8 +229,8 @@ def validate_ipa(ipa, source_sha):
                         or name.endswith('/embedded.mobileprovision') for name in names),
                 'IPA includes signing resources or a provisioning profile.')
         info = plistlib.loads(archive.read(app + 'Info.plist'))
-        identity = {'CFBundleIdentifier': 'com.atlasfield.app', 'CFBundleShortVersionString': '0.3.1',
-                    'CFBundleVersion': '4', 'CFBundlePackageType': 'APPL',
+        identity = {'CFBundleIdentifier': record['application_id'], 'CFBundleShortVersionString': version,
+                    'CFBundleVersion': build, 'CFBundlePackageType': 'APPL',
                     'CFBundleSupportedPlatforms': ['iPhoneOS'], 'LSRequiresIPhoneOS': True}
         require(all(info.get(key) == value for key, value in identity.items())
                 and info.get('MinimumOSVersion') in ('17.0', '17.0.0')
@@ -246,19 +295,21 @@ def source_archive(source_sha, release_dir):
     return output
 
 
-def validate_release(release, source_sha):
-    require(release.get('id') == RELEASE_ID and release.get('tag_name') == TAG
+def validate_release(release, source_sha, record):
+    tag, release_id, _, _, _ = release_configuration(record)
+    require(release.get('id') == release_id and release.get('tag_name') == tag
             and release.get('target_commitish') == source_sha and release.get('prerelease') is True,
             'Existing release identity or target differs from the accepted candidate.')
     require(isinstance(release.get('draft'), bool), 'Invalid release publication state.')
 
 
-def verify_tag(source_sha, create=False):
-    path = f'/repos/{REPOSITORY}/git/ref/tags/{TAG}'
+def verify_tag(source_sha, record, create=False):
+    tag, _, _, _, _ = release_configuration(record)
+    path = f'/repos/{REPOSITORY}/git/ref/tags/{tag}'
     reference = api('GET', path, allow_missing=True)
     if reference is None:
         require(create, 'Published release tag is missing.')
-        api('POST', f'/repos/{REPOSITORY}/git/refs', {'ref': f'refs/tags/{TAG}', 'sha': source_sha})
+        api('POST', f'/repos/{REPOSITORY}/git/refs', {'ref': f'refs/tags/{tag}', 'sha': source_sha})
         reference = api('GET', path)
     obj = reference.get('object', {})
     for _ in range(4):
@@ -270,10 +321,11 @@ def verify_tag(source_sha, create=False):
 
 
 def publish(source_sha, record):
+    tag, release_id, version, build, _ = release_configuration(record)
     candidate = STAGING / 'candidate/Atlas-unsigned.ipa'
     files = [path for path in (STAGING / 'candidate').rglob('*') if path.is_file()]
     require(files == [candidate], 'Downloaded artifact contains unexpected files.')
-    report = validate_ipa(candidate, source_sha)
+    report = validate_ipa(candidate, source_sha, record)
     require(report['sha256'] == record.get('ipa_sha256') and report['bytes'] == record.get('ipa_bytes'),
             'Downloaded IPA bytes differ from the exact reviewed application.')
     release_dir = STAGING / 'release'
@@ -289,9 +341,9 @@ def publish(source_sha, record):
              'atlas-source.zip.sha256', 'verification.json'}
     expected = {name: (release_dir / name).stat().st_size for name in names}
     digests = {name: 'sha256:' + sha256(release_dir / name) for name in names}
-    release = api('GET', f'/repos/{REPOSITORY}/releases/{RELEASE_ID}')
-    validate_release(release, source_sha)
-    assets = collection(f'/repos/{REPOSITORY}/releases/{RELEASE_ID}/assets')
+    release = api('GET', f'/repos/{REPOSITORY}/releases/{release_id}')
+    validate_release(release, source_sha, record)
+    assets = collection(f'/repos/{REPOSITORY}/releases/{release_id}/assets')
     require(len({asset['name'] for asset in assets}) == len(assets)
             and {asset['name'] for asset in assets} <= names, 'Existing release contains unexpected or duplicate assets.')
     for asset in assets:
@@ -301,34 +353,34 @@ def publish(source_sha, record):
     present = {asset['name'] for asset in assets}
     if release['draft'] is False:
         require(present == names, 'Published release is incomplete; it will not be changed.')
-        verify_tag(source_sha)
+        verify_tag(source_sha, record)
         print('Matching complete prerelease already published; no changes needed.')
         return
     for name in sorted(names - present):
-        api('POST', f'/repos/{REPOSITORY}/releases/{RELEASE_ID}/assets?name={urllib.parse.quote(name)}',
+        api('POST', f'/repos/{REPOSITORY}/releases/{release_id}/assets?name={urllib.parse.quote(name)}',
             (release_dir / name).read_bytes(), upload=True)
-    assets = collection(f'/repos/{REPOSITORY}/releases/{RELEASE_ID}/assets')
+    assets = collection(f'/repos/{REPOSITORY}/releases/{release_id}/assets')
     require(len(assets) == len(names) and {asset['name'] for asset in assets} == names,
             'Release is missing files; draft will remain unpublished.')
     require(all(asset.get('state') == 'uploaded' and asset.get('size') == expected[asset['name']]
                 and asset.get('digest') == digests[asset['name']] for asset in assets),
             'Release asset digest verification failed; draft will remain unpublished.')
     # Recheck mutable release state immediately before the final publication.
-    validate_release(api('GET', f'/repos/{REPOSITORY}/releases/{RELEASE_ID}'), source_sha)
-    verify_tag(source_sha, create=True)
+    validate_release(api('GET', f'/repos/{REPOSITORY}/releases/{release_id}'), source_sha, record)
+    verify_tag(source_sha, record, create=True)
     notes = (ROOT / '.github/release-notes.md').read_text()
-    published = api('PATCH', f'/repos/{REPOSITORY}/releases/{RELEASE_ID}',
+    published = api('PATCH', f'/repos/{REPOSITORY}/releases/{release_id}',
                     {'draft': False, 'prerelease': True, 'body': notes,
-                     'name': 'Atlas 0.3.1 (4) — предварительная версия', 'make_latest': 'false'})
-    validate_release(published, source_sha)
+                     'name': f'Atlas {version} ({build}) — предварительная версия', 'make_latest': 'false'})
+    validate_release(published, source_sha, record)
     require(published.get('draft') is False, 'Release remains a draft.')
-    verify_tag(source_sha)
-    url = f'https://github.com/{REPOSITORY}/releases/tag/{TAG}'
+    verify_tag(source_sha, record)
+    url = f'https://github.com/{REPOSITORY}/releases/tag/{tag}'
     print('Published the complete reviewed prerelease: ' + url)
     summary_path = os.environ.get('GITHUB_STEP_SUMMARY')
     if summary_path:
         with open(summary_path, 'a') as summary:
-            summary.write(f'Published [Atlas 0.3.1 (4)]({url}) from `{source_sha}` after matching all five asset digests.\n')
+            summary.write(f'Published [Atlas {version} ({build})]({url}) from `{source_sha}` after matching all five asset digests.\n')
 
 
 def main():

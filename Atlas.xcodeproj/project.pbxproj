@@ -32,6 +32,34 @@
 			"path" = "Apps/iOS/Adapters/EvidenceService.swift";
 			"sourceTree" = "SOURCE_ROOT";
 		};
+		"376B72D8D433B01FBD118BCF" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "FieldDeliveryPassport.swift";
+			"path" = "Apps/iOS/Adapters/FieldDeliveryPassport.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"B8C0BCA1DAE6B2C1A2D20C01" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "FieldTransferAssembler.swift";
+			"path" = "Apps/iOS/Adapters/FieldTransferAssembler.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"6EA5A53E9C181970C9EC02DA" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "FieldTransferCoordinator.swift";
+			"path" = "Apps/iOS/Adapters/FieldTransferCoordinator.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"AE97DA6F0539F284EB2D8957" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "FieldTransferTransport.swift";
+			"path" = "Apps/iOS/Adapters/FieldTransferTransport.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
 		"E91AE07902E418EF38BA72DE" = {
 			"isa" = "PBXFileReference";
 			"lastKnownFileType" = "sourcecode.swift";
@@ -270,11 +298,32 @@
 			"path" = "Apps/iOS/Features/Subscription/SubscriptionScreen.swift";
 			"sourceTree" = "SOURCE_ROOT";
 		};
+		"42B03916889A3B84C248116B" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "TeamCommunicationScreen.swift";
+			"path" = "Apps/iOS/Features/Team/TeamCommunicationScreen.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
 		"6A32BA80349F5E9658759113" = {
 			"isa" = "PBXFileReference";
 			"lastKnownFileType" = "sourcecode.swift";
 			"name" = "TeamConnectionScreen.swift";
 			"path" = "Apps/iOS/Features/Team/TeamConnectionScreen.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"415FCCEE642B0489087AD8FD" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "TeamProjectMaterialsScreen.swift";
+			"path" = "Apps/iOS/Features/Team/TeamProjectMaterialsScreen.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"313F03B6C386B7FD37CC20F3" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "TeamProjectTransferScreen.swift";
+			"path" = "Apps/iOS/Features/Team/TeamProjectTransferScreen.swift";
 			"sourceTree" = "SOURCE_ROOT";
 		};
 		"A204582CDC9A2A31EF08F366" = {
@@ -312,6 +361,10 @@
 				A08D391A214DE3054C640150,
 				BD661291F222C46052F35644,
 				ADDD2EC6337E6ADB2F12A2EC,
+				376B72D8D433B01FBD118BCF,
+				B8C0BCA1DAE6B2C1A2D20C01,
+				6EA5A53E9C181970C9EC02DA,
+				AE97DA6F0539F284EB2D8957,
 				E91AE07902E418EF38BA72DE,
 				64CCE44C4246F42AD38FE123,
 				6B4B175E97B30CF6176528B7,
@@ -423,7 +476,10 @@
 		"B38E61C482FBE0EF078DDCF5" = {
 			"isa" = "PBXGroup";
 			"children" = (
+				42B03916889A3B84C248116B,
 				6A32BA80349F5E9658759113,
+				415FCCEE642B0489087AD8FD,
+				313F03B6C386B7FD37CC20F3,
 			);
 			"name" = "Team";
 			"sourceTree" = "<group>";
@@ -534,6 +590,22 @@
 		"E3C84727A47BAEF0901C5F40" = {
 			"isa" = "PBXBuildFile";
 			"fileRef" = ADDD2EC6337E6ADB2F12A2EC;
+		};
+		"5BB23398CCD18DEF732BB807" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = 376B72D8D433B01FBD118BCF;
+		};
+		"67AEC07D6CE2F403F29E3F26" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = B8C0BCA1DAE6B2C1A2D20C01;
+		};
+		"F255DE17689B1E92A71343CC" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = 6EA5A53E9C181970C9EC02DA;
+		};
+		"77B52490110FE8EBF1788B6B" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = AE97DA6F0539F284EB2D8957;
 		};
 		"2A0748C3ECE2F43F60C40519" = {
 			"isa" = "PBXBuildFile";
@@ -671,9 +743,21 @@
 			"isa" = "PBXBuildFile";
 			"fileRef" = F194A1D5CC54C9035F5DF637;
 		};
+		"D8FC894ABB95583025BBD35F" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = 42B03916889A3B84C248116B;
+		};
 		"0E1DD8ADF551D84F7DFE9E6D" = {
 			"isa" = "PBXBuildFile";
 			"fileRef" = 6A32BA80349F5E9658759113;
+		};
+		"0EE9DCF2C6D56DF1384278A9" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = 415FCCEE642B0489087AD8FD;
+		};
+		"EAF59922EA3466C6890D86E8" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = 313F03B6C386B7FD37CC20F3;
 		};
 		"51A5D1E2BF4CC2C99F55BB11" = {
 			"isa" = "PBXBuildFile";
@@ -691,6 +775,10 @@
 				9217DA3F118BB3729325FC87,
 				EF4A40BDC343A1D4BC3ECAE4,
 				E3C84727A47BAEF0901C5F40,
+				5BB23398CCD18DEF732BB807,
+				67AEC07D6CE2F403F29E3F26,
+				F255DE17689B1E92A71343CC,
+				77B52490110FE8EBF1788B6B,
 				2A0748C3ECE2F43F60C40519,
 				8DCEEC5645B81E8EB4D9429A,
 				D0207E4C3D4A9E5D4459DEAD,
@@ -725,7 +813,10 @@
 				0521F6FC9190D086513A03F2,
 				389C19D8B2F53E096A90C5A3,
 				07B1D928F7789DD67E097083,
+				D8FC894ABB95583025BBD35F,
 				0E1DD8ADF551D84F7DFE9E6D,
+				0EE9DCF2C6D56DF1384278A9,
+				EAF59922EA3466C6890D86E8,
 			);
 			"runOnlyForDeploymentPostprocessing" = 0;
 		};
@@ -752,8 +843,8 @@
 				"SWIFT_VERSION" = "6.0";
 				"SWIFT_STRICT_CONCURRENCY" = "complete";
 				"IPHONEOS_DEPLOYMENT_TARGET" = "17.0";
-				"MARKETING_VERSION" = "0.3.1";
-				"CURRENT_PROJECT_VERSION" = "4";
+				"MARKETING_VERSION" = "0.4.0";
+				"CURRENT_PROJECT_VERSION" = "5";
 				"DEVELOPMENT_TEAM" = "";
 				"SDKROOT" = "iphoneos";
 				"CLANG_ENABLE_MODULES" = "YES";
@@ -798,8 +889,8 @@
 				"SWIFT_VERSION" = "6.0";
 				"SWIFT_STRICT_CONCURRENCY" = "complete";
 				"IPHONEOS_DEPLOYMENT_TARGET" = "17.0";
-				"MARKETING_VERSION" = "0.3.1";
-				"CURRENT_PROJECT_VERSION" = "4";
+				"MARKETING_VERSION" = "0.4.0";
+				"CURRENT_PROJECT_VERSION" = "5";
 				"DEVELOPMENT_TEAM" = "";
 				"SDKROOT" = "iphoneos";
 				"CLANG_ENABLE_MODULES" = "YES";

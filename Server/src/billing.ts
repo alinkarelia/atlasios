@@ -234,7 +234,8 @@ export class AppleBilling {
       capabilities.push('advancedPlans');
       if (selected.product.plan !== 'pro') capabilities.push('teamManagement', 'businessWorkflow');
     }
-    // No cloudProcessing/cloudUpload/integration claims: those services are not implemented here.
+    // Material transfer is an implemented Free baseline, not a paid storage entitlement.
+    // No cloud processing or external integration claim is granted here.
     const entitlement = { tier: selected.product.plan, scope: { organization: { _0: organizationID } }, source: 'serverVerified',
       status: selected.status, capabilities, validUntil: new Date(selected.validUntil).toISOString(),
       offlineValidUntil: active ? new Date(Math.min(selected.validUntil, Date.now() + 24 * 3600 * 1000)).toISOString() : null,

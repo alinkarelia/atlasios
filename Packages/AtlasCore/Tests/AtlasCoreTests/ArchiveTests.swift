@@ -136,3 +136,57 @@ private func uint32(_ data: Data, at offset: Int) -> UInt32 {
     #expect(uint32(data, at: 0) == 0x06054b50)
     #expect(data.dropFirst(4).allSatisfy { $0 == 0 })
 }
+
+@Test func passportSHA256AcceptsExactStreamedArchiveMembersIncludingEmptyFile() throws {
+    let directory = try archiveDirectory(); defer { try? FileManager.default.removeItem(at: directory) }
+    let source = directory.appendingPathComponent("original.txt"), empty = directory.appendingPathComponent("empty.bin")
+    try Data("123456789".utf8).write(to: source); try Data().write(to: empty)
+    let destination = directory.appendingPathComponent("verified.zip")
+    try AtlasArchiveWriter.write(entries: [
+        .init(relativePath: "original.txt", fileURL: source,
+              expectedSHA256: "15e2b0d3c33891ebb0f1ef609ec419420c20e320ce94c65fbc8c3312448eb225"),
+        .init(relativePath: "empty.bin", fileURL: empty,
+              expectedSHA256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+    ], to: destination)
+    #expect(uint32(try Data(contentsOf: destination), at: 0) == 0x04034b50)
+    #if os(Linux) || os(macOS)
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    process.arguments = ["python3", "-c", "import hashlib,sys,zipfile; z=zipfile.ZipFile(sys.argv[1]); assert z.testzip() is None; assert hashlib.sha256(z.read('original.txt')).hexdigest() == '15e2b0d3c33891ebb0f1ef609ec419420c20e320ce94c65fbc8c3312448eb225'; assert z.read('empty.bin') == b''", destination.path]
+    try process.run(); process.waitUntilExit()
+    #expect(process.terminationStatus == 0)
+    #endif
+}
+
+@Test func passportSHA256RejectsSameSizeChangedSourceAndPreservesPreviousArchive() throws {
+    let directory = try archiveDirectory(); defer { try? FileManager.default.removeItem(at: directory) }
+    let source = directory.appendingPathComponent("metadata.json")
+    let original = Data("{\"label\":\"A\"}".utf8), changed = Data("{\"label\":\"B\"}".utf8)
+    #expect(original.count == changed.count)
+    try original.write(to: source)
+    let expected = FieldTransferDigest.sha256(original)
+    let destination = directory.appendingPathComponent("verified.zip")
+    let entry = AtlasArchiveEntry(relativePath: "metadata.json", fileURL: source, expectedSHA256: expected)
+    try AtlasArchiveWriter.write(entries: [entry], to: destination)
+    let previous = try Data(contentsOf: destination)
+    // Models a metadata edit after the delivery passport was assembled. The
+    // file's current size still matches, so the old size-only check accepts it.
+    try changed.write(to: source, options: .atomic)
+    #expect(throws: AtlasArchiveError.sourceChanged("metadata.json")) {
+        try AtlasArchiveWriter.write(entries: [entry], to: destination)
+    }
+    #expect(try Data(contentsOf: destination) == previous)
+    #expect(try !FileManager.default.contentsOfDirectory(atPath: directory.path).contains { $0.hasSuffix(".partial") })
+}
+
+@Test func invalidPassportDigestNeverPublishesOrReplacesArchive() throws {
+    let directory = try archiveDirectory(); defer { try? FileManager.default.removeItem(at: directory) }
+    let source = directory.appendingPathComponent("original.txt"), destination = directory.appendingPathComponent("verified.zip")
+    try Data("original".utf8).write(to: source)
+    for digest in ["", "not-a-sha256", String(repeating: "A", count: 64), String(repeating: "0", count: 64)] {
+        #expect(throws: AtlasArchiveError.sourceChanged("original.txt")) {
+            try AtlasArchiveWriter.write(entries: [.init(relativePath: "original.txt", fileURL: source, expectedSHA256: digest)], to: destination)
+        }
+        #expect(!FileManager.default.fileExists(atPath: destination.path))
+    }
+}

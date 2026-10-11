@@ -11,7 +11,7 @@ npm test
 npm start
 ```
 
-The service defaults to `127.0.0.1:3000` and `./data/atlas.sqlite`. Set `HOST`, `PORT`, `DATABASE_PATH`, and optional comma-separated `CORS_ORIGINS` in the process environment. `npm run dev` starts a TypeScript watcher. `.env.example` documents variables; the server does not automatically load `.env` files.
+The service defaults to `127.0.0.1:3000`, `./data/atlas.sqlite`, and a private `./data/assets` original-file directory. Set `HOST`, `PORT`, `DATABASE_PATH`, `ASSET_DIRECTORY`, and optional comma-separated `CORS_ORIGINS` in the process environment. `MAX_ORGANIZATION_ASSET_BYTES` bounds declared storage per organization (8 GiB by default, minimum 1 GiB). `npm run dev` starts a TypeScript watcher. `.env.example` documents variables; the server does not automatically load `.env` files.
 
 Use HTTPS through a reverse proxy when connecting from an iPhone over a network. Do not expose the development HTTP listener as a public production service. Native iOS does not need CORS. Browser origins are denied unless configured.
 
@@ -143,7 +143,15 @@ Every applied operation and validated conflict/rejection is persisted under `(us
 
 `GET /v1/projects/:projectID/sync/pull?cursor=0&limit=100` returns `{changes:[{sequence,entity,id,revision,action,data,createdAt}],cursor,hasMore}`. Maintain a cursor **per project** and persist it with locally applied changes. The cursor advances past hidden finance events without exposing them. A cursor ahead of the project's log is rejected so a client can recover after restoring another database.
 
-All dates are ISO8601 UTC strings with milliseconds. The iOS decoder should accept both fractional and whole seconds; use a matching explicit serializer instead of Swift's default Apple-epoch Date encoding.
+The existing account, project, record and sync APIs use ISO8601 UTC strings with milliseconds. The iOS decoder should accept both fractional and whole seconds. The versioned material-transfer API instead uses AtlasJSON's numeric Unix milliseconds, including capture/geo dates; neither API uses Swift's default Apple-epoch Date encoding.
+
+## Resumable original materials
+
+The service now transfers real photos, meshes, RoomPlan originals, plans, polygons and project snapshots as authenticated immutable packages. The native app chooses **automatic** or **manual** dispatch, with an independent **Wi-Fi only** preference. An offline queue remains local until dispatch; submitted metadata stays incomplete and hidden from colleagues' collections until every original file is verified. Queue time, upload time and original capture time are kept separate.
+
+The [v1 material API contract](MATERIAL_TRANSFER.md) specifies manifest fields, original geolocation/correction provenance, 1 MiB binary chunks, lost-response/restart recovery, finalization, private original download, cancellation, role checks and storage bounds. Original-file transfer is a **Free baseline beta capability** with deployment-level storage limits, rather than a fabricated paid entitlement.
+
+Other devices need a working shared backend with HTTPS, this API and authenticated accounts. Installing the app or entering a chat/video-conference URL does not deploy storage. This module can be reused behind an existing project's backend after real authentication/storage integration; no family-archive or messaging service is hardcoded or claimed as deployed.
 
 ## Optional real Apple billing
 
@@ -192,7 +200,7 @@ Successful verification returns the current state, which may honestly be expired
 }
 ```
 
-The DTO matches AtlasCore's entitlement enum structure. The offline lease lasts at most 24 hours and never extends past expiry. It is a cache/display lease; each server request independently checks current billing and membership. No cloud upload, processing, or enterprise integration capability is granted because those services are not implemented.
+The DTO matches AtlasCore's entitlement enum structure. The offline lease lasts at most 24 hours and never extends past expiry. It is a cache/display lease; each server request independently checks current billing and membership. Material transfer is available as the implemented Free baseline with deployment storage limits, rather than a fabricated paid `cloudUpload` entitlement. No cloud processing or enterprise integration capability is granted.
 
 When billing is configured, adding team members and writing business workorders requires an active Business subscription. Editor seats are counted across non-viewer memberships. After expiry or downgrade, the owner and oldest eligible members retain writes up to the current quota; other members retain read/export access. A malformed partial Apple configuration keeps paid operations unavailable rather than silently enabling prototype privileges. Baseline own-data workflows remain available for the owner's Free seat.
 
@@ -204,6 +212,6 @@ A forged payload returns an error and grants nothing. A temporary certificate-ch
 
 Writes use synchronous `BEGIN IMMEDIATE` transactions, WAL, foreign keys, composite tenant ownership constraints, and a busy timeout. No transaction spans an asynchronous network or password operation. A lock timeout returns a retryable error, never a success. This design is suitable for one small deployment, not a horizontally scaled PostGIS fleet.
 
-Run `npm run check`, `npm run build`, and `npm test`. Integration tests cover authentication, organization isolation, references, roles, idempotency, competing revisions, immutable acceptance, restart persistence, and finance filtering.
+Run `npm run check`, `npm run build`, and `npm test`. Integration tests cover authentication, organization isolation, references, roles, idempotency, competing revisions, immutable acceptance, restart persistence, finance filtering, original material metadata/bytes, resumable offsets, lost responses, hash failures, partial visibility, revocation, private paths, cancellation and storage reservation limits.
 
-This service stores project data, JSON polygon revisions, and independently verified Apple billing state. It does **not** upload mesh/photo binaries, reconstruct 3D models, perform OCR, charge cards, provide email verification/password recovery, or expose the complete future grave/person/rights-holder registry. Those capabilities need separate storage and workflows. A production rollout also needs backup/restore operations, HTTPS, account recovery, operational monitoring, and migrations. A future PostGIS migration should keep the UUID/revision/sync contracts and move spatial indexing and geometry validation into the spatial database.
+This service stores project data, JSON polygon revisions, independently verified Apple billing state, and authenticated immutable original material packages. It does **not** reconstruct 3D models, perform OCR, charge cards, provide email verification/password recovery, or expose the complete future grave/person/rights-holder registry. A production rollout also needs consistent database/original-file backup/restore, HTTPS, account recovery, operational monitoring, storage cleanup/reconciliation, and migrations. A future PostGIS/object-storage migration should keep the UUID/revision/transfer contracts and move spatial indexing and geometry validation into the spatial database.
