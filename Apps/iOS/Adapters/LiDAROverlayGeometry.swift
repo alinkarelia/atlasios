@@ -16,6 +16,23 @@ enum LiDAROverlayGeometry {
         let sourceFaceIndex: Int
     }
 
+    /// A tiny camera-facing display offset prevents coplanar overlay flicker
+    /// without depending on source-face winding. Recompute as the camera moves;
+    /// apply only to displayed fills, never to persisted capture vertices.
+    static func cameraFacingBias(from center: SIMD3<Float>, toward camera: SIMD3<Float>,
+                                 distance: Float = 0.003) -> SIMD3<Float> {
+        guard isFinite(center), isFinite(camera), distance.isFinite,
+              distance >= 0, distance <= 0.01 else { return .zero }
+        let direction = SIMD3<Double>(Double(camera.x) - Double(center.x),
+                                      Double(camera.y) - Double(center.y),
+                                      Double(camera.z) - Double(center.z))
+        let magnitude = sqrt(direction.x * direction.x + direction.y * direction.y + direction.z * direction.z)
+        guard magnitude.isFinite, magnitude >= Double(Float(0.01)) else { return .zero }
+        let scale = Double(distance) / magnitude
+        let result = SIMD3(Float(direction.x * scale), Float(direction.y * scale), Float(direction.z * scale))
+        return isFinite(result) ? result : .zero
+    }
+
     /// Clip a *convex* camera-space fill against the near plane. ARKit cameras
     /// look along negative Z. Do this before perspective projection, where
     /// points behind the camera can otherwise produce enormous inverted lines.

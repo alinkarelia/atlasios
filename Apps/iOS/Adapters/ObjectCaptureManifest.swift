@@ -128,7 +128,8 @@ actor ObjectCaptureDatasetWriter {
             guard file.path.hasPrefix(prefix) else { throw ObjectCaptureStorageError.unsafePath }
             let relative = String(file.path.dropFirst(prefix.count))
             let safe = try FieldTransferPaths.resolve(relativePath: relative, root: root)
-            guard safe == file.standardizedFileURL, let size = values.fileSize, size >= 0 else {
+            guard safe.path == file.standardizedFileURL.resolvingSymlinksInPath().path,
+                  let size = values.fileSize, size >= 0 else {
                 throw ObjectCaptureStorageError.unsafePath
             }
             totalBytes += Int64(size)

@@ -299,9 +299,14 @@ final class ObjectCaptureAdapter: ObservableObject {
                 }
             },
             Task { [weak self] in
-                for await value in capture.cameraTrackingUpdates {
-                    guard !Task.isCancelled, let self, self.generation == ticket else { return }
-                    self.trackingMessage = Self.trackingText(value)
+                // Tracking has no Sendable SDK conformance. Read it and turn
+                // it into UI text entirely on this actor; only sleep crosses
+                // an async boundary. No unchecked SDK conformance is added.
+                while !Task.isCancelled {
+                    guard let self, self.generation == ticket else { return }
+                    self.trackingMessage = Self.trackingText(capture.cameraTracking)
+                    do { try await Task.sleep(for: .milliseconds(250)) }
+                    catch { return }
                 }
             }
         ]
@@ -367,7 +372,10 @@ final class ObjectCaptureAdapter: ObservableObject {
         }
     }
     private static func feedbackText(_ value: ObjectCaptureSession.Feedback) -> String {
-        switch value {
+        if #available(iOS 17.4, *), value == .objectNotDetected {
+            return "Объект не распознан. Покажите его целиком и добавьте света."
+        }
+        return switch value {
         case .objectTooClose: "Отойдите чуть дальше"
         case .objectTooFar: "Подойдите ближе к объекту"
         case .movingTooFast: "Двигайтесь медленнее"
@@ -376,7 +384,7 @@ final class ObjectCaptureAdapter: ObservableObject {
         case .outOfFieldOfView: "Держите весь объект в кадре"
         case .objectNotFlippable: "Оставьте объект неподвижным, измените высоту камеры"
         case .overCapturing: "Этот ракурс уже снят; перейдите к другой стороне"
-        @unknown default: "Следуйте подсказкам камеры"
+        default: "Следуйте подсказкам камеры"
         }
     }
     private static func isTerminal(_ value: ObjectCaptureSession.CaptureState) -> Bool {

@@ -103,6 +103,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
     private var recordedSurfaceRoot: AnchorEntity?
     private struct SurfaceOverlay {
         var entity: Entity
+        var fills: [ModelEntity]
         var center: SIMD3<Float>
         var triangleCount: Int
         var updatedAt: TimeInterval
@@ -112,6 +113,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
     private var previousCameraPose: (position: SIMD3<Float>, forward: SIMD3<Float>, time: TimeInterval)?
     private var motionWarningUntil: TimeInterval = 0
     private var lastGeometryAt: TimeInterval = 0
+    private var lastSurfaceBiasPublication: TimeInterval = 0
 
     override init() {
         super.init()
@@ -469,14 +471,17 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
             let samples = count
             var points = [SIMD3<Float>]()
             points.reserveCapacity(samples)
+            var isFiniteBoundary = true
             for sample in 0..<samples {
                 let local = boundary[sample]
                 let world = plane.transform * SIMD4(local.x, local.y, local.z, 1)
                 let point = SIMD3(world.x, world.y, world.z)
-                guard point.x.isFinite, point.y.isFinite, point.z.isFinite else { continue }
+                guard point.x.isFinite, point.y.isFinite, point.z.isFinite else {
+                    isFiniteBoundary = false; break
+                }
                 points.append(point)
             }
-            planeBoundaries[plane.identifier] = points.count >= 3
+            planeBoundaries[plane.identifier] = isFiniteBoundary && points.count >= 3
                 ? PlaneBoundary(points: points, firstSeen: previous?.firstSeen ?? now,
                     lastUpdated: now, isCeiling: plane.classification == .ceiling) : nil
         }
@@ -572,6 +577,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
         lastFrameAt = now
         receivedFrameCount += 1
         projectPlaneOutlines(now: now)
+        updateSurfaceBias(camera: frame.camera, now: now)
         updateScanGuidance(frame, now: now)
         if !isCameraReady {
             isCameraReady = true
@@ -684,6 +690,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
     private func clearSurfaceOverlays() {
         if let root = recordedSurfaceRoot { cameraView?.scene.removeAnchor(root) }
         recordedSurfaceRoot = nil; surfaceOverlays.removeAll()
+        lastSurfaceBiasPublication = 0
         overlayTriangleCount = 0; overlayAnchorCount = 0; overlayIssue = nil
     }
 
@@ -691,6 +698,20 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
         let triangles = surfaceOverlays.values.reduce(0) { $0 + $1.triangleCount }
         if overlayTriangleCount != triangles { overlayTriangleCount = triangles }
         if overlayAnchorCount != surfaceOverlays.count { overlayAnchorCount = surfaceOverlays.count }
+    }
+
+    /// Updating tiny fill translations avoids stale depth bias when the
+    /// operator walks around a surface without a new AR mesh checkpoint.
+    /// Mesh resources and persisted world coordinates remain untouched.
+    private func updateSurfaceBias(camera: ARCamera, now: TimeInterval) {
+        guard now - lastSurfaceBiasPublication >= 0.1, showRecordedSurfaces else { return }
+        lastSurfaceBiasPublication = now
+        let position = camera.transform.columns.3
+        let cameraPosition = SIMD3(position.x, position.y, position.z)
+        for overlay in surfaceOverlays.values {
+            let bias = LiDAROverlayGeometry.cameraFacingBias(from: overlay.center, toward: cameraPosition)
+            for fill in overlay.fills { fill.position = bias }
+        }
     }
 
     /// Visualization is deliberately bounded independently of source storage.
@@ -710,6 +731,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
         }
         do {
             let container = Entity()
+            var fills = [ModelEntity]()
             for group in overlay.groups {
                 var descriptor = MeshDescriptor(name: "Recorded LiDAR surface")
                 descriptor.positions = MeshBuffers.Positions(group.positions)
@@ -730,13 +752,13 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
                 // derivative transform is used by persistence/export.
                 container.addChild(ModelEntity(mesh: mesh, materials: [OcclusionMaterial()]))
                 let fill = ModelEntity(mesh: mesh, materials: [material])
-                let cameraDirection = camera - overlay.center
-                if simd_length(cameraDirection) > 0.01 { fill.position = simd_normalize(cameraDirection) * 0.003 }
+                fill.position = LiDAROverlayGeometry.cameraFacingBias(from: overlay.center, toward: camera)
                 container.addChild(fill)
+                fills.append(fill)
             }
             surfaceOverlays.removeValue(forKey: anchorID)?.entity.removeFromParent()
             parent.addChild(container)
-            surfaceOverlays[anchorID] = SurfaceOverlay(entity: container, center: overlay.center,
+            surfaceOverlays[anchorID] = SurfaceOverlay(entity: container, fills: fills, center: overlay.center,
                 triangleCount: overlay.triangleCount, updatedAt: ProcessInfo.processInfo.systemUptime)
             // Nearby surfaces explain the current view; distant geometry remains
             // on disk and can return when ARKit updates that anchor again.

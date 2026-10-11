@@ -20,6 +20,7 @@ import AtlasCore
             frameID: UUID(), createdAt: start, geoTag: GeoTag(automaticFix: fix), locationObservations: [fix],
             captureOperator: operatorIdentity, device: FieldCaptureDevice(model: "fixture", osVersion: "test", appVersion: "test"),
             timeZoneIdentifier: "Europe/Moscow", utcOffsetSeconds: 10_800)
+        note("create managed capture directories")
         try await writer.create(metadata)
         // One-pixel RGBA PNG with valid chunk CRCs and no capture-time/GPS tags.
         let png = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNoOKDwHwAFhAJgx+/VVgAAAABJRU5ErkJggg==")!
@@ -29,6 +30,7 @@ import AtlasCore
         try sidecar.write(to: root.appendingPathComponent("Images/original.depth"))
         let checkpoint = root.appendingPathComponent("Checkpoints/state.bin")
         try Data("checkpoint kept locally".utf8).write(to: checkpoint)
+        note("finalize original images and sidecars")
         let complete = try await writer.completeDataset(metadata)
         precondition(complete.status == "ready" && complete.modelStatus == "captured" && complete.modelRelativePath == nil,
                      "A saved image dataset must be ready without claiming a reconstructed model") // 1
@@ -43,6 +45,7 @@ import AtlasCore
                      FileManager.default.fileExists(atPath: checkpoint.path),
                      "Native sidecars must travel with images while reconstruction checkpoints remain retained locally") // 5
         precondition(complete.endedAt == nil, "No final exposure time was observed; finishing metadata cannot invent it") // 6
+        note("recover existing originals and metadata")
         let recoveredURL = try await writer.recoverDataset()
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
         let restored = try decoder.decode(ObjectCaptureManifest.self, from: Data(contentsOf: recoveredURL))
@@ -53,12 +56,14 @@ import AtlasCore
         let preservedImage = try Data(contentsOf: image)
         let preservedSidecar = try Data(contentsOf: root.appendingPathComponent("Images/original.depth"))
         precondition(preservedImage == png && preservedSidecar == sidecar, "Finalization/recovery must never re-encode originals") // 9
+        note("reject malformed model output")
         let invalidModel = root.appendingPathComponent("reconstruction-invalid.usdz")
         try Data("not a model".utf8).write(to: invalidModel)
         do {
             _ = try await writer.commitModel(from: invalidModel, manifest: restored)
             fatalError("A malformed output must not create a ready model")
         } catch ObjectCaptureStorageError.invalidModel {} // 10
+        note("reject image symlink outside capture")
         let outside = managed.appendingPathComponent("outside.png")
         try png.write(to: outside)
         try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("Images/link.png"), withDestinationURL: outside)
@@ -66,6 +71,22 @@ import AtlasCore
             _ = try await writer.completeDataset(metadata)
             fatalError("A link outside the capture folder must not become a source asset")
         } catch ObjectCaptureStorageError.unsafePath {} // 11
-        print("ObjectCapture durable storage: 11 checks PASS (real originals/depth/hash, unknown photo time/GPS, recovery, invalid model and unsafe path rejection)")
+        try FileManager.default.removeItem(at: root.appendingPathComponent("Images/link.png"))
+        note("resolve trusted managed-root alias, preserve source containment")
+        let alias = managed.deletingLastPathComponent()
+            .appendingPathComponent("atlas-object-alias-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: alias) }
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: managed)
+        let aliasedRoot = alias.appendingPathComponent(
+            "Projects/\(project.uuidString)/Captures/Object-\(capture.uuidString)", isDirectory: true)
+        let aliasedWriter = ObjectCaptureDatasetWriter(root: aliasedRoot, managedRoot: alias)
+        let aliased = try await aliasedWriter.completeDataset(restored)
+        precondition(aliased.images[0].sha256 == complete.images[0].sha256 &&
+                     aliased.completedAssets == complete.completedAssets,
+                     "A trusted /var-style managed-root alias must resolve without relaxing source containment") // 12
+        print("ObjectCapture durable storage: 12 checks PASS (real originals/depth/hash, unknown photo time/GPS, recovery, invalid model and unsafe path rejection, canonical managed-root alias)")
+    }
+    private static func note(_ step: String) {
+        FileHandle.standardError.write(Data("ObjectCapture storage step: \(step)\n".utf8))
     }
 }

@@ -180,6 +180,7 @@ struct ProjectDetailScreen: View {
             guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .contentModificationDateKey]),
                   values.isSymbolicLink != true else { enumerator.skipDescendants(); continue }
             guard values.isRegularFile == true,
+                  !url.lastPathComponent.hasPrefix("reconstruction-"),
                   ["obj", "usdz"].contains(url.pathExtension.lowercased()) else { continue }
             files.append((url, values.contentModificationDate ?? .distantPast))
         }

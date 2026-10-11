@@ -45,6 +45,33 @@ import Foundation
                 return value + first.x * second.y - first.y * second.x
             } / 2
         }
+        let center = SIMD3<Float>(2,3,4)
+        let frontBias = Geometry.cameraFacingBias(from:center,toward:SIMD3(2,3,6))
+        let backBias = Geometry.cameraFacingBias(from:center,toward:SIMD3(2,3,2))
+        let sideBias = Geometry.cameraFacingBias(from:center,toward:SIMD3(4,3,4))
+        expect(frontBias == SIMD3(0,0,0.003) && backBias == SIMD3(0,0,-0.003),
+               "display bias reverses when the operator walks behind the object")
+        expect(sideBias == SIMD3(0.003,0,0), "display bias follows the camera around the object's side")
+        let diagonalBias = Geometry.cameraFacingBias(from:center,toward:SIMD3(5,7,4))
+        let diagonalLength = sqrt(diagonalBias.x * diagonalBias.x + diagonalBias.y * diagonalBias.y + diagonalBias.z * diagonalBias.z)
+        expect(close(diagonalLength,0.003,tolerance:0.00000001) && close(diagonalBias.x,0.0018,tolerance:0.00000001)
+               && close(diagonalBias.y,0.0024,tolerance:0.00000001),
+               "oblique camera direction keeps the same three-millimeter displacement")
+        expect(Geometry.cameraFacingBias(from:center,toward:center) == .zero
+               && Geometry.cameraFacingBias(from:.zero,toward:SIMD3(0.009,0,0)) == .zero,
+               "coincident and sub-centimeter camera positions have no unstable bias")
+        expect(Geometry.cameraFacingBias(from:.zero,toward:SIMD3(0.01,0,0)) == SIMD3(0.003,0,0),
+               "a camera exactly one centimeter away remains a valid float32 direction")
+        expect(Geometry.cameraFacingBias(from:center,toward:SIMD3(.nan,0,0)) == .zero
+               && Geometry.cameraFacingBias(from:SIMD3(0,.infinity,0),toward:center) == .zero,
+               "nonfinite geometry cannot enter display offset calculations")
+        expect(Geometry.cameraFacingBias(from:center,toward:SIMD3(2,3,6),distance:-0.001) == .zero
+               && Geometry.cameraFacingBias(from:center,toward:SIMD3(2,3,6),distance:0.011) == .zero
+               && Geometry.cameraFacingBias(from:center,toward:SIMD3(2,3,6),distance:.nan) == .zero,
+               "negative, oversized and nonfinite offset distances are rejected")
+        expect(Geometry.cameraFacingBias(from:center,toward:SIMD3(2,3,6),distance:0) == .zero
+               && Geometry.cameraFacingBias(from:center,toward:SIMD3(2,3,6),distance:0.01) == SIMD3(0,0,0.01),
+               "allowed offset boundaries remain zero and exactly ten millimeters")
         let visible: [SIMD3<Float>] = [SIMD3(-1,-1,-1), SIMD3(1,-1,-1), SIMD3(1,1,-1), SIMD3(-1,1,-1)]
         expect(Geometry.clipCameraPolygon(visible) == visible, "a visible front-facing plane is unchanged")
         expect(Geometry.clipCameraPolygon(visible.map { SIMD3($0.x,$0.y,1) }).isEmpty,
