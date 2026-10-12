@@ -940,7 +940,10 @@ final class AtlasUITests: XCTestCase {
     @MainActor
     private func enter(_ value: String, identifier: String, in app: XCUIApplication) {
         let field = element(identifier, in: app)
-        revealWholeControl(field, in: app)
+        // These fields precede the source/measurement sections. A lazy Form
+        // removes their accessibility elements after a lower picker is used.
+        let fieldStartsNearTop = identifier == "emptyRoom.review.note" || identifier.hasSuffix(".label")
+        revealWholeControl(field, in: app, towardTopWhenMissing: fieldStartsNearTop)
         field.tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5),
                       "Tapping the fully visible field must focus it before text entry")
@@ -960,6 +963,7 @@ final class AtlasUITests: XCTestCase {
 
     @MainActor
     private func revealWholeControl(_ control: XCUIElement, in app: XCUIApplication,
+                                    towardTopWhenMissing: Bool = false,
                                     file: StaticString = #filePath, line: UInt = #line) {
         let window = app.windows.firstMatch.frame
         var lastViewport = CGRect.zero
@@ -982,7 +986,7 @@ final class AtlasUITests: XCTestCase {
             lastViewport = viewport
             let frame = control.exists ? control.frame : CGRect.zero
             if control.exists && control.isHittable && viewport.contains(frame) { return }
-            let towardTop = control.exists && frame.minY < viewport.minY
+            let towardTop = control.exists ? frame.minY < viewport.minY : towardTopWhenMissing
             let origin = app.coordinate(withNormalizedOffset: .zero)
             let distance = min(300, viewport.height * 0.42)
             let startY = viewport.minY + viewport.height * (towardTop ? 0.38 : 0.68)
@@ -1002,7 +1006,7 @@ final class AtlasUITests: XCTestCase {
     @MainActor
     private func confirmSwitch(_ identifier: String, in app: XCUIApplication) {
         let control = app.switches[identifier]
-        revealWholeControl(control, in: app)
+        revealWholeControl(control, in: app, towardTopWhenMissing: true)
         if control.value as? String != "1" {
             // SwiftUI exposes the label and thumb as one switch. Its centre can
             // fall on descriptive text, so touch the actual trailing thumb.
