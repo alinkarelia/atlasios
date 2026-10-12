@@ -28,55 +28,12 @@ struct EmptyRoomSurfaceCatalogScreen: View {
 
     var body: some View {
         List {
-            Section {
-                Text("D — дверь помещения · W — окно · P — открытый проход · K — дверца шкафа, указанная оператором.")
-                Text("Исходная классификация RoomPlan и габариты остаются в JSON. Решения специалиста и контрольные обмеры записываются отдельно; они не перестраивают 3D-модель.")
-                Text("W×H — габарит поверхности. Это не гарантия ширины светового прохода или размера полотна. Hₛ — высота вдоль наклонной поверхности, H — вертикальный размер.")
-            }.font(.caption).foregroundStyle(Color.atlasMuted)
-            Section("Проёмы RoomPlan") {
-                let openings = document.surfaces.filter { [.door, .window, .opening].contains($0.kind) }
-                if openings.isEmpty { Text("Проёмы не распознаны; это не подтверждает их отсутствие.") }
-                ForEach(openings) { surface in sourceRow(surface); measureLink(id: surface.id, role: review.latest(for: surface.id)?.role ?? .reported(surface.kind)) }
-            }
-            Section("Стены и пол") {
-                ForEach(document.surfaces.filter { $0.kind == .wall || $0.kind == .floor }) { surface in sourceRow(surface); measureLink(id: surface.id, role: review.latest(for: surface.id)?.role ?? .reported(surface.kind)) }
-            }
-            Section("Ручные наблюдения") {
-                if review.manualTargetIDs.isEmpty { Text("Дверцы шкафа RoomPlan отдельно не измеряет. Добавьте наблюдение и свяжите реальные контрольные обмеры.").font(.caption) }
-                ForEach(review.manualTargetIDs, id: \.self) { id in
-                    if let decision = review.latest(for: id) {
-                        Button { editor = .init(id: id, source: nil) } label: {
-                            VStack(alignment: .leading, spacing: 5) {
-                                Text("\(decision.role.symbol) · \(decision.label)").font(.headline)
-                                Text("Вручную · \(review.controls(for: id).count) контрольных обмеров · Геометрия на модели не назначена")
-                                    .font(.caption).foregroundStyle(Color.atlasMuted)
-                                controls(id)
-                            }.padding(.vertical, 4)
-                        }.buttonStyle(.borderless).accessibilityIdentifier("emptyRoom.manualTarget.\(id.uuidString)")
-                        measureLink(id: id, role: decision.role)
-                    }
-                }
-                Button("Добавить дверцу / ручной объект", systemImage: "plus") { editor = .init(id: UUID(), source: nil) }
-                    .buttonStyle(.borderless).accessibilityIdentifier("emptyRoom.addManualTarget")
-                NavigationLink("Снять контрольный обмер", systemImage: "ruler") {
-                    MeasurementToolsScreen(model: model, project: project)
-                }
-            }
-            Section("История решений · \(review.events.count)") {
-                ForEach(review.events.reversed()) { event in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("\(event.role.symbol) · \(event.label)").font(.subheadline.weight(.medium))
-                        Text("\(event.createdAt.formatted(date: .abbreviated, time: .shortened)) · \(event.semanticVerified ? "Классификация проверена оператором" : "Не проверено")")
-                            .font(.caption).foregroundStyle(Color.atlasMuted)
-                        if !event.note.isEmpty { Text(event.note).font(.caption) }
-                        if let control = event.observation {
-                            Text("\(EmptyRoomReviewPresentation.notation(control.role)) \(EmptyRoomReviewPresentation.controlNumber(control.effectiveMeters)) м · \(EmptyRoomReviewPresentation.position(control.position)) · обмер \(control.measurementID.uuidString.prefix(8)), рев. \(control.measurementRevision)")
-                                .font(.caption)
-                        }
-                    }.padding(.vertical, 3)
-                }
-            }
-            Section { ShareLink(item: directory.appendingPathComponent(EmptyRoomSurfaceReviewPolicy.fileName)) { Label("Выгрузить журнал JSON", systemImage: "square.and.arrow.up") } }
+            introSection
+            openingSection
+            structureSection
+            manualSection
+            historySection
+            exportSection
         }
         .disabled(!journalAvailable)
         .navigationTitle("Поверхности и проёмы")
@@ -103,6 +60,75 @@ struct EmptyRoomSurfaceCatalogScreen: View {
             Button("Понятно") { issue = nil }
         } message: { Text(issue ?? "") }
     }
+    private var introSection: some View {
+        Section {
+            Text("D — дверь помещения · W — окно · P — открытый проход · K — дверца шкафа, указанная оператором.")
+            Text("Исходная классификация RoomPlan и габариты остаются в JSON. Решения специалиста и контрольные обмеры записываются отдельно; они не перестраивают 3D-модель.")
+            Text("W×H — габарит поверхности. Это не гарантия ширины светового прохода или размера полотна. Hₛ — высота вдоль наклонной поверхности, H — вертикальный размер.")
+        }.font(.caption).foregroundStyle(Color.atlasMuted)
+    }
+
+    private var openingSection: some View {
+        Section("Проёмы RoomPlan") {
+            let openings = document.surfaces.filter { [.door, .window, .opening].contains($0.kind) }
+            if openings.isEmpty { Text("Проёмы не распознаны; это не подтверждает их отсутствие.") }
+            ForEach(openings) { surface in sourceRow(surface); measureLink(id: surface.id, role: review.latest(for: surface.id)?.role ?? .reported(surface.kind)) }
+        }
+    }
+
+    private var structureSection: some View {
+        Section("Стены и пол") {
+            ForEach(document.surfaces.filter { $0.kind == .wall || $0.kind == .floor }) { surface in sourceRow(surface); measureLink(id: surface.id, role: review.latest(for: surface.id)?.role ?? .reported(surface.kind)) }
+        }
+    }
+
+    private var manualSection: some View {
+        Section("Ручные наблюдения") {
+            if review.manualTargetIDs.isEmpty { Text("Дверцы шкафа RoomPlan отдельно не измеряет. Добавьте наблюдение и свяжите реальные контрольные обмеры.").font(.caption) }
+            ForEach(review.manualTargetIDs, id: \.self) { id in
+                if let decision = review.latest(for: id) {
+                    Button { editor = .init(id: id, source: nil) } label: {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("\(decision.role.symbol) · \(decision.label)").font(.headline)
+                            Text("Вручную · \(review.controls(for: id).count) контрольных обмеров · Геометрия на модели не назначена")
+                                .font(.caption).foregroundStyle(Color.atlasMuted)
+                            controls(id)
+                        }.padding(.vertical, 4)
+                    }.buttonStyle(.borderless).accessibilityIdentifier("emptyRoom.manualTarget.\(id.uuidString)")
+                    measureLink(id: id, role: decision.role)
+                }
+            }
+            Button("Добавить дверцу / ручной объект", systemImage: "plus") { editor = .init(id: UUID(), source: nil) }
+                .buttonStyle(.borderless).accessibilityIdentifier("emptyRoom.addManualTarget")
+            NavigationLink {
+                MeasurementToolsScreen(model: model, project: project)
+            } label: {
+                Label("Снять контрольный обмер", systemImage: "ruler")
+            }
+        }
+    }
+
+    private var historySection: some View {
+        Section("История решений · \(review.events.count)") {
+            ForEach(review.events.reversed()) { event in
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("\(event.role.symbol) · \(event.label)").font(.subheadline.weight(.medium))
+                    Text("\(event.createdAt.formatted(date: .abbreviated, time: .shortened)) · \(event.semanticVerified ? "Классификация проверена оператором" : "Не проверено")")
+                        .font(.caption).foregroundStyle(Color.atlasMuted)
+                    if !event.note.isEmpty { Text(event.note).font(.caption) }
+                    if let control = event.observation {
+                        Text("\(EmptyRoomReviewPresentation.notation(control.role)) \(EmptyRoomReviewPresentation.controlNumber(control.effectiveMeters)) м · \(EmptyRoomReviewPresentation.position(control.position)) · обмер \(control.measurementID.uuidString.prefix(8)), рев. \(control.measurementRevision)")
+                            .font(.caption)
+                    }
+                }.padding(.vertical, 3)
+            }
+        }
+    }
+
+    private var exportSection: some View {
+        Section { ShareLink(item: directory.appendingPathComponent(EmptyRoomSurfaceReviewPolicy.fileName)) { Label("Выгрузить журнал JSON", systemImage: "square.and.arrow.up") } }
+    }
+
     private func measureLink(id: UUID, role: EmptyRoomReviewRole) -> some View {
         let target: MeasurementTarget
         let definition: MeasurementDefinition
@@ -116,8 +142,10 @@ struct EmptyRoomSurfaceCatalogScreen: View {
         case .unknown: target = .unspecified; definition = .unspecified
         }
         let context = MeasurementContext(role: .width, target: target, targetID: id, profileID: UUID(), definition: definition)
-        return NavigationLink("Обмерить \(role.symbol) · \(id.uuidString.prefix(8))", systemImage: "ruler") {
+        return NavigationLink {
             MeasurementToolsScreen(model: model, project: project, initialContext: context)
+        } label: {
+            Label("Обмерить \(role.symbol) · \(id.uuidString.prefix(8))", systemImage: "ruler")
         }.accessibilityIdentifier("emptyRoom.measure.\(id.uuidString)")
     }
 

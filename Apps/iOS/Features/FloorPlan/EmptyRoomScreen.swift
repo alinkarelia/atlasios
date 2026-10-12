@@ -193,7 +193,7 @@ struct EmptyRoomScreen: View {
                 notice("Контур пола не распознан. Добавьте его в ручном редакторе плана; синтетический пол не строится.", symbol: "square.dashed", warning: true)
             }
             if let review {
-                NavigationLink("Проверить поверхности и проёмы", systemImage: "checklist") {
+                NavigationLink {
                     EmptyRoomSurfaceCatalogScreen(model: model, project: project, document: result.document,
                         directory: result.documentURL.deletingLastPathComponent(), review: review) { next in
                         self.review = next; presentationSaved = false
@@ -202,11 +202,15 @@ struct EmptyRoomScreen: View {
                             issue = "Журнал сохранён, но каталог проекта не обновлён: \(model.issue ?? "Повторите обновление каталога.")"
                         }
                     }
+                } label: {
+                    Label("Проверить поверхности и проёмы", systemImage: "checklist")
                 }.accessibilityIdentifier("emptyRoom.surfaceCatalog")
             }
             if let reviewIssue { notice("Журнал проверки не открыт: \(reviewIssue) Исходник и сохранённый журнал не изменены.", symbol: "exclamationmark.triangle", warning: true) }
-            NavigationLink("Исправить контур пола и отверстия", systemImage: "square.and.pencil") {
+            NavigationLink {
                 FloorPlanScreen(model: model, project: project, initialPlanID: result.document.sourceRoomID)
+            } label: {
+                Label("Исправить контур пола и отверстия", systemImage: "square.and.pencil")
             }
             Text("Ручной план и его площади сохраняются отдельно. Правка контура не изменяет исходную 3D-модель RoomPlan.")
                 .font(.caption).foregroundStyle(Color.atlasMuted)
