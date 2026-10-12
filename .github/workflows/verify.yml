@@ -1,307 +1,68 @@
-name: Verify TerraView and build iPhone candidate
+name: DEBUG diagnostic — one surface form (not release acceptance)
 
 on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - 'docs/**'
-      - README.md
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 
-# No signing credentials, private repository checkout, or automatic publication.
 permissions:
   contents: read
 
 concurrency:
-  # Keep diagnostics for an earlier candidate while checking its fixed source.
-  # Duplicate runs of the same commit still replace each other.
-  group: atlas-verification-${{ github.ref }}-${{ github.sha }}
-  cancel-in-progress: true
+  group: debug-one-surface-form-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  preflight:
-    name: Source project and Server
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Install deterministic project generator dependency
-        run: python3 -m pip install 'PyYAML==6.0.3'
-      - name: Verify checked-in project matches source tree
-        run: python3 Scripts/generate-xcode-project.py --check
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: Server/package-lock.json
-      - name: Install locked Server dependencies
-        working-directory: Server
-        run: npm ci
-      - name: Check Server contracts and behavior
-        working-directory: Server
-        run: |
-          npm run build
-          npm test
-
-  native:
-    name: Swift 6 core and native SDK
-    needs: preflight
+  diagnostic:
+    name: DEBUG only — unchanged surface UI case on exact 281b773
     runs-on: macos-15
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
+          ref: 281b77344235df70fd23516ca5e9536efe5aa0a3
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Select Xcode 16.4
+      - name: Select actual Xcode 16.4 for this DEBUG diagnosis
         run: |
           test -d /Applications/Xcode_16.4.app/Contents/Developer
           sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
           xcodebuild -version
           xcrun swift --version
+          test "$(git rev-parse HEAD)" = 281b77344235df70fd23516ca5e9536efe5aa0a3
       - name: Install deterministic project generator dependency
         run: python3 -m pip install 'PyYAML==6.0.3'
-      - name: Independently validate project membership
-        run: xcrun swift Scripts/check-project.swift
-      - name: Test portable AtlasCore on macOS
-        working-directory: Packages/AtlasCore
-        run: xcrun swift test
-      - name: Check business storage, OBJ geometry, EXIF metadata, and mesh processing
-        run: |
-          bash Apps/iOS/Features/Business/Tests/checks.sh
-          bash Apps/iOS/Features/Projects/Tests/checks.sh
-          bash Apps/iOS/Features/Projects/Tests/measurement-journal-checks.sh
-          bash Apps/iOS/Adapters/Tests/checks.sh
-          python3 Apps/iOS/Adapters/Tests/check-lidar-overlay.py
-          bash Apps/iOS/Adapters/Tests/mesh-export-checks.sh
-          bash Apps/iOS/Adapters/Tests/check-field-assembler.sh
-          bash Apps/iOS/Adapters/Tests/object-capture-checks.sh
-          python3 Apps/iOS/Adapters/Tests/check-terrain-analyzer.py
-          python3 Apps/iOS/Adapters/Tests/check-tour-policy.py
-          python3 Apps/iOS/Adapters/Tests/check-map-math.py
-          python3 Apps/iOS/Adapters/Tests/check-survey-checkpoint.py
-          python3 Apps/iOS/Adapters/Tests/check-station-survey.py
-          bash Apps/iOS/Adapters/Tests/video-tour-checks.sh
-          bash Apps/iOS/Adapters/Tests/check-export-naming.sh
-          bash Apps/iOS/Adapters/Tests/check-named-source-export.sh
-          bash Apps/iOS/Features/FloorPlan/Tests/checks.sh
-      - name: Compile native iOS app against generic Simulator SDK
-        run: bash Scripts/check-native.sh
-      - name: Retain native build results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: native-build-results
-          path: artifacts/native/*.xcresult
-          if-no-files-found: ignore
-          retention-days: 7
-
-  device:
-    name: Unsigned arm64 iPhone candidate
-    needs: preflight
-    runs-on: macos-15
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Select Xcode 16.4
-        run: |
-          test -d /Applications/Xcode_16.4.app/Contents/Developer
-          sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
-          xcodebuild -version
-          xcrun swift --version
-      - name: Install deterministic project generator dependency
-        run: python3 -m pip install 'PyYAML==6.0.3'
-      - name: Compile and validate unsigned device IPA
-        run: bash Scripts/build-device-ipa.sh
-      - name: Keep candidate for manual review and local signing
-        uses: actions/upload-artifact@v4
-        with:
-          name: Atlas-unsigned-device-IPA-candidate
-          path: artifacts/device-preview/Atlas-unsigned.ipa
-          if-no-files-found: error
-          retention-days: 14
-      - name: Retain native device build results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: device-build-results
-          path: |
-            artifacts/device-preview/*.xcresult
-            artifacts/device-preview/app-icon-renditions.json
-          if-no-files-found: ignore
-          retention-days: 7
-
-  runtime:
-    name: Full UI tests (Xcode ${{ matrix.toolchain }}, iOS ${{ matrix.ios_major }})
-    needs: preflight
-    runs-on: macos-15
-    # Full 16-case UI suites and xcresult export exceeded the earlier limit on
-    # iOS 26. Keep every test and preserve complete failure diagnostics.
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - toolchain: '16.4'
-            ios_major: '18'
-          - toolchain: '26'
-            ios_major: '26'
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Select the tested Apple toolchain
-        env:
-          ATLAS_RUNTIME_TOOLCHAIN: ${{ matrix.toolchain }}
-        run: |
-          python3 - <<'PY' > /tmp/atlas-selected-xcode.txt
-          import os, pathlib, re
-          if os.environ['ATLAS_RUNTIME_TOOLCHAIN'] == '26':
-              candidates = []
-              for app in pathlib.Path('/Applications').glob('Xcode_26*.app'):
-                  match = re.fullmatch(r'Xcode_(26(?:\.\d+){0,2})\.app', app.name)
-                  if match:
-                      candidates.append((tuple(int(part) for part in match[1].split('.')), app))
-              if not candidates:
-                  raise SystemExit('This runner has no installed stable Xcode 26 toolchain.')
-              app = max(candidates)[1]
-          else:
-              app = pathlib.Path('/Applications/Xcode_16.4.app')
-          developer = app / 'Contents/Developer'
-          if not developer.is_dir():
-              raise SystemExit(f'Required Apple toolchain is missing: {app}')
-          print(developer)
-          PY
-          sudo xcode-select -s "$(cat /tmp/atlas-selected-xcode.txt)"
-          xcodebuild -version
-          xcrun swift --version
-      - name: Install deterministic project generator dependency
-        run: python3 -m pip install 'PyYAML==6.0.3'
-      - name: Run all native UI tests and actual SceneKit pixel probes
-        env:
-          ATLAS_RUNTIME_IOS_MAJOR: ${{ matrix.ios_major }}
-        run: bash Scripts/check-runtime.sh
-      - name: Require complete UI results and actual review screenshots
-        env:
-          ATLAS_EXPECTED_IOS_MAJOR: ${{ matrix.ios_major }}
+      - name: Select one existing UI case in the runner only
         run: |
           python3 - <<'PY'
-          import json, os
           from pathlib import Path
-          root = Path('artifacts/runtime')
-          summary = json.loads((root / 'diagnostics/test-summary.json').read_text())
-          total = summary.get('totalTestCount', 0)
-          if total < 16 or summary.get('passedTests') != total or summary.get('result') != 'Passed':
-              raise SystemExit('Full UI verification requires all sixteen passing tests, including fieldwork, identity, floor grouping and dimension pixels.')
-          if any(summary.get(field, 0) != 0 for field in ('failedTests', 'skippedTests', 'expectedFailures')):
-              raise SystemExit('UI verification contains failed, skipped, or expected-failure tests.')
-          selection = json.loads((root / 'simulator-selection.json').read_text())
-          if selection['runtime']['version'].split('.')[0] != os.environ['ATLAS_EXPECTED_IOS_MAJOR']:
-              raise SystemExit('UI verification used the wrong iOS runtime generation.')
-          attachments_root = root / 'screenshots/test-attachments'
-          manifest = json.loads((attachments_root / 'manifest.json').read_text())
-          required = {
-              '01-project-created_', '02-project-reopened_',
-              '03-capture-lidar-unavailable_', '04-capture-room-unavailable_',
-              '05-capture-photo-unavailable_', '06-viewer-orbit-initial_',
-              '07-viewer-orbit-rotated_', '07b-viewer-foreground_',
-              '08-viewer-walk-forward_', '09-viewer-reset_',
-              '11-transfer-manual-initial_', '12-transfer-auto-wifi_',
-              '13-transfer-restored-manual_',
-              '14-free-tools_', '15-object-unavailable_', '16-viewer-section_',
-              '17-field-map_', '18-burial-unknown_', '19-burial-candidate-restored_',
-              '20-map-layers_', '20b-map-search_', '21-empty-room-unavailable_',
-              '22-building-plans_', '22b-plan-dimensions_',
-              '23-tour-contours_', '24-tour-linked-card_',
-              '25-survey-stations_', '26-survey-boundary_',
-              '27-opening-measurement_', '28-measurement-journal_',
-              '29-surface-classification_', '30-cabinet-door-review_',
-          }
-          found = set()
-          for entry in manifest:
-              for attachment in entry.get('attachments', []):
-                  exported = attachment.get('exportedFileName', '')
-                  label = attachment.get('suggestedHumanReadableName', '')
-                  if not exported or Path(exported).name != exported:
-                      raise SystemExit('Invalid screenshot attachment path.')
-                  matching = {prefix for prefix in required if label.startswith(prefix)}
-                  if matching:
-                      with (attachments_root / exported).open('rb') as screenshot:
-                          if screenshot.read(8) != b'\x89PNG\r\n\x1a\n':
-                              raise SystemExit('Review attachment is not an actual PNG screenshot.')
-                      found.update(matching)
-          if found != required:
-              raise SystemExit('Missing actual review screenshots: ' + ', '.join(sorted(required - found)))
-          print(f'Confirmed {total} passing UI tests and all {len(required)} actual review screenshots.')
+          path = Path('Scripts/check-runtime.sh')
+          source = path.read_text()
+          marker = '-resultBundlePath "$result_bundle" -parallel-testing-enabled NO '
+          if source.count(marker) != 1:
+              raise SystemExit('The original runtime harness test invocation changed; refusing an ambiguous patch.')
+          selected = '-only-testing:AtlasUITests/AtlasUITests/testSurfaceClassificationAndManualCabinetDoorPersistWithoutChangingTheSource '
+          path.write_text(source.replace(marker, marker + selected))
+          print('DEBUG diagnosis only: app and every UI assertion remain at exact source 281b773. This single case is not release acceptance.')
           PY
-      - name: Keep actual Simulator screenshots and runtime diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: runtime-ios${{ matrix.ios_major }}-screenshots-and-diagnostics
-          path: |
-            artifacts/runtime/screenshots/
-            artifacts/runtime/diagnostics/
-            artifacts/runtime/simulator-selection.json
-          if-no-files-found: warn
-          retention-days: 14
-      - name: Keep UI test result bundle and performance measurements
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: runtime-ios${{ matrix.ios_major }}-test-results
-          path: artifacts/runtime/*.xcresult
-          if-no-files-found: ignore
-          retention-days: 14
-
-  verification:
-    name: All checks passed; visual review required
-    if: always()
-    needs: [preflight, native, device, runtime]
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Verify every required job succeeded and summarize evidence
+          git diff --exit-code -- Apps/iOS Packages/AtlasCore
+          git diff -- Scripts/check-runtime.sh
+      - name: Run the unchanged surface case and retain actual diagnostics
         env:
-          ATLAS_CHECK_RESULTS: ${{ toJSON(needs) }}
-          ATLAS_SOURCE_SHA: ${{ github.sha }}
-          ATLAS_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ATLAS_RUNTIME_IOS_MAJOR: '18'
         run: |
-          python3 - <<'PY'
-          import json, os
-          results = json.loads(os.environ['ATLAS_CHECK_RESULTS'])
-          required = {'preflight', 'native', 'device', 'runtime'}
-          failed = sorted(name for name in required if results.get(name, {}).get('result') != 'success')
-          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
-              summary.write('# Atlas verification\n\n')
-              summary.write(f"Source commit: `{os.environ['ATLAS_SOURCE_SHA']}`\n\n")
-              for name in sorted(required):
-                  summary.write(f"- {name}: {results.get(name, {}).get('result', 'missing')}\n")
-              summary.write(f"\n[Download this run's actual screenshots, results, and candidate IPA]({os.environ['ATLAS_RUN_URL']}#artifacts)\n\n")
-              summary.write('Before publishing or recommending this candidate, review the actual initial 3D view, orbit, foreground return, and walk screenshots from **both** runtime jobs. This workflow does not publish a release.\n\n')
-              summary.write('Simulator tests cover navigation, persistence, launch measurements, and actual 3D rendering. Camera, LiDAR, RoomPlan capture, tracking, location accuracy, and physical-device performance still require an iPhone hardware test.\n')
-          if failed:
-              raise SystemExit('Verification failed or incomplete: ' + ', '.join(failed))
-          print('All required checks passed for one source commit. Actual screenshot review and iPhone hardware validation remain separate checks.')
-          PY
+          mkdir -p artifacts/runtime/diagnostics
+          set -o pipefail
+          bash Scripts/check-runtime.sh 2>&1 | tee artifacts/runtime/diagnostics/debug-one-surface-case.log
+      - name: Keep DEBUG screenshots, exact interactions and summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DEBUG-only-surface-281b773-iOS18-diagnostics
+          path: |
+            artifacts/runtime/screenshots/**
+            artifacts/runtime/diagnostics/**
+            artifacts/runtime/simulator-selection.json
+            artifacts/runtime/runtimes.json
+          if-no-files-found: warn
+          retention-days: 3
