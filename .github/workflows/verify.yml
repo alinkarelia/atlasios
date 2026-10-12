@@ -1,5 +1,5 @@
 name: DEBUG diagnostic — one surface form (not release acceptance)
-run-name: DEBUG only surface form — source 18 eba5233 — both iOS generations
+run-name: DEBUG only surface form — source 19 711b34a — both iOS generations
 
 on:
   workflow_dispatch:
@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   diagnostic:
-    name: DEBUG surface only — Xcode ${{ matrix.toolchain }} / iOS ${{ matrix.ios_major }} / exact eba5233
+    name: DEBUG surface only — Xcode ${{ matrix.toolchain }} / iOS ${{ matrix.ios_major }} / exact 711b34a
     runs-on: macos-15
     timeout-minutes: 30
     strategy:
@@ -27,7 +27,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: eba5233baacd223114db7dfcf47f5fa0c8c4c82f
+          ref: 711b34a1c7a93298b87e5e9117ad6268e41149fc
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
@@ -57,7 +57,7 @@ jobs:
           sudo xcode-select -s "$(cat /tmp/atlas-debug-selected-xcode.txt)"
           xcodebuild -version
           xcrun swift --version
-          test "$(git rev-parse HEAD)" = eba5233baacd223114db7dfcf47f5fa0c8c4c82f
+          test "$(git rev-parse HEAD)" = 711b34a1c7a93298b87e5e9117ad6268e41149fc
       - name: Install deterministic project generator dependency
         run: python3 -m pip install 'PyYAML==6.0.3'
       - name: Select one existing UI case in the runner only
@@ -71,7 +71,7 @@ jobs:
               raise SystemExit('The original runtime harness test invocation changed; refusing an ambiguous patch.')
           selected = '-only-testing:AtlasUITests/AtlasUITests/testSurfaceClassificationAndManualCabinetDoorPersistWithoutChangingTheSource '
           path.write_text(source.replace(marker, marker + selected))
-          print('DEBUG diagnosis only: app and every UI assertion remain at exact source eba5233. This single case is not release acceptance.')
+          print('DEBUG diagnosis only: app and every UI assertion remain at exact source 711b34a. This single case is not release acceptance.')
           PY
           git diff --exit-code -- Apps/iOS Packages/AtlasCore
           git diff -- Scripts/check-runtime.sh
@@ -86,7 +86,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: DEBUG-only-surface-source18-eba5233-iOS${{ matrix.ios_major }}-diagnostics
+          name: DEBUG-only-surface-source19-711b34a-iOS${{ matrix.ios_major }}-diagnostics
           path: |
             artifacts/runtime/screenshots/**
             artifacts/runtime/diagnostics/**
