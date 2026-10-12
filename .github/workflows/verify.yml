@@ -1,4 +1,5 @@
 name: DEBUG diagnostic — one surface form (not release acceptance)
+run-name: DEBUG only surface form — source 18 eba5233 — both iOS generations
 
 on:
   workflow_dispatch:
@@ -7,29 +8,56 @@ permissions:
   contents: read
 
 concurrency:
-  group: debug-one-surface-form-${{ github.ref }}
+  group: debug-one-surface-form-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: false
 
 jobs:
   diagnostic:
-    name: DEBUG only — unchanged surface UI case on exact 281b773
+    name: DEBUG surface only — Xcode ${{ matrix.toolchain }} / iOS ${{ matrix.ios_major }} / exact eba5233
     runs-on: macos-15
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - toolchain: '16.4'
+            ios_major: '18'
+          - toolchain: '26'
+            ios_major: '26'
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 281b77344235df70fd23516ca5e9536efe5aa0a3
+          ref: eba5233baacd223114db7dfcf47f5fa0c8c4c82f
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Select actual Xcode 16.4 for this DEBUG diagnosis
+      - name: Select the actual Apple toolchain for this DEBUG diagnosis
+        env:
+          ATLAS_RUNTIME_TOOLCHAIN: ${{ matrix.toolchain }}
         run: |
-          test -d /Applications/Xcode_16.4.app/Contents/Developer
-          sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
+          python3 - <<'PY' > /tmp/atlas-debug-selected-xcode.txt
+          import os, pathlib, re
+          if os.environ['ATLAS_RUNTIME_TOOLCHAIN'] == '26':
+              candidates = []
+              for app in pathlib.Path('/Applications').glob('Xcode_26*.app'):
+                  match = re.fullmatch(r'Xcode_(26(?:\.\d+){0,2})\.app', app.name)
+                  if match:
+                      candidates.append((tuple(int(part) for part in match[1].split('.')), app))
+              if not candidates:
+                  raise SystemExit('This runner has no installed stable Xcode 26 toolchain.')
+              app = max(candidates)[1]
+          else:
+              app = pathlib.Path('/Applications/Xcode_16.4.app')
+          developer = app / 'Contents/Developer'
+          if not developer.is_dir():
+              raise SystemExit(f'Required Apple toolchain is missing: {app}')
+          print(developer)
+          PY
+          sudo xcode-select -s "$(cat /tmp/atlas-debug-selected-xcode.txt)"
           xcodebuild -version
           xcrun swift --version
-          test "$(git rev-parse HEAD)" = 281b77344235df70fd23516ca5e9536efe5aa0a3
+          test "$(git rev-parse HEAD)" = eba5233baacd223114db7dfcf47f5fa0c8c4c82f
       - name: Install deterministic project generator dependency
         run: python3 -m pip install 'PyYAML==6.0.3'
       - name: Select one existing UI case in the runner only
@@ -43,13 +71,13 @@ jobs:
               raise SystemExit('The original runtime harness test invocation changed; refusing an ambiguous patch.')
           selected = '-only-testing:AtlasUITests/AtlasUITests/testSurfaceClassificationAndManualCabinetDoorPersistWithoutChangingTheSource '
           path.write_text(source.replace(marker, marker + selected))
-          print('DEBUG diagnosis only: app and every UI assertion remain at exact source 281b773. This single case is not release acceptance.')
+          print('DEBUG diagnosis only: app and every UI assertion remain at exact source eba5233. This single case is not release acceptance.')
           PY
           git diff --exit-code -- Apps/iOS Packages/AtlasCore
           git diff -- Scripts/check-runtime.sh
       - name: Run the unchanged surface case and retain actual diagnostics
         env:
-          ATLAS_RUNTIME_IOS_MAJOR: '18'
+          ATLAS_RUNTIME_IOS_MAJOR: ${{ matrix.ios_major }}
         run: |
           mkdir -p artifacts/runtime/diagnostics
           set -o pipefail
@@ -58,7 +86,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: DEBUG-only-surface-281b773-iOS18-diagnostics
+          name: DEBUG-only-surface-source18-eba5233-iOS${{ matrix.ios_major }}-diagnostics
           path: |
             artifacts/runtime/screenshots/**
             artifacts/runtime/diagnostics/**
