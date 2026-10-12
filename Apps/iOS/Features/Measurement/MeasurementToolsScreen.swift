@@ -445,54 +445,90 @@ struct MeasurementToolsScreen: View {
                 ContentUnavailableView("Пока нет обмеров", systemImage: "ruler", description: Text("Поставьте две AR-точки или сохраните контрольный размер вручную."))
             }
             ForEach(records) { record in
-                Button { editor = MeasurementEditorRoute(record: record) } label: {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text(record.label).font(.headline)
-                            Spacer()
-                            Text(measurementNumber(record.effectiveMeters) + " м").font(.headline).monospacedDigit()
-                        }
-                        Text("\(record.notation) · \(record.kind.measurementTitle) · \(record.source.measurementTitle)")
-                            .font(.caption).foregroundStyle(Color.atlasMuted)
-                        if let context = record.context {
-                            Text(context.target.fieldMeasurementTitle + " · " + context.position.fieldMeasurementTitle + (context.positionNote.isEmpty ? "" : " · " + context.positionNote)).font(.caption)
-                        }
-                        if let frame = record.frameID { Text("AR · метры · Y по силе тяжести · \(frame.uuidString.prefix(8))").font(.caption2).foregroundStyle(Color.atlasMuted) }
-                        if record.hasManualCorrection { Label("Есть ручная корректировка", systemImage: "pencil.circle").font(.caption).foregroundStyle(Color.atlasBlue) }
-                        if record.surfaceEvidence.contains(.estimatedPlane) {
-                            Text("Одна или обе точки — предполагаемая плоскость").font(.caption).foregroundStyle(Color.atlasMuted)
-                        }
-                        Text(record.createdAt.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(Color.atlasMuted)
-                    }.foregroundStyle(Color.atlasInk).padding(16).background(Color.atlasCard, in: RoundedRectangle(cornerRadius: 16))
-                }.buttonStyle(.plain).accessibilityIdentifier("measurement.record." + record.id.uuidString)
-                NavigationLink {
-                    ApplyMeasurementScreen(model: model, project: project, initialMeasurementID: record.id)
-                } label: {
-                    Label("Применить к плану", systemImage: "square.split.2x2")
-                }.font(.subheadline).padding(.horizontal, 16)
+                recordCard(record)
+                applyMeasurementLink(record)
             }
             Text("Исходное значение сохраняется отдельно. Каждое ручное изменение добавляется в историю; точки разных AR-сессий не объединяются.")
                 .font(.caption).foregroundStyle(Color.atlasMuted)
-            ForEach(Array(profileSummaries.enumerated()), id: \.offset) { _, summary in
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(summary.context.role.symbol + " · " + summary.context.target.fieldMeasurementTitle + " · \(summary.count) замеров").font(.headline)
-                    Text("Мин. \(measurementNumber(summary.minimumMeters)) м · макс. \(measurementNumber(summary.maximumMeters)) м · разброс \(measurementNumber(summary.spreadMeters)) м")
-                        .font(.caption).monospacedDigit()
-                    Text(summary.coordinateComparisonAvailable ? "Точки в одной AR-системе. Отдельные показания сохранены выше." : "Показания одного выбранного объекта; позиции разных AR-систем не совмещены.")
-                        .font(.caption).foregroundStyle(Color.atlasMuted)
-                }.padding(16).background(Color.atlasCard, in: RoundedRectangle(cornerRadius: 16))
-                    .accessibilityIdentifier("measurement.profile." + (summary.context.profileID?.uuidString ?? "unidentified") + "." + summary.kind.rawValue + "." + summary.context.role.rawValue + "." + summary.context.effectiveDefinition.rawValue)
+            ForEach(Array(profileSummaries.enumerated()), id: \.offset) { entry in
+                profileCard(entry.element)
             }
         }
     }
 
+    private func recordCard(_ record: MeasurementRecord) -> some View {
+        Button { editor = MeasurementEditorRoute(record: record) } label: { recordCardContent(record) }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("measurement.record." + record.id.uuidString)
+    }
+
+    private func recordCardContent(_ record: MeasurementRecord) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(record.label).font(.headline)
+                Spacer()
+                Text(measurementNumber(record.effectiveMeters) + " м").font(.headline).monospacedDigit()
+            }
+            Text("\(record.notation) · \(record.kind.measurementTitle) · \(record.source.measurementTitle)")
+                .font(.caption).foregroundStyle(Color.atlasMuted)
+            if let context = record.context { Text(measurementContextLabel(context)).font(.caption) }
+            if let frame = record.frameID {
+                Text("AR · метры · Y по силе тяжести · \(frame.uuidString.prefix(8))").font(.caption2).foregroundStyle(Color.atlasMuted)
+            }
+            if record.hasManualCorrection {
+                Label("Есть ручная корректировка", systemImage: "pencil.circle").font(.caption).foregroundStyle(Color.atlasBlue)
+            }
+            if record.surfaceEvidence.contains(.estimatedPlane) {
+                Text("Одна или обе точки — предполагаемая плоскость").font(.caption).foregroundStyle(Color.atlasMuted)
+            }
+            Text(record.createdAt.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(Color.atlasMuted)
+        }.foregroundStyle(Color.atlasInk).padding(16).background(Color.atlasCard, in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private func measurementContextLabel(_ context: MeasurementContext) -> String {
+        var components: [String] = [context.target.fieldMeasurementTitle, context.position.fieldMeasurementTitle]
+        if !context.positionNote.isEmpty { components.append(context.positionNote) }
+        return components.joined(separator: " · ")
+    }
+
+    private func applyMeasurementLink(_ record: MeasurementRecord) -> some View {
+        NavigationLink {
+            ApplyMeasurementScreen(model: model, project: project, initialMeasurementID: record.id)
+        } label: {
+            Label("Применить к плану", systemImage: "square.split.2x2")
+        }.font(.subheadline).padding(.horizontal, 16)
+    }
+
+    private func profileCard(_ summary: MeasurementProfileSummary) -> some View {
+        let heading = "\(summary.context.role.symbol) · \(summary.context.target.fieldMeasurementTitle) · \(summary.count) замеров"
+        let range = "Мин. \(measurementNumber(summary.minimumMeters)) м · макс. \(measurementNumber(summary.maximumMeters)) м · разброс \(measurementNumber(summary.spreadMeters)) м"
+        let identifierComponents: [String] = ["measurement", "profile", summary.context.profileID?.uuidString ?? "unidentified",
+            summary.kind.rawValue, summary.context.role.rawValue, summary.context.effectiveDefinition.rawValue]
+        return VStack(alignment: .leading, spacing: 6) {
+            Text(heading).font(.headline)
+            Text(range).font(.caption).monospacedDigit()
+            Text(summary.coordinateComparisonAvailable ? "Точки в одной AR-системе. Отдельные показания сохранены выше." : "Показания одного выбранного объекта; позиции разных AR-систем не совмещены.")
+                .font(.caption).foregroundStyle(Color.atlasMuted)
+        }.padding(16).background(Color.atlasCard, in: RoundedRectangle(cornerRadius: 16))
+            .accessibilityIdentifier(identifierComponents.joined(separator: "."))
+    }
+
     private var profileSummaries: [MeasurementProfileSummary] {
-        let grouped = Dictionary(grouping: records.filter { $0.context?.profileID != nil }) { record in
-            (record.context?.profileID?.uuidString ?? "") + "|" + (record.context?.targetID?.uuidString ?? "")
-                + "|" + (record.context?.target.rawValue ?? "") + "|" + record.notation + "|" + record.kind.rawValue
-                + "|" + (record.context?.effectiveDefinition.rawValue ?? "")
+        let profileRecords: [MeasurementRecord] = records.filter { $0.context?.profileID != nil }
+        let grouped: [String: [MeasurementRecord]] = Dictionary(grouping: profileRecords, by: profileGroupingKey)
+        var summaries: [MeasurementProfileSummary] = []
+        for observations in grouped.values {
+            if let summary = try? MeasurementProfile.summarize(observations) { summaries.append(summary) }
         }
-        return grouped.values.compactMap { try? MeasurementProfile.summarize($0) }.sorted { $0.context.role.symbol < $1.context.role.symbol }
+        summaries.sort { $0.context.role.symbol < $1.context.role.symbol }
+        return summaries
+    }
+
+    private func profileGroupingKey(_ record: MeasurementRecord) -> String {
+        let components: [String] = [record.context?.profileID?.uuidString ?? "", record.context?.targetID?.uuidString ?? "",
+            record.context?.target.rawValue ?? "", record.notation, record.kind.rawValue,
+            record.context?.effectiveDefinition.rawValue ?? ""]
+        return components.joined(separator: "|")
     }
 
     private func activateSelectedTool() {

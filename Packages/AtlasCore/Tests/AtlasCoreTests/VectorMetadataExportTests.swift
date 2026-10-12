@@ -35,7 +35,7 @@ private func fixtureBoundary(_ frame: UUID) -> MetricPolygon {
         context: .init(role: .width, target: .cabinetDoor, targetID: UUID(), position: .upper))
     let artifact = try AtlasExporter.export(.init(project: project, measurements: [ar, manual]), format: .csv)
     try independentlyReadExports(["measurements.csv": artifact.data], python: #"""
-        import csv, json, pathlib, sys
+        import csv, json, math, pathlib, sys
         with (pathlib.Path(sys.argv[1]) / 'measurements.csv').open(encoding='utf-8-sig', newline='') as f:
             rows = list(csv.DictReader(f, strict=True))
         ar = next(r for r in rows if r['source'] == 'arRaycast')
@@ -45,7 +45,9 @@ private func fixtureBoundary(_ frame: UUID) -> MetricPolygon {
         assert ar['value_method'] == 'verticalDistance' and ar['coordinate_basis'] == 'arKitYUp'
         assert ar['start_label'] == 'A' and ar['end_label'] == 'B'
         assert float(ar['effective_value_m']) == float(ar['height_m']) == 12
-        assert float(ar['direct_distance_m']) == 13 and float(ar['horizontal_component_m']) == 5
+        direct, horizontal = float(ar['direct_distance_m']), float(ar['horizontal_component_m'])
+        assert math.isclose(direct, 13, rel_tol=1e-12, abs_tol=1e-12), direct
+        assert math.isclose(horizontal, 5, rel_tol=1e-12, abs_tol=1e-12), horizontal
         assert float(ar['vertical_component_m']) == 12 and ar['sample_position'] == 'left'
         context = json.loads(ar['metadata_json'])['context']
         assert context['profileID'] == ar['measurement_profile_id']
