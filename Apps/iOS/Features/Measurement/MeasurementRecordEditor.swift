@@ -105,6 +105,7 @@ struct MeasurementRecordEditor: View {
                 }
             }
             .navigationTitle(initial == nil ? "Контрольный размер" : "Карточка обмера")
+            .scrollDismissesKeyboard(.interactively)
             .navigationBarTitleDisplayMode(.inline)
             .pickerStyle(.menu)
             .toolbar {

@@ -250,7 +250,7 @@ private struct EmptyRoomSurfaceReviewEditor: View {
                         Text(source.id.uuidString).font(.caption.monospaced())
                     }
                 } else {
-                    Section { Text("Ручной объект не получает положение или контур из bounding box шкафа. Его размеры — только связанные контрольные обмеры.").font(.caption) }
+                    Section { Text("Габарит шкафа не определяет положение, контур или размер его дверцы. Для неё сохраняются отдельные контрольные обмеры.").font(.caption) }
                 }
                 Section("Смысл контрольного размера") {
                     Picker("Измерялось", selection: $meaning) { ForEach(EmptyRoomDimensionMeaning.allCases, id: \.self) { Text($0.title).tag($0) } }
@@ -291,6 +291,7 @@ private struct EmptyRoomSurfaceReviewEditor: View {
             }
             .pickerStyle(.menu)
             .navigationTitle("Проверить поверхность")
+            .scrollDismissesKeyboard(.interactively)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Отмена") { dismiss() }.disabled(saving) }

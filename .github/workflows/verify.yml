@@ -152,7 +152,9 @@ jobs:
     name: Full UI tests (Xcode ${{ matrix.toolchain }}, iOS ${{ matrix.ios_major }})
     needs: preflight
     runs-on: macos-15
-    timeout-minutes: 40
+    # Full 16-case UI suites and xcresult export exceeded the earlier limit on
+    # iOS 26. Keep every test and preserve complete failure diagnostics.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:

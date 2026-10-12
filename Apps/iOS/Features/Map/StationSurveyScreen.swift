@@ -29,12 +29,26 @@ struct StationSurveyScreen: View {
     private var geographic: Bool { project.coordinateReference == .wgs84 }
     var body: some View {
         NavigationStack {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 18) {
+            // Native List owns cell reuse for the bounded 100-station journal.
+            // Runtime QA localized the iOS 26.2 freeze to scrolling this
+            // variable-height content in LazyVStack after sheet dismissal.
+            List {
+                Section {
                     introduction
                     if !service.ready { ProgressView("Открываем журнал станций") }
-                    ForEach(service.document.stations) { station in stationRow(station) }
-                    if !service.document.stations.isEmpty {
+                }
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.atlasCanvas)
+                Section {
+                    ForEach(service.document.stations) { station in
+                        stationRow(station)
+                            .buttonStyle(.borderless)
+                    }
+                }
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.atlasCanvas)
+                if !service.document.stations.isEmpty {
+                    Section {
                         Picker("Соединение станций", selection: $closed) {
                             Text("Граница").tag(true); Text("Линия").tag(false)
                         }.pickerStyle(.segmented).accessibilityIdentifier("stations.outline.kind")
@@ -53,8 +67,13 @@ struct StationSurveyScreen: View {
                             Button("Исходные точки JSON") { export(geographic: false) }.accessibilityIdentifier("stations.exportJSON")
                             Spacer()
                             Button("GeoJSON") { export(geographic: true) }.disabled(!geographic).accessibilityIdentifier("stations.exportGeoJSON")
-                        }.font(.subheadline).disabled(service.isCollecting || exporting || service.saving || service.starting)
+                        }.buttonStyle(.borderless).font(.subheadline)
+                            .disabled(service.isCollecting || exporting || service.saving || service.starting)
                     }
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.atlasCanvas)
+                }
+                Section {
                     Text(service.storageMessage).font(.footnote).foregroundStyle(Color.atlasMuted)
                         .accessibilityIdentifier("stations.storage")
                     if service.issue != nil {
@@ -63,8 +82,12 @@ struct StationSurveyScreen: View {
                         }.disabled(service.saving)
                     }
                     if let message = issue ?? service.issue { Text(message).foregroundStyle(.orange).font(.subheadline).accessibilityIdentifier("stations.issue") }
-                }.padding(20)
-            }.background(Color.atlasCanvas).foregroundStyle(Color.atlasInk)
+                }
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.atlasCanvas)
+            }.listStyle(.plain).scrollContentBackground(.hidden)
+                .background(Color.atlasCanvas).foregroundStyle(Color.atlasInk)
+                .accessibilityIdentifier("stations.list")
                 .safeAreaInset(edge: .bottom) {
                     VStack(alignment: .leading, spacing: 12) {
                         if service.isCollecting { acquisition }

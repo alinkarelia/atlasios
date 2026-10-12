@@ -966,6 +966,13 @@ final class AtlasUITests: XCTestCase {
             field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: previous.count))
         }
         field.typeText(value)
+        if app.keyboards.firstMatch.exists {
+            let doneIDs = ["measurement.editor.keyboardDone", "emptyRoom.review.keyboardDone", "stations.manual.keyboardDone"]
+            let done = doneIDs.map { element($0, in: app) }.first { $0.exists && $0.isHittable }
+            XCTAssertNotNil(done, "Text entry must provide a visible keyboard completion action")
+            done?.tap()
+            waitForAbsence(app.keyboards.firstMatch)
+        }
     }
 
     @MainActor
@@ -1028,8 +1035,6 @@ final class AtlasUITests: XCTestCase {
             tap("measurement.editor.position", in: app)
             app.buttons[index == 0 ? "Снизу" : "Сверху"].firstMatch.tap()
             enter(value, identifier: "measurement.editor.meters", in: app)
-            tap("measurement.editor.keyboardDone", in: app)
-            waitForAbsence(app.keyboards.firstMatch)
             if index == 1 { screenshot("27-opening-measurement", app: app) }
             tap("measurement.editor.save", in: app)
             waitForAbsence(element("measurement.editor.save", in: app))
@@ -1074,10 +1079,9 @@ final class AtlasUITests: XCTestCase {
         XCTAssertEqual(verified.value as? String, "0")
         verified.tap()
         enter("Дверца осмотрена специалистом; габарит шкафа не использован как её размер.", identifier: "emptyRoom.review.note", in: app)
-        tap("emptyRoom.review.keyboardDone", in: app)
-        waitForAbsence(app.keyboards.firstMatch)
         tap("emptyRoom.review.save", in: app)
         waitForAbsence(element("emptyRoom.review.save", in: app))
+        waitForAbsence(app.navigationBars["Проверить поверхность"])
         let manual = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "emptyRoom.manualTarget.")).firstMatch
         scrollToControl(manual, in: app)
         XCTAssertTrue(manual.label.hasPrefix("K · Шкаф · дверца 1"))
@@ -1087,8 +1091,6 @@ final class AtlasUITests: XCTestCase {
         scrollAndTap("measurement.manual", in: app)
         enter("Контроль двери по рулетке", identifier: "measurement.editor.label", in: app)
         enter("0.88", identifier: "measurement.editor.meters", in: app)
-        tap("measurement.editor.keyboardDone", in: app)
-        waitForAbsence(app.keyboards.firstMatch)
         tap("measurement.editor.save", in: app)
         waitForAbsence(element("measurement.editor.save", in: app))
         app.navigationBars["Инструменты обмера"].buttons.firstMatch.tap()
@@ -1105,10 +1107,9 @@ final class AtlasUITests: XCTestCase {
         XCTAssertTrue(choice.waitForExistence(timeout: 10), "A genuine measurement of this exact surface must be available for attachment")
         choice.tap()
         enter("Тип двери проверен; световая ширина измерена контрольной рулеткой.", identifier: "emptyRoom.review.note", in: app)
-        tap("emptyRoom.review.keyboardDone", in: app)
-        waitForAbsence(app.keyboards.firstMatch)
         tap("emptyRoom.review.save", in: app)
         waitForAbsence(element("emptyRoom.review.save", in: app))
+        waitForAbsence(app.navigationBars["Проверить поверхность"])
         let door = element("emptyRoom.surface." + doorID, in: app)
         scrollToControl(door, in: app, towardTop: true)
         XCTAssertTrue(door.label.replacingOccurrences(of: ",", with: ".").contains("0.880"), "The attached control must appear on its exact source surface")
