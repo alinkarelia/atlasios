@@ -962,9 +962,13 @@ final class AtlasUITests: XCTestCase {
     private func revealWholeControl(_ control: XCUIElement, in app: XCUIApplication,
                                     file: StaticString = #filePath, line: UInt = #line) {
         let window = app.windows.firstMatch.frame
+        var lastViewport = CGRect.zero
         for _ in 0..<20 {
             let top = app.navigationBars.allElementsBoundByIndex
-                .filter { $0.exists && $0.frame.intersects(window) }
+                // Presented sheets keep the underlying stack's large bars in
+                // the accessibility tree. Their rectangles overlap this window
+                // even though they cannot receive a touch through the sheet.
+                .filter { $0.exists && $0.isHittable && $0.frame.intersects(window) }
                 .map { $0.frame.maxY + 8 }.max() ?? window.minY + 60
             var bottom = window.maxY - 40
             for bar in app.tabBars.allElementsBoundByIndex + app.toolbars.allElementsBoundByIndex {
@@ -975,6 +979,7 @@ final class AtlasUITests: XCTestCase {
             if app.keyboards.firstMatch.exists { bottom = min(bottom, app.keyboards.firstMatch.frame.minY - 8) }
             let viewport = CGRect(x: window.minX, y: top, width: window.width,
                                   height: max(1, bottom - top))
+            lastViewport = viewport
             let frame = control.exists ? control.frame : CGRect.zero
             if control.exists && control.isHittable && viewport.contains(frame) { return }
             let towardTop = control.exists && frame.minY < viewport.minY
@@ -986,7 +991,12 @@ final class AtlasUITests: XCTestCase {
                 dy: startY - window.minY + (towardTop ? distance : -distance)))
             start.press(forDuration: 0.05, thenDragTo: finish)
         }
-        XCTFail("The complete control did not enter the visible content viewport: \(control)", file: file, line: line)
+        let barDiagnostics = app.navigationBars.allElementsBoundByIndex.map {
+            "\($0.label): frame=\($0.frame), hittable=\($0.isHittable)"
+        }.joined(separator: "; ")
+        let finalFrame = control.exists ? control.frame : CGRect.zero
+        XCTFail("The complete control did not enter the visible content viewport: \(control); "
+                + "controlFrame=\(finalFrame), viewport=\(lastViewport), bars=[\(barDiagnostics)]", file: file, line: line)
     }
 
     @MainActor
