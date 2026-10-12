@@ -74,6 +74,24 @@ import AtlasCore
         precondition(structural[0].assets.contains { $0.relativePath.hasSuffix("dimensions.json") })
         let derivedAgain = try records()
         precondition(structural[0].assets.map(\.id) == derivedAgain[0].assets.map(\.id))
+        let sourceBeforeReview = try Data(contentsOf: folder.appendingPathComponent("room.json"))
+        let reviewFile = derived.appendingPathComponent("surface-review.json")
+        let rawReview = Data("{\"schemaVersion\":1,\"events\":[]}".utf8)
+        try rawReview.write(to: reviewFile)
+        object["completedAssets"] = ["room.json", "room.usdz"] + names.map { relative + $0 } + [relative + "surface-review.json"]
+        let reviewed = try records()
+        precondition(reviewed[0].assets.contains { $0.relativePath.hasSuffix("surface-review.json") && $0.kind == .cameraMetadata && $0.byteCount == rawReview.count })
+        let sourceAfterReview = try Data(contentsOf: folder.appendingPathComponent("room.json"))
+        precondition(sourceAfterReview == sourceBeforeReview)
+        try Data(repeating: 0, count: 4 * 1_024 * 1_024 + 1).write(to: reviewFile)
+        do { _ = try records(); preconditionFailure("Oversized review accepted") } catch { }
+        try FileManager.default.removeItem(at: reviewFile)
+        try FileManager.default.createSymbolicLink(at: reviewFile, withDestinationURL: outside)
+        do { _ = try records(); preconditionFailure("Aliased review accepted") } catch { }
+        try FileManager.default.removeItem(at: reviewFile)
+        try rawReview.write(to: reviewFile)
+        try rejects { object["completedAssets"] = ["room.json", "room.usdz", "empty-room/surface-review.json"] }
+        try rejects { object["completedAssets"] = ["room.json", "room.usdz", relative + "../surface-review.json"] }
         try rejects { object["completedAssets"] = ["room.json", "room.usdz", relative + "unexpected.json"] }
         try rejects { object["completedAssets"] = ["room.json", "room.usdz", "empty-room/not-a-uuid/dimensions.json"] }
         try rejects { object["completedAssets"] = ["room.json", "room.usdz", relative + "../dimensions.json"] }
@@ -120,6 +138,6 @@ import AtlasCore
         do { _ = try records(); preconditionFailure("Partial video accepted as ready") } catch { }
         videoDocument.status = .ready; videoDocument.keyframes = []; try writeVideo()
         do { _ = try records(); preconditionFailure("Video without source poses accepted") } catch { }
-        print("CaptureCatalog: 30 dataset readiness, original/derivative/video identity and path isolation checks passed.")
+        print("CaptureCatalog: 36 dataset readiness, original/derivative/review/video identity and path isolation checks passed.")
     }
 }

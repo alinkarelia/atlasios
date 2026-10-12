@@ -16,6 +16,7 @@ private enum MeasurementToolMode: String, CaseIterable, Identifiable {
 private struct MeasurementEditorRoute: Identifiable {
     let id = UUID()
     let record: MeasurementRecord?
+    var context: MeasurementContext? = nil
     var referenceMeters: Double? = nil
     var referenceSource: MeasurementCorrectionSource = .manualReference
 }
@@ -24,12 +25,20 @@ private struct MeasurementEditorRoute: Identifiable {
 struct MeasurementToolsScreen: View {
     @ObservedObject var model: AtlasAppModel
     let project: AtlasProject
+    let initialContext: MeasurementContext?
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var ruler = MeasurementCoordinator()
     @StateObject private var level = LevelService()
     @StateObject private var compass = CompassService()
     @State private var mode = MeasurementToolMode.ruler
     @State private var kind = MeasurementKind.distance
+    @State private var role = MeasurementRole.distance
+    @State private var target = MeasurementTarget.unspecified
+    @State private var definition = MeasurementDefinition.unspecified
+    @State private var samplePosition = MeasurementSamplePosition.unspecified
+    @State private var positionNote = ""
+    @State private var profileID = UUID()
+    @State private var targetID = UUID()
     @State private var records: [MeasurementRecord] = []
     @State private var editor: MeasurementEditorRoute?
     @State private var issue: String?
@@ -38,6 +47,18 @@ struct MeasurementToolsScreen: View {
     @State private var referenceSource = MeasurementCorrectionSource.manualReference
     @State private var isVisible = false
     @State private var activation: Task<Void, Never>?
+
+    init(model: AtlasAppModel, project: AtlasProject, initialContext: MeasurementContext? = nil) {
+        self.model = model; self.project = project; self.initialContext = initialContext
+        _role = State(initialValue: initialContext?.role ?? .distance)
+        _target = State(initialValue: initialContext?.target ?? .unspecified)
+        _definition = State(initialValue: initialContext?.effectiveDefinition ?? .unspecified)
+        _samplePosition = State(initialValue: initialContext?.position ?? .unspecified)
+        _positionNote = State(initialValue: initialContext?.positionNote ?? "")
+        _targetID = State(initialValue: initialContext?.targetID ?? UUID())
+        _profileID = State(initialValue: initialContext?.profileID ?? UUID())
+        _kind = State(initialValue: initialContext?.role == .height ? .verticalDistance : .distance)
+    }
 
     var body: some View {
         ScrollView {
@@ -77,9 +98,24 @@ struct MeasurementToolsScreen: View {
         .task {
             isVisible = true
             records = await model.measurements(in: project)
+            if initialContext == nil, let contextRecord = records.filter({ $0.context?.profileID != nil }).max(by: { $0.createdAt < $1.createdAt }) {
+                reuseProfile(from: contextRecord)
+            }
+            ruler.dimensionKind = kind; ruler.dimensionRole = role
             activateSelectedTool()
         }
         .onChange(of: mode) { _, _ in activateSelectedTool() }
+        .onChange(of: kind) { _, value in
+            if role == .height && value != .verticalDistance { role = .distance }
+            if role == .surfaceHeight && value != .distance { role = .distance }
+            if value == .verticalDistance && role == .distance { role = .height }
+            ruler.dimensionKind = value
+        }
+        .onChange(of: role) { _, value in
+            if value == .height { kind = .verticalDistance }
+            if value == .surfaceHeight { kind = .distance }
+            ruler.dimensionRole = value
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
                 // Keep the authorised request/session that survived the camera
@@ -90,7 +126,7 @@ struct MeasurementToolsScreen: View {
         }
         .onDisappear { isVisible = false; stopTools() }
         .sheet(item: $editor) { route in
-            MeasurementRecordEditor(projectID: project.id, initial: route.record, referenceMeters: route.referenceMeters, referenceSource: route.referenceSource) { record in
+            MeasurementRecordEditor(projectID: project.id, initial: route.record, context: route.context, referenceMeters: route.referenceMeters, referenceSource: route.referenceSource) { record in
                 guard !saving else { throw MeasurementUIError.saving }
                 saving = true
                 defer { saving = false }
@@ -99,6 +135,12 @@ struct MeasurementToolsScreen: View {
                 }
                 if let index = records.firstIndex(where: { $0.id == saved.id }) { records[index] = saved }
                 else { records.insert(saved, at: 0) }
+                // Editing another historical card must not change a caller's
+                // explicit physical target. A new observation may deliberately
+                // choose another category/object in its own editor.
+                if initialContext == nil || route.record == nil || route.record?.revision == 0 || saved.context?.targetID == targetID {
+                    reuseProfile(from: saved)
+                }
                 if route.record?.revision == 0 { ruler.clearPoints() }
             }
         }
@@ -114,6 +156,7 @@ struct MeasurementToolsScreen: View {
                  ? "Камера и LiDAR помогают найти поверхности. Выберите две точки и проверьте размер."
                  : "Камера помогает найти поверхности. Выберите две точки; LiDAR для рулетки не обязателен.")
                 .font(.subheadline).foregroundStyle(Color.atlasMuted)
+            measurementContextPicker
             if MeasurementCoordinator.isSupported {
                 rulerCamera
                 measurementProjectionPicker
@@ -128,7 +171,7 @@ struct MeasurementToolsScreen: View {
                 ContentUnavailableView("AR недоступна", systemImage: "ruler", description: Text("Сохраните размер с обычной рулетки или лазерного дальномера вручную."))
                     .accessibilityIdentifier("measurement.cameraUnavailable")
             }
-            Button("Ввести размер вручную", systemImage: "keyboard") { editor = MeasurementEditorRoute(record: nil) }
+            Button("Ввести размер вручную", systemImage: "keyboard") { editor = MeasurementEditorRoute(record: nil, context: currentContext) }
                 .buttonStyle(AtlasSecondaryButtonStyle()).frame(maxWidth: .infinity)
                 .accessibilityIdentifier("measurement.manual")
             Text("AR-обмер — оценка по двум выбранным поверхностям. Погрешность не определена. Для ответственных работ сверяйте с контрольным размером. Обмер не совмещает план или 3D-модель с картой автоматически.")
@@ -139,6 +182,7 @@ struct MeasurementToolsScreen: View {
     private var rulerCamera: some View {
         ZStack {
             MeasurementARView(coordinator: ruler)
+            if let overlay = ruler.dimensionOverlay { MeasurementDimensionDrawing(overlay: overlay) }
             if ruler.state == .running && ruler.isCameraReady {
                 Image(systemName: "plus").font(.system(size: 30, weight: .light))
                     .foregroundStyle(ruler.canCapturePoint ? Color.atlasLime : .white)
@@ -180,17 +224,53 @@ struct MeasurementToolsScreen: View {
     }
 
     private var measurementProjectionPicker: some View {
-        Picker("Тип размера", selection: $kind) {
-            Text("Расстояние").tag(MeasurementKind.distance)
-            Text("По горизонту").tag(MeasurementKind.horizontalDistance)
-            Text("Высота").tag(MeasurementKind.verticalDistance)
-        }.pickerStyle(.menu)
+        VStack(alignment: .leading, spacing: 8) {
+            Picker("Расчёт A–B", selection: $kind) {
+                Text("Прямая в 3D").tag(MeasurementKind.distance)
+                Text("Горизонт · XZ").tag(MeasurementKind.horizontalDistance)
+                Text("Высота · |ΔY|").tag(MeasurementKind.verticalDistance)
+            }.pickerStyle(.menu).accessibilityIdentifier("measurement.projection")
+            Text(kind == .verticalDistance ? "H — разность уровней по силе тяжести. Пунктир показывает боковое смещение B, исключённое из высоты." : kind == .horizontalDistance ? "Размер спроецирован на горизонтальную плоскость. Исходные точки A/B сохраняются." : "Прямая A–B включает наклон. Для высоты выберите |ΔY|.")
+                .font(.caption).foregroundStyle(Color.atlasMuted)
+        }
+    }
+
+    private var currentContext: MeasurementContext {
+        .init(role: role, target: target, targetID: targetID, profileID: profileID, position: samplePosition, positionNote: positionNote, definition: definition)
+    }
+
+    private func reuseProfile(from record: MeasurementRecord) {
+        guard let context = record.context, let savedProfile = context.profileID else { return }
+        profileID = savedProfile; targetID = context.targetID ?? targetID; target = context.target; role = context.role
+        definition = context.effectiveDefinition; samplePosition = context.position; positionNote = context.positionNote
+        kind = record.kind; ruler.dimensionKind = record.kind; ruler.dimensionRole = context.role
+    }
+
+    private var measurementContextPicker: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Picker("Обозначение", selection: $role) { ForEach(MeasurementRole.allCases, id: \.self) { Text($0.fieldMeasurementTitle).tag($0) } }
+                .accessibilityIdentifier("measurement.role")
+            Picker("Что измеряем", selection: Binding(get: { target }, set: { value in
+                if target != value { target = value; targetID = UUID(); profileID = UUID() }
+            })) { ForEach(MeasurementTarget.allCases, id: \.self) { Text($0.fieldMeasurementTitle).tag($0) } }
+                .accessibilityIdentifier("measurement.target")
+            Picker("Какие границы", selection: $definition) { ForEach(MeasurementDefinition.allCases, id: \.self) { Text($0.fieldMeasurementTitle).tag($0) } }
+                .accessibilityIdentifier("measurement.definition")
+            Picker("Место замера", selection: $samplePosition) { ForEach(MeasurementSamplePosition.allCases, id: \.self) { Text($0.fieldMeasurementTitle).tag($0) } }
+                .accessibilityIdentifier("measurement.position")
+            TextField("Участок / пояснение к месту", text: $positionNote)
+                .accessibilityIdentifier("measurement.positionNote")
+            Button("Другой объект / новый профиль", systemImage: "plus.rectangle.on.rectangle") { targetID = UUID(); profileID = UUID(); positionNote = ""; samplePosition = .unspecified }
+                .accessibilityIdentifier("measurement.newProfile")
+            Text("Профиль \(profileID.uuidString.prefix(8)). Категорию и место выбирает специалист. Для проёма измеряйте его границы; для дверцы — само полотно. Каждый замер сохраняет собственные точки и время.")
+                .font(.caption).foregroundStyle(Color.atlasMuted)
+        }.padding(16).background(Color.atlasCard, in: RoundedRectangle(cornerRadius: 16))
     }
 
     private var measurementValues: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
-                Text(ruler.meters(kind: kind).map { measurementNumber($0) + " м" } ?? "—")
+                Text(role.symbol + " " + (ruler.meters(kind: kind).map { measurementNumber($0) + " м" } ?? "—"))
                     .font(.system(size: 36, weight: .bold, design: .rounded)).monospacedDigit()
                 Spacer()
                 Text(ruler.second == nil ? "Предпросмотр" : "Две точки")
@@ -219,7 +299,7 @@ struct MeasurementToolsScreen: View {
                 AtlasPrimaryButton(title: "Сохранить обмер", systemImage: "checkmark") {
                     do {
                         let reference = parseMeasurement(referenceText).flatMap { $0 > 0 ? $0 : nil }
-                        editor = MeasurementEditorRoute(record: try ruler.record(projectID: project.id, label: "Обмер", kind: kind), referenceMeters: reference, referenceSource: referenceSource)
+                        editor = MeasurementEditorRoute(record: try ruler.record(projectID: project.id, label: role.symbol + " · " + target.fieldMeasurementTitle + " · " + samplePosition.fieldMeasurementTitle, kind: kind, context: currentContext), referenceMeters: reference, referenceSource: referenceSource)
                     }
                     catch { issue = error.localizedDescription }
                 }
@@ -358,7 +438,8 @@ struct MeasurementToolsScreen: View {
             HStack {
                 Text("Обмеры проекта").font(.title2.bold()).foregroundStyle(Color.atlasInk)
                 Spacer()
-                Button("Добавить", systemImage: "plus") { editor = MeasurementEditorRoute(record: nil) }.labelStyle(.iconOnly)
+                Button("Добавить", systemImage: "plus") { editor = MeasurementEditorRoute(record: nil, context: currentContext) }.labelStyle(.iconOnly)
+                    .accessibilityIdentifier("measurement.journal.add")
             }
             if records.isEmpty {
                 ContentUnavailableView("Пока нет обмеров", systemImage: "ruler", description: Text("Поставьте две AR-точки или сохраните контрольный размер вручную."))
@@ -371,15 +452,19 @@ struct MeasurementToolsScreen: View {
                             Spacer()
                             Text(measurementNumber(record.effectiveMeters) + " м").font(.headline).monospacedDigit()
                         }
-                        Text("\(record.kind.measurementTitle) · \(record.source.measurementTitle)")
+                        Text("\(record.notation) · \(record.kind.measurementTitle) · \(record.source.measurementTitle)")
                             .font(.caption).foregroundStyle(Color.atlasMuted)
+                        if let context = record.context {
+                            Text(context.target.fieldMeasurementTitle + " · " + context.position.fieldMeasurementTitle + (context.positionNote.isEmpty ? "" : " · " + context.positionNote)).font(.caption)
+                        }
+                        if let frame = record.frameID { Text("AR · метры · Y по силе тяжести · \(frame.uuidString.prefix(8))").font(.caption2).foregroundStyle(Color.atlasMuted) }
                         if record.hasManualCorrection { Label("Есть ручная корректировка", systemImage: "pencil.circle").font(.caption).foregroundStyle(Color.atlasBlue) }
                         if record.surfaceEvidence.contains(.estimatedPlane) {
                             Text("Одна или обе точки — предполагаемая плоскость").font(.caption).foregroundStyle(Color.atlasMuted)
                         }
                         Text(record.createdAt.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(Color.atlasMuted)
                     }.foregroundStyle(Color.atlasInk).padding(16).background(Color.atlasCard, in: RoundedRectangle(cornerRadius: 16))
-                }.buttonStyle(.plain)
+                }.buttonStyle(.plain).accessibilityIdentifier("measurement.record." + record.id.uuidString)
                 NavigationLink {
                     ApplyMeasurementScreen(model: model, project: project, initialMeasurementID: record.id)
                 } label: {
@@ -388,7 +473,26 @@ struct MeasurementToolsScreen: View {
             }
             Text("Исходное значение сохраняется отдельно. Каждое ручное изменение добавляется в историю; точки разных AR-сессий не объединяются.")
                 .font(.caption).foregroundStyle(Color.atlasMuted)
+            ForEach(Array(profileSummaries.enumerated()), id: \.offset) { _, summary in
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(summary.context.role.symbol + " · " + summary.context.target.fieldMeasurementTitle + " · \(summary.count) замеров").font(.headline)
+                    Text("Мин. \(measurementNumber(summary.minimumMeters)) м · макс. \(measurementNumber(summary.maximumMeters)) м · разброс \(measurementNumber(summary.spreadMeters)) м")
+                        .font(.caption).monospacedDigit()
+                    Text(summary.coordinateComparisonAvailable ? "Точки в одной AR-системе. Отдельные показания сохранены выше." : "Показания одного выбранного объекта; позиции разных AR-систем не совмещены.")
+                        .font(.caption).foregroundStyle(Color.atlasMuted)
+                }.padding(16).background(Color.atlasCard, in: RoundedRectangle(cornerRadius: 16))
+                    .accessibilityIdentifier("measurement.profile." + (summary.context.profileID?.uuidString ?? "unidentified") + "." + summary.kind.rawValue + "." + summary.context.role.rawValue + "." + summary.context.effectiveDefinition.rawValue)
+            }
         }
+    }
+
+    private var profileSummaries: [MeasurementProfileSummary] {
+        let grouped = Dictionary(grouping: records.filter { $0.context?.profileID != nil }) { record in
+            (record.context?.profileID?.uuidString ?? "") + "|" + (record.context?.targetID?.uuidString ?? "")
+                + "|" + (record.context?.target.rawValue ?? "") + "|" + record.notation + "|" + record.kind.rawValue
+                + "|" + (record.context?.effectiveDefinition.rawValue ?? "")
+        }
+        return grouped.values.compactMap { try? MeasurementProfile.summarize($0) }.sorted { $0.context.role.symbol < $1.context.role.symbol }
     }
 
     private func activateSelectedTool() {

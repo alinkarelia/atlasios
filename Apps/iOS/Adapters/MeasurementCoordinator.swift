@@ -29,6 +29,9 @@ final class MeasurementCoordinator: NSObject, ObservableObject, @preconcurrency 
     @Published private(set) var message = "Наведите камеру на поверхность"
     @Published private(set) var issue: String?
     @Published private(set) var frameID = UUID()
+    @Published private(set) var dimensionOverlay: MeasurementDimensionOverlay?
+    var dimensionKind: MeasurementKind = .distance { didSet { if first != nil { rebuildGeometry() } else { refreshDimensionOverlay() } } }
+    var dimensionRole: MeasurementRole = .distance { didSet { refreshDimensionOverlay() } }
     private var cameraView: ARView?
     var arView: ARView {
         if let cameraView { return cameraView }
@@ -118,6 +121,7 @@ final class MeasurementCoordinator: NSObject, ObservableObject, @preconcurrency 
 
     func clearPoints() {
         first = nil; second = nil
+        dimensionOverlay = nil
         removeGeometry()
         message = trackingNormal ? "Наведите прицел на первую точку" : "Дождитесь устойчивого трекинга"
     }
@@ -140,11 +144,11 @@ final class MeasurementCoordinator: NSObject, ObservableObject, @preconcurrency 
         rebuildGeometry()
     }
 
-    func record(projectID: UUID, label: String, kind: MeasurementKind) throws -> MeasurementRecord {
+    func record(projectID: UUID, label: String, kind: MeasurementKind, context: MeasurementContext? = nil) throws -> MeasurementRecord {
         guard let first, let second else { throw MeasurementCameraError.missingPoints }
         return try MeasurementRecord.arRaycast(projectID: projectID, label: label, kind: kind,
             frameID: frameID, start: first.metric, end: second.metric, trackingQuality: .normal,
-            surfaceEvidence: [first.surface, second.surface])
+            surfaceEvidence: [first.surface, second.surface], context: context)
     }
 
     func meters(kind: MeasurementKind, includeLiveTarget: Bool = true) -> Double? {
@@ -170,8 +174,10 @@ final class MeasurementCoordinator: NSObject, ObservableObject, @preconcurrency 
         guard frame.timestamp - lastPreviewTimestamp >= 0.08 else { return }
         lastPreviewTimestamp = frame.timestamp
         updateTracking(frame.camera.trackingState)
+        refreshDimensionOverlay()
         guard state == .running, trackingNormal, second == nil else { return }
         target = raycastCenter()
+        refreshDimensionOverlay()
         if first == nil {
             let instruction = target.map { "\($0.surfaceTitle). Можно поставить первую точку." } ?? "Наведите прицел на фактурную поверхность"
             if instruction != message { message = instruction }
@@ -224,6 +230,7 @@ final class MeasurementCoordinator: NSObject, ObservableObject, @preconcurrency 
         frameID = UUID(); first = nil; second = nil; target = nil
         trackingNormal = false; wasTrackingNormal = false; isCameraReady = false
         lastFrameReceived = nil; lastPreviewTimestamp = 0
+        dimensionOverlay = nil
         removeGeometry()
     }
 
@@ -281,18 +288,45 @@ final class MeasurementCoordinator: NSObject, ObservableObject, @preconcurrency 
             sphere.position = point.position; anchor.addChild(sphere)
         }
         if let first, let second {
-            let delta = second.position - first.position
+            let projected = dimensionKind == .verticalDistance ? SIMD3<Float>(first.position.x, second.position.y, first.position.z)
+                : dimensionKind == .horizontalDistance ? SIMD3<Float>(second.position.x, first.position.y, second.position.z) : second.position
+            let delta = projected - first.position
             let length = simd_length(delta)
             if length > 0.0001, length.isFinite {
                 // A box line is available on the iOS 17 deployment target;
                 // newer procedural primitive APIs are deliberately avoided.
                 let line = ModelEntity(mesh: .generateBox(size: SIMD3<Float>(0.005, length, 0.005)), materials: [material])
-                line.position = (first.position + second.position) / 2
+                line.position = (first.position + projected) / 2
                 line.orientation = simd_quatf(from: SIMD3<Float>(0, 1, 0), to: delta / length)
                 anchor.addChild(line)
             }
         }
         arView.scene.addAnchor(anchor); geometryAnchor = anchor
+        refreshDimensionOverlay()
+    }
+
+    func refreshDimensionOverlay() {
+        guard state == .running, let first, let view = cameraView,
+              let frame = view.session.currentFrame, Self.isFresh(frame) else { dimensionOverlay = nil; return }
+        let pose = frame.camera.transform
+        let origin = SIMD3<Float>(pose.columns.3.x, pose.columns.3.y, pose.columns.3.z)
+        let forward = -SIMD3<Float>(pose.columns.2.x, pose.columns.2.y, pose.columns.2.z)
+        func project(_ point: SIMD3<Float>) -> CGPoint? {
+            guard simd_dot(point - origin, forward) > 0.01, let projected = view.project(point),
+                  projected.x.isFinite, projected.y.isFinite else { return nil }
+            return projected
+        }
+        let end = second ?? (trackingNormal ? target : nil)
+        guard let end else {
+            dimensionOverlay = .init(pointA: project(first.position), label: "A", preview: true)
+            return
+        }
+        let projected = dimensionKind == .verticalDistance ? SIMD3<Float>(first.position.x, end.position.y, first.position.z)
+            : dimensionKind == .horizontalDistance ? SIMD3<Float>(end.position.x, first.position.y, end.position.z) : end.position
+        let value = meters(kind: dimensionKind).map { $0.formatted(.number.precision(.fractionLength(3))) + " м" } ?? "—"
+        dimensionOverlay = .init(pointA: project(first.position), pointB: project(end.position),
+            dimensionA: project(first.position), dimensionB: project(projected),
+            label: dimensionRole.symbol + " " + value, preview: second == nil)
     }
 }
 

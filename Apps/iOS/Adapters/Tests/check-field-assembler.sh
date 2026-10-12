@@ -13,7 +13,9 @@ objects=("$build_path"/AtlasCore.build/*.swift.o)
   -I "$build_path/Modules" -I "$core_root/Sources/CSQLite" \
   "${objects[@]}" \
   "$repo_root/Apps/iOS/Adapters/FieldDeliveryPassport.swift" \
+  "$repo_root/Apps/iOS/Adapters/ProjectJournalExport.swift" \
   "$repo_root/Apps/iOS/Adapters/FieldTransferAssembler.swift" \
+  "$repo_root/Apps/iOS/Adapters/Tests/ProjectJournalExportChecks.swift" \
   "$repo_root/Apps/iOS/Adapters/Tests/FieldAssemblerChecks.swift" \
   -lsqlite3 -o "$checks_dir/checks"
 "$checks_dir/checks"

@@ -13,6 +13,65 @@ public enum MeasurementKind: String, Codable, CaseIterable, Sendable {
     case distance, horizontalDistance, verticalDistance
 }
 
+/// Describes what a scalar means; `kind` independently records how it was calculated.
+/// A length or width can therefore be a direct 3D distance or a horizontal projection.
+public enum MeasurementRole: String, Codable, CaseIterable, Sendable {
+    case distance, length, width, height, surfaceHeight, thickness
+
+    public var symbol: String {
+        switch self {
+        case .distance: "D"
+        case .length: "L"
+        case .width: "W"
+        case .height: "H"
+        case .surfaceHeight: "Hₛ"
+        case .thickness: "T"
+        }
+    }
+}
+
+/// A cabinet door is an operator-identified target, never inferred from a storage box.
+public enum MeasurementTarget: String, Codable, CaseIterable, Sendable {
+    case unspecified, room, wall, floor, ceiling, door, window, openPassage, cabinetDoor
+}
+
+public enum MeasurementSamplePosition: String, Codable, CaseIterable, Sendable {
+    case unspecified, lower, middle, upper, left, center, right, custom
+}
+
+/// Width/height alone cannot say whether points describe a clear passage, leaf,
+/// outer frame, or a detector's bounding extent. Unknown remains explicit.
+public enum MeasurementDefinition: String, Codable, CaseIterable, Sendable {
+    case unspecified, reportedBounds, clearOpening, doorLeaf, outerFrame, structuralDimension
+}
+
+/// Context belongs to the original observation. Repeated observations retain their own
+/// points, dates and correction histories; a profile does not replace them with an average.
+public struct MeasurementContext: Codable, Hashable, Sendable {
+    public var role: MeasurementRole
+    public var target: MeasurementTarget
+    public var targetID: UUID?
+    public var profileID: UUID?
+    public var position: MeasurementSamplePosition
+    public var positionNote: String
+    public var definition: MeasurementDefinition?
+    public var effectiveDefinition: MeasurementDefinition { definition ?? .unspecified }
+
+    public init(role: MeasurementRole = .distance, target: MeasurementTarget = .unspecified,
+                targetID: UUID? = nil, profileID: UUID? = nil,
+                position: MeasurementSamplePosition = .unspecified, positionNote: String = "",
+                definition: MeasurementDefinition? = nil) {
+        self.role = role; self.target = target; self.targetID = targetID; self.profileID = profileID
+        self.position = position; self.positionNote = positionNote
+        self.definition = definition
+    }
+}
+
+public enum MeasurementCoordinateBasis: String, Codable, Sendable {
+    /// Gravity-aligned ARKit coordinates: Y up, X/Z horizontal, metres.
+    case arKitYUp
+}
+
 public enum MeasurementSource: String, Codable, CaseIterable, Sendable {
     case arRaycast, manualReference
     /// A laser instrument reading entered by the operator; no device connection is implied.
@@ -61,33 +120,39 @@ public struct MeasurementRecord: Identifiable, Codable, Hashable, Sendable {
     public var createdAt: Date
     public var corrections: [MeasurementCorrection]
     public var revision: Int64
+    /// Nil preserves the semantics and decoding of older records.
+    public var context: MeasurementContext?
 
     public init(id: UUID = UUID(), projectID: UUID, label: String = "Обмер", kind: MeasurementKind = .distance,
                 source: MeasurementSource, originalMeters: Double, frameID: UUID? = nil,
                 start: MetricPoint3D? = nil, end: MetricPoint3D? = nil,
                 trackingQuality: MeasurementTrackingQuality? = nil, createdAt: Date = Date(),
                 corrections: [MeasurementCorrection] = [], revision: Int64 = 0,
-                surfaceEvidence: [MeasurementSurfaceEvidence] = []) {
+                surfaceEvidence: [MeasurementSurfaceEvidence] = [], context: MeasurementContext? = nil) {
         self.id = id; self.projectID = projectID; self.label = label; self.kind = kind; self.source = source
         self.originalMeters = originalMeters; self.frameID = frameID; self.start = start; self.end = end
         self.trackingQuality = trackingQuality; self.createdAt = createdAt
         self.surfaceEvidence = surfaceEvidence
         self.corrections = corrections; self.revision = revision
+        self.context = context
     }
 
     public var effectiveMeters: Double { corrections.last?.meters ?? originalMeters }
     public var hasManualCorrection: Bool { corrections.last?.meters != nil }
+    public var coordinateBasis: MeasurementCoordinateBasis? { source == .arRaycast ? .arKitYUp : nil }
+    public var notation: String { (context?.role ?? (kind == .verticalDistance ? .height : .distance)).symbol }
 
     /// Freeze the observed raycast points and tracking context before saving.
     public static func arRaycast(projectID: UUID, label: String = "Обмер", kind: MeasurementKind = .distance,
                                  frameID: UUID, start: MetricPoint3D, end: MetricPoint3D,
                                  trackingQuality: MeasurementTrackingQuality,
                                  createdAt: Date = Date(),
-                                 surfaceEvidence: [MeasurementSurfaceEvidence] = []) throws -> MeasurementRecord {
+                                 surfaceEvidence: [MeasurementSurfaceEvidence] = [],
+                                 context: MeasurementContext? = nil) throws -> MeasurementRecord {
         let record = MeasurementRecord(projectID: projectID, label: label, kind: kind, source: .arRaycast,
             originalMeters: try MeasurementGeometry.value(kind: kind, from: start, to: end),
             frameID: frameID, start: start, end: end, trackingQuality: trackingQuality, createdAt: createdAt,
-            surfaceEvidence: surfaceEvidence)
+            surfaceEvidence: surfaceEvidence, context: context)
         try MeasurementPolicy.validate(record)
         return record
     }
@@ -115,6 +180,8 @@ public enum MeasurementError: Error, LocalizedError, Equatable, Sendable {
     case invalidARObservation, inconsistentOriginalDistance, unexpectedARMetadata
     case invalidCorrectionNote, duplicateCorrectionID, originalChanged, historyChanged
     case invalidReference, invalidRevision, revisionOverflow
+    case invalidContext, incompatibleHeightProjection, incompatibleSurfaceHeightProjection
+    case incompatibleProfile, duplicateProfileObservation
     case revisionConflict(entityID: UUID, expected: Int64, actual: Int64)
     case unsupportedSchema(Int), invalidStoredData, storageLimitExceeded, lockingFailed
 
@@ -135,6 +202,11 @@ public enum MeasurementError: Error, LocalizedError, Equatable, Sendable {
         case .invalidReference: "Контрольный размер должен быть конечным положительным числом в метрах."
         case .invalidRevision: "У нового обмера указана недопустимая версия."
         case .revisionOverflow: "Не удалось увеличить версию обмера."
+        case .invalidContext: "Укажите описание точки обмера длиной до 500 символов; для произвольной позиции описание обязательно."
+        case .incompatibleHeightProjection: "Высота AR-обмера должна измеряться по вертикали Y, а не по наклонной линии между точками."
+        case .incompatibleSurfaceHeightProjection: "Высота вдоль поверхности должна сохранять прямое 3D-расстояние между точками без вертикальной или горизонтальной проекции."
+        case .incompatibleProfile: "Диапазон размеров доступен для обмеров одного объекта и профиля с одинаковым типом размера."
+        case .duplicateProfileObservation: "Один и тот же обмер нельзя дважды включить в диапазон размеров."
         case .revisionConflict: "Этот обмер уже изменён. Обновите список и повторите редактирование."
         case .unsupportedSchema: "Формат обмеров новее этой версии приложения. Обновите Atlas; исходный файл сохранён."
         case .invalidStoredData: "Файл обмеров повреждён. Исходный файл сохранён для восстановления."
@@ -204,6 +276,18 @@ public enum MeasurementPolicy {
         try validateMeters(record.originalMeters)
         try validateDate(record.createdAt)
         guard record.revision >= 0 else { throw MeasurementError.invalidRevision }
+        if let context = record.context {
+            guard context.positionNote.count <= 500,
+                  context.position != .custom || !context.positionNote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw MeasurementError.invalidContext
+            }
+            if record.source == .arRaycast, context.role == .height, record.kind != .verticalDistance {
+                throw MeasurementError.incompatibleHeightProjection
+            }
+            if record.source == .arRaycast, context.role == .surfaceHeight, record.kind != .distance {
+                throw MeasurementError.incompatibleSurfaceHeightProjection
+            }
+        }
         if record.source == .arRaycast {
             guard record.frameID != nil, let start = record.start, let end = record.end,
                   record.trackingQuality != nil else { throw MeasurementError.invalidARObservation }
@@ -234,6 +318,7 @@ public enum MeasurementPolicy {
               new.originalMeters == old.originalMeters, new.frameID == old.frameID,
               new.start == old.start, new.end == old.end, new.trackingQuality == old.trackingQuality,
               new.surfaceEvidence == old.surfaceEvidence,
+              new.context == old.context,
               new.createdAt == old.createdAt else { throw MeasurementError.originalChanged }
         guard new.corrections.count >= old.corrections.count,
               Array(new.corrections.prefix(old.corrections.count)) == old.corrections else {
@@ -300,6 +385,14 @@ public enum MeasurementPlanControl {
         guard (measurement.kind != .verticalDistance || dimension == .wallHeight),
               (measurement.kind != .horizontalDistance || dimension != .wallHeight) else {
             throw PlanMeasurementError.incompatibleDimension
+        }
+        if let role = measurement.context?.role {
+            guard role != .surfaceHeight,
+                  (role != .height || dimension == .wallHeight),
+                  (role != .thickness || dimension == .wallThickness),
+                  (role != .length && role != .width || dimension != .wallHeight) else {
+                throw PlanMeasurementError.incompatibleDimension
+            }
         }
         let value = measurement.effectiveMeters
         guard value.isFinite, value > 0, dimension != .wallLength || value > 1e-9 else {

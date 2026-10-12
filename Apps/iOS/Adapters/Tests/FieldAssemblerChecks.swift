@@ -122,5 +122,6 @@ struct DownloadedFieldMaterial: Sendable {
         precondition(originalVideo.sha256 == FieldTransferDigest.sha256(movie))
         precondition(originalVideo.mediaType == "video/quicktime")
         print("Field transfer assembler: originals, unknown import time, shared-manifest dedup, correction delta, partial scan, scope isolation, offline passport, plan/measurement corrections, 1025-photo batching and original video passed.")
+        try await ProjectJournalExportChecks.run()
     }
 }

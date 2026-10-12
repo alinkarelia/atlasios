@@ -214,11 +214,32 @@
 			"path" = "Apps/iOS/Adapters/PhotoGeoMetadata.swift";
 			"sourceTree" = "SOURCE_ROOT";
 		};
+		"048AF99A3378B851A673C93F" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "ProjectJournalExport.swift";
+			"path" = "Apps/iOS/Adapters/ProjectJournalExport.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
 		"6E5F0AB3195C1CD45AD5EC46" = {
 			"isa" = "PBXFileReference";
 			"lastKnownFileType" = "sourcecode.swift";
 			"name" = "RoomCaptureAdapter.swift";
 			"path" = "Apps/iOS/Adapters/RoomCaptureAdapter.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"AC5E94FBE8BA5AF79458ED06" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "StationSurveyLocationService.swift";
+			"path" = "Apps/iOS/Adapters/StationSurveyLocationService.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"BAFDDABD632BD67F677C4328" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "StationSurveyStore.swift";
+			"path" = "Apps/iOS/Adapters/StationSurveyStore.swift";
 			"sourceTree" = "SOURCE_ROOT";
 		};
 		"C835C7BD1BECD47976E90687" = {
@@ -340,6 +361,34 @@
 			"path" = "Apps/iOS/Features/FloorPlan/BuildingPlansScreen.swift";
 			"sourceTree" = "SOURCE_ROOT";
 		};
+		"D6A72C1C05982F1EC092D90F" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "EmptyRoomQuantities.swift";
+			"path" = "Apps/iOS/Features/FloorPlan/EmptyRoomQuantities.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"EE11E5227EA48BCA24114B87" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "EmptyRoomReviewCoreAdapter.swift";
+			"path" = "Apps/iOS/Features/FloorPlan/EmptyRoomReviewCoreAdapter.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"EC0B9FBF1C0E953C1BD000D7" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "EmptyRoomReviewPresentation.swift";
+			"path" = "Apps/iOS/Features/FloorPlan/EmptyRoomReviewPresentation.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"4FF700D746494747AEC4005E" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "EmptyRoomReviewUITestFixture.swift";
+			"path" = "Apps/iOS/Features/FloorPlan/EmptyRoomReviewUITestFixture.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
 		"6F515818902DAC12D8A1AEF6" = {
 			"isa" = "PBXFileReference";
 			"lastKnownFileType" = "sourcecode.swift";
@@ -352,6 +401,20 @@
 			"lastKnownFileType" = "sourcecode.swift";
 			"name" = "EmptyRoomScreen.swift";
 			"path" = "Apps/iOS/Features/FloorPlan/EmptyRoomScreen.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"74C9210EE6B5FF4459D50FAD" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "EmptyRoomSurfaceCatalogScreen.swift";
+			"path" = "Apps/iOS/Features/FloorPlan/EmptyRoomSurfaceCatalogScreen.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"D3DFDA5234A8D95A8F3DD75E" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "EmptyRoomSurfaceReview.swift";
+			"path" = "Apps/iOS/Features/FloorPlan/EmptyRoomSurfaceReview.swift";
 			"sourceTree" = "SOURCE_ROOT";
 		};
 		"EFBCF484286CB636B2FE6F65" = {
@@ -452,6 +515,13 @@
 			"path" = "Apps/iOS/Features/Map/SiteObjectPhotosSection.swift";
 			"sourceTree" = "SOURCE_ROOT";
 		};
+		"9327C1BD8DBBD647E54A2986" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "StationSurveyScreen.swift";
+			"path" = "Apps/iOS/Features/Map/StationSurveyScreen.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
 		"4E747D1C77A0BE8F930D1842" = {
 			"isa" = "PBXFileReference";
 			"lastKnownFileType" = "sourcecode.swift";
@@ -480,6 +550,13 @@
 			"path" = "Apps/iOS/Features/Map/SurveyTrackScreen.swift";
 			"sourceTree" = "SOURCE_ROOT";
 		};
+		"AE23E4C426DE246B51B37E63" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "MeasurementDimensionOverlay.swift";
+			"path" = "Apps/iOS/Features/Measurement/MeasurementDimensionOverlay.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
 		"45D8CDB9EFD13EA6F1D5167E" = {
 			"isa" = "PBXFileReference";
 			"lastKnownFileType" = "sourcecode.swift";
@@ -499,6 +576,13 @@
 			"lastKnownFileType" = "sourcecode.swift";
 			"name" = "GeoTagEditorScreen.swift";
 			"path" = "Apps/iOS/Features/Projects/GeoTagEditorScreen.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"248AA520C94FDF7F9EC8F19F" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "MeshMeasurementJournal.swift";
+			"path" = "Apps/iOS/Features/Projects/MeshMeasurementJournal.swift";
 			"sourceTree" = "SOURCE_ROOT";
 		};
 		"30C64DD91CE312BC35B264A0" = {
@@ -653,7 +737,10 @@
 				773702CDC7DD569631130511,
 				AB8257AC00E5CEBAB73E3129,
 				0B6D8091408D6CB7C3191A27,
+				048AF99A3378B851A673C93F,
 				6E5F0AB3195C1CD45AD5EC46,
+				AC5E94FBE8BA5AF79458ED06,
+				BAFDDABD632BD67F677C4328,
 				C835C7BD1BECD47976E90687,
 				5235D8F209013C15BCD141C9,
 				EF72C2F5E213735B2D50EB2D,
@@ -699,8 +786,14 @@
 				DF3A8BFD510D4EF231408850,
 				3D40A045CE91E06E0D6093D0,
 				97F7320DC8760C1FE7FE2288,
+				D6A72C1C05982F1EC092D90F,
+				EE11E5227EA48BCA24114B87,
+				EC0B9FBF1C0E953C1BD000D7,
+				4FF700D746494747AEC4005E,
 				6F515818902DAC12D8A1AEF6,
 				1405821DB85292304DAAB233,
+				74C9210EE6B5FF4459D50FAD,
+				D3DFDA5234A8D95A8F3DD75E,
 				EFBCF484286CB636B2FE6F65,
 				C0A6D283B5EBF448970BA7A7,
 				07CF2D50EDD05F021B924E1B,
@@ -722,6 +815,7 @@
 				AA12C4121B3938D1F2074C19,
 				73A2CA7F059BF76B7BB42037,
 				3B555271B02E9873E9FA85D5,
+				9327C1BD8DBBD647E54A2986,
 				4E747D1C77A0BE8F930D1842,
 				B4937FCBD4C86B0D3F346067,
 				0FEA3E7A3F541F477BBB1D2B,
@@ -733,6 +827,7 @@
 		"1779450407248433C88D7B1D" = {
 			"isa" = "PBXGroup";
 			"children" = (
+				AE23E4C426DE246B51B37E63,
 				45D8CDB9EFD13EA6F1D5167E,
 				CA62F2B63C0B6F307F5B5A3E,
 			);
@@ -743,6 +838,7 @@
 			"isa" = "PBXGroup";
 			"children" = (
 				2F0DAA2340AF86BF462C651F,
+				248AA520C94FDF7F9EC8F19F,
 				30C64DD91CE312BC35B264A0,
 				5785070A425F786921C2351E,
 				7A8D342BF39092F16010BACA,
@@ -983,9 +1079,21 @@
 			"isa" = "PBXBuildFile";
 			"fileRef" = 0B6D8091408D6CB7C3191A27;
 		};
+		"D59928379F010B40A263FF11" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = 048AF99A3378B851A673C93F;
+		};
 		"C9480A6326A3AEB4CDFF0AD0" = {
 			"isa" = "PBXBuildFile";
 			"fileRef" = 6E5F0AB3195C1CD45AD5EC46;
+		};
+		"816217B421A6F4472BB402F2" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = AC5E94FBE8BA5AF79458ED06;
+		};
+		"93B5DF519FD7DFB5D0EEB180" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = BAFDDABD632BD67F677C4328;
 		};
 		"FFA91AF9EFC2D9570A72E1D8" = {
 			"isa" = "PBXBuildFile";
@@ -1055,6 +1163,22 @@
 			"isa" = "PBXBuildFile";
 			"fileRef" = 97F7320DC8760C1FE7FE2288;
 		};
+		"3317911D38604066097123A6" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = D6A72C1C05982F1EC092D90F;
+		};
+		"97FC12DE605643EE9214C942" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = EE11E5227EA48BCA24114B87;
+		};
+		"ECE3CE6396F5A35517039543" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = EC0B9FBF1C0E953C1BD000D7;
+		};
+		"B35DB639ECC0D313A96AB858" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = 4FF700D746494747AEC4005E;
+		};
 		"8BDA595E6B7E8BB52B77D07C" = {
 			"isa" = "PBXBuildFile";
 			"fileRef" = 6F515818902DAC12D8A1AEF6;
@@ -1062,6 +1186,14 @@
 		"3BA76A9B502CFB0C995A14C6" = {
 			"isa" = "PBXBuildFile";
 			"fileRef" = 1405821DB85292304DAAB233;
+		};
+		"1C4155FD5EC81B66CC694FDA" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = 74C9210EE6B5FF4459D50FAD;
+		};
+		"F15730975DCF15FF66018B3A" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = D3DFDA5234A8D95A8F3DD75E;
 		};
 		"B19F08E12F31C28966E6F60B" = {
 			"isa" = "PBXBuildFile";
@@ -1119,6 +1251,10 @@
 			"isa" = "PBXBuildFile";
 			"fileRef" = 3B555271B02E9873E9FA85D5;
 		};
+		"28B723E4BEFC355F1AC864B7" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = 9327C1BD8DBBD647E54A2986;
+		};
 		"F3384E6405EDE61751F8E9BF" = {
 			"isa" = "PBXBuildFile";
 			"fileRef" = 4E747D1C77A0BE8F930D1842;
@@ -1135,6 +1271,10 @@
 			"isa" = "PBXBuildFile";
 			"fileRef" = 2900213EB1AAC461FC73D882;
 		};
+		"1A3929FDEF12C0EAF6E47134" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = AE23E4C426DE246B51B37E63;
+		};
 		"2EDCB71A43CC86E2AA718EDC" = {
 			"isa" = "PBXBuildFile";
 			"fileRef" = 45D8CDB9EFD13EA6F1D5167E;
@@ -1146,6 +1286,10 @@
 		"B6DF75F0A1FC925310CA8CD9" = {
 			"isa" = "PBXBuildFile";
 			"fileRef" = 2F0DAA2340AF86BF462C651F;
+		};
+		"FC4EFA2CB4EB182D148F55A5" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = 248AA520C94FDF7F9EC8F19F;
 		};
 		"813ABA0386970328A95878B2" = {
 			"isa" = "PBXBuildFile";
@@ -1241,7 +1385,10 @@
 				9FAD782BC76B1F49E8BCF85A,
 				D50B4F37352FE5AD1FB19A3E,
 				89F780514FCFE843D5143C5F,
+				D59928379F010B40A263FF11,
 				C9480A6326A3AEB4CDFF0AD0,
+				816217B421A6F4472BB402F2,
+				93B5DF519FD7DFB5D0EEB180,
 				FFA91AF9EFC2D9570A72E1D8,
 				330D79DBAC91458AFC5FD1B4,
 				186F64B1163AD8894D42E83C,
@@ -1259,8 +1406,14 @@
 				F7012ACAFC838BB2B947757D,
 				8E8695CCFAD8A0E0B71E880B,
 				DC7E6DE8F2CEEAF93B92081B,
+				3317911D38604066097123A6,
+				97FC12DE605643EE9214C942,
+				ECE3CE6396F5A35517039543,
+				B35DB639ECC0D313A96AB858,
 				8BDA595E6B7E8BB52B77D07C,
 				3BA76A9B502CFB0C995A14C6,
+				1C4155FD5EC81B66CC694FDA,
+				F15730975DCF15FF66018B3A,
 				B19F08E12F31C28966E6F60B,
 				7030AA1B68A45E34FD673E3F,
 				F2A88FD30C49A7367A115FD2,
@@ -1275,13 +1428,16 @@
 				55524C2E69218A31A30DFD4C,
 				835E52159021BCB41BF7F2A6,
 				F5EEE767AD94D2CDF27E9BC0,
+				28B723E4BEFC355F1AC864B7,
 				F3384E6405EDE61751F8E9BF,
 				2F87E1A81A0692ADF55CFB0C,
 				70BA9221474F4902B205239B,
 				4C28B05ABBB15A2580989B94,
+				1A3929FDEF12C0EAF6E47134,
 				2EDCB71A43CC86E2AA718EDC,
 				E65D105A94173AA7DB7AE426,
 				B6DF75F0A1FC925310CA8CD9,
+				FC4EFA2CB4EB182D148F55A5,
 				813ABA0386970328A95878B2,
 				FBF1AA11CB5078BDC014BE52,
 				107D79E30A476E920E0084C8,

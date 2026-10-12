@@ -78,8 +78,11 @@ enum CaptureCatalog {
             if status == .ready && !paths.isSuperset(of: ["room.json", "room.usdz"]) { throw CatalogError.invalidManifest }
             for path in paths.sorted() {
                 let file = try regularFile(try child(path, in: captureRoot), within: managedRoot)
+                if file.url.lastPathComponent == "surface-review.json", file.byteCount > 4 * 1_024 * 1_024 {
+                    throw CatalogError.invalidManifest
+                }
                 let kind: SourceAssetKind = ["usdz", "obj"].contains(file.url.pathExtension.lowercased()) ? .mesh
-                    : (["png", "pdf"].contains(file.url.pathExtension.lowercased()) ? .cameraMetadata : .roomPlanJSON)
+                    : (["png", "pdf"].contains(file.url.pathExtension.lowercased()) || file.url.lastPathComponent == "surface-review.json" ? .cameraMetadata : .roomPlanJSON)
                 assets.append(asset(file, kind: kind, namespace: manifest.id, root: managedRoot))
             }
             assets += try photoAssets(projectID: manifest.projectID, frameID: manifest.frameID,
@@ -125,7 +128,7 @@ enum CaptureCatalog {
         let parts = path.split(separator: "/", omittingEmptySubsequences: false)
         guard parts.count == 3, parts[0] == "empty-room", UUID(uuidString: String(parts[1])) != nil else { return false }
         return ["structural-room.json", "structural-room.usdz", "structural-room.obj", "dimensions.json",
-                "model.png", "measurements.pdf"].contains(String(parts[2]))
+                "model.png", "measurements.pdf", "surface-review.json"].contains(String(parts[2]))
     }
 
     private static func scanStatus(_ value: String) throws -> ScanStatus {

@@ -196,10 +196,13 @@ private struct TeamMaterialDetailScreen: View {
         .navigationTitle(material.manifest.title).navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(Color.atlasCanvas, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
-        .sheet(isPresented: Binding(get: { meshURL != nil }, set: { if !$0 { meshURL = nil } })) {
+        .sheet(isPresented: Binding(get: { meshURL != nil }, set: { if !$0 { meshURL = nil } }),
+               onDismiss: { model.fieldMaterialsDidChange(projectID: project.id) }) {
             if let meshURL {
                 NavigationStack {
-                    MeshPreviewScreen(url: meshURL)
+                    MeshPreviewScreen(url: meshURL, projectID: project.id,
+                        journalDirectory: model.captureDirectory(for: project).deletingLastPathComponent()
+                            .appendingPathComponent("ModelMeasurements", isDirectory: true))
                         .toolbar {
                             ToolbarItem(placement: .cancellationAction) {
                                 Button("Закрыть") { self.meshURL = nil }

@@ -81,6 +81,7 @@ jobs:
         run: |
           bash Apps/iOS/Features/Business/Tests/checks.sh
           bash Apps/iOS/Features/Projects/Tests/checks.sh
+          bash Apps/iOS/Features/Projects/Tests/measurement-journal-checks.sh
           bash Apps/iOS/Adapters/Tests/checks.sh
           python3 Apps/iOS/Adapters/Tests/check-lidar-overlay.py
           bash Apps/iOS/Adapters/Tests/mesh-export-checks.sh
@@ -90,6 +91,7 @@ jobs:
           python3 Apps/iOS/Adapters/Tests/check-tour-policy.py
           python3 Apps/iOS/Adapters/Tests/check-map-math.py
           python3 Apps/iOS/Adapters/Tests/check-survey-checkpoint.py
+          python3 Apps/iOS/Adapters/Tests/check-station-survey.py
           bash Apps/iOS/Adapters/Tests/video-tour-checks.sh
           bash Apps/iOS/Adapters/Tests/check-export-naming.sh
           bash Apps/iOS/Adapters/Tests/check-named-source-export.sh
@@ -208,8 +210,8 @@ jobs:
           root = Path('artifacts/runtime')
           summary = json.loads((root / 'diagnostics/test-summary.json').read_text())
           total = summary.get('totalTestCount', 0)
-          if total < 13 or summary.get('passedTests') != total or summary.get('result') != 'Passed':
-              raise SystemExit('Full UI verification requires all thirteen passing tests, including fieldwork, identity, floor grouping and dimension pixels.')
+          if total < 16 or summary.get('passedTests') != total or summary.get('result') != 'Passed':
+              raise SystemExit('Full UI verification requires all sixteen passing tests, including fieldwork, identity, floor grouping and dimension pixels.')
           if any(summary.get(field, 0) != 0 for field in ('failedTests', 'skippedTests', 'expectedFailures')):
               raise SystemExit('UI verification contains failed, skipped, or expected-failure tests.')
           selection = json.loads((root / 'simulator-selection.json').read_text())
@@ -230,6 +232,9 @@ jobs:
               '20-map-layers_', '20b-map-search_', '21-empty-room-unavailable_',
               '22-building-plans_', '22b-plan-dimensions_',
               '23-tour-contours_', '24-tour-linked-card_',
+              '25-survey-stations_', '26-survey-boundary_',
+              '27-opening-measurement_', '28-measurement-journal_',
+              '29-surface-classification_', '30-cabinet-door-review_',
           }
           found = set()
           for entry in manifest:

@@ -16,7 +16,7 @@ final class EmptyRoomSceneController: ObservableObject {
     private let radius: Float
     private weak var view: SCNView?
 
-    init(mesh: OBJPreviewPayload, document: EmptyRoomDocument) {
+    init(mesh: OBJPreviewPayload, document: EmptyRoomDocument, review: EmptyRoomSurfaceReview? = nil) {
         let center = (mesh.minimum + mesh.maximum) / 2
         radius = max(1, simd_length(mesh.maximum - mesh.minimum))
         let positions = SCNGeometrySource(data: mesh.positions, semantic: .vertex, vectorCount: mesh.vertexCount,
@@ -34,7 +34,7 @@ final class EmptyRoomSceneController: ObservableObject {
         scene.rootNode.addChildNode(node)
         annotations.simdPosition = -center
         scene.rootNode.addChildNode(annotations)
-        for dimension in document.dimensions.prefix(Self.maximumModelAnnotations) { add(dimension) }
+        updateAnnotations(document: document, review: review)
         scene.background.contents = UIColor(Color.atlasGraphite)
         let ambient = SCNNode(); ambient.light = SCNLight(); ambient.light?.type = .ambient; ambient.light?.intensity = 300
         scene.rootNode.addChildNode(ambient)
@@ -48,6 +48,18 @@ final class EmptyRoomSceneController: ObservableObject {
 
     func attach(_ view: SCNView) { self.view = view }
     func setDimensions(_ visible: Bool) { annotations.isHidden = !visible; view?.setNeedsDisplay() }
+    func updateAnnotations(document: EmptyRoomDocument, review: EmptyRoomSurfaceReview?) {
+        for child in annotations.childNodes { child.removeFromParentNode() }
+        let surfaces = Dictionary(document.surfaces.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        for dimension in EmptyRoomReviewPresentation.dimensions(document, review: review).prefix(Self.maximumModelAnnotations) {
+            let matrix = surfaces[dimension.sourceID]?.transform.columns
+            let normal: SIMD3<Float>
+            if let matrix, matrix.count == 16 { normal = SIMD3(Float(matrix[8]), Float(matrix[9]), Float(matrix[10])) }
+            else { normal = SIMD3(0, 0, 1) }
+            add(dimension, surfaceNormal: normal)
+        }
+        view?.setNeedsDisplay()
+    }
     func setActive(_ active: Bool) { view?.rendersContinuously = active && !hasRendered }
     func markRendered() { if !hasRendered { hasRendered = true } }
     func reset() {
@@ -62,30 +74,44 @@ final class EmptyRoomSceneController: ObservableObject {
         return view.snapshot()
     }
 
-    private func add(_ value: EmptyRoomDimension) {
+    private func add(_ value: EmptyRoomDimension, surfaceNormal: SIMD3<Float>) {
         let a = SIMD3<Float>(Float(value.start.x), Float(value.start.y), Float(value.start.z))
         let b = SIMD3<Float>(Float(value.end.x), Float(value.end.y), Float(value.end.z))
         let delta = b - a, length = simd_length(delta)
         guard length > 0 else { return }
         let color = value.confidence == .low || value.confidence == .unknown ? UIColor.systemOrange : UIColor(Color.atlasAccent)
-        let cylinder = SCNCylinder(radius: CGFloat(max(0.001, radius * 0.00065)), height: CGFloat(length))
-        cylinder.radialSegmentCount = 5
+        let direction = delta / length
+        let normal = simd_length(surfaceNormal) > 0.00001 ? simd_normalize(surfaceNormal) : SIMD3<Float>(0, 0, 1)
+        var perpendicular = simd_cross(direction, normal)
+        if simd_length(perpendicular) < 0.00001 { perpendicular = simd_cross(direction, abs(direction.y) < 0.9 ? SIMD3(0, 1, 0) : SIMD3(1, 0, 0)) }
+        perpendicular = simd_normalize(perpendicular)
+        let displayOffset = perpendicular * max(0.025, radius * 0.009) + normal * 0.004
+        let lineA = a + displayOffset, lineB = b + displayOffset
+        let tick = perpendicular * max(0.01, radius * 0.003)
         let lineMaterial = SCNMaterial(); lineMaterial.diffuse.contents = color; lineMaterial.lightingModel = .constant
-        cylinder.materials = [lineMaterial]
-        let line = SCNNode(geometry: cylinder)
-        line.simdPosition = (a + b) / 2
-        line.simdOrientation = simd_quatf(from: SIMD3<Float>(0, 1, 0), to: delta / length)
-        annotations.addChildNode(line)
+        func segment(_ start: SIMD3<Float>, _ end: SIMD3<Float>) {
+            let delta = end - start, length = simd_length(delta)
+            guard length > 0 else { return }
+            let cylinder = SCNCylinder(radius: CGFloat(max(0.001, radius * 0.00065)), height: CGFloat(length))
+            cylinder.radialSegmentCount = 5; cylinder.materials = [lineMaterial]
+            let line = SCNNode(geometry: cylinder)
+            line.simdPosition = (start + end) / 2
+            line.simdOrientation = simd_quatf(from: SIMD3<Float>(0, 1, 0), to: delta / length)
+            annotations.addChildNode(line)
+        }
+        segment(lineA, lineB)
+        segment(a, lineA); segment(b, lineB)
+        segment(lineA - tick, lineA + tick); segment(lineB - tick, lineB + tick)
         let text = SCNText(string: "\(value.title) · \(value.valueMeters.formatted(.number.precision(.fractionLength(2)))) м", extrusionDepth: 0)
         text.font = .systemFont(ofSize: 6, weight: .semibold); text.flatness = 0.5
         let textMaterial = SCNMaterial(); textMaterial.diffuse.contents = color; textMaterial.lightingModel = .constant
         text.materials = [textMaterial]
         let label = SCNNode(geometry: text)
         let bounds = text.boundingBox
-        label.pivot = SCNMatrix4MakeTranslation((bounds.min.x + bounds.max.x) / 2, bounds.min.y, 0)
+        label.pivot = SCNMatrix4MakeTranslation((bounds.min.x + bounds.max.x) / 2, (bounds.min.y + bounds.max.y) / 2, 0)
         let scale = max(0.005, radius * 0.0012)
         label.simdScale = SIMD3<Float>(repeating: scale)
-        label.simdPosition = (a + b) / 2 + SIMD3<Float>(0, radius * 0.012, 0)
+        label.simdPosition = (lineA + lineB) / 2 + perpendicular * max(0.02, radius * 0.007)
         let billboard = SCNBillboardConstraint(); billboard.freeAxes = .all
         label.constraints = [billboard]
         annotations.addChildNode(label)
@@ -133,24 +159,26 @@ struct EmptyRoomSceneView: UIViewRepresentable {
 
 @MainActor
 enum EmptyRoomPNGExporter {
-    static func render(image: UIImage, document: EmptyRoomDocument, showDimensions: Bool) -> UIImage {
+    static func render(image: UIImage, document: EmptyRoomDocument, showDimensions: Bool, review: EmptyRoomSurfaceReview? = nil) -> UIImage {
         let format = UIGraphicsImageRendererFormat(); format.scale = image.scale
-        let size = CGSize(width: image.size.width, height: image.size.height + 94)
+        let quantities = EmptyRoomQuantities.summary(document, review: review)
+        let text = "TerraView · RoomPlan · Семантический черновик\nРазмеры \(showDimensions ? "включены (до 500 подписей)" : "выключены") · Габариты, не световой проход\nПол по контурам: \(EmptyRoomReviewPresentation.number(quantities.floorGrossSquareMeters)) м² · отверстия не обследованы\nСтены до вычета, известная часть: \(EmptyRoomReviewPresentation.number(quantities.wallGrossSquareMeters)) м² · после вычета: \(EmptyRoomReviewPresentation.number(quantities.wallNetSquareMeters))\nПотолок неизвестен · Локальные метры · \(document.frameID.uuidString.prefix(8))\n? — тип не проверен · Hₛ вдоль поверхности · Уверенность не точность"
+        let style = NSMutableParagraphStyle(); style.lineBreakMode = .byWordWrapping; style.lineSpacing = 3
+        let attributes: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 9, weight: .medium), .foregroundColor: UIColor(Color.atlasInk), .paragraphStyle: style]
+        let width = max(1, image.size.width - 24)
+        let textHeight = ceil((text as NSString).boundingRect(with: CGSize(width: width, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: attributes, context: nil).height)
+        let size = CGSize(width: image.size.width, height: image.size.height + textHeight + 22)
         return UIGraphicsImageRenderer(size: size, format: format).image { context in
             UIColor(Color.atlasGraphite).setFill(); context.fill(CGRect(origin: .zero, size: size))
             image.draw(at: .zero)
-            let text = "TerraView · RoomPlan · Семантический черновик\nРазмеры \(showDimensions ? "включены (до 500 подписей)" : "выключены") · Проверьте контрольным обмером\nПотолок неизвестен · Локальные метры · Система \(document.frameID.uuidString.prefix(8))\nОранжевый: низкая/неизвестная классификация, не точность"
-            let style = NSMutableParagraphStyle(); style.lineBreakMode = .byWordWrapping; style.lineSpacing = 3
-            (text as NSString).draw(in: CGRect(x: 12, y: image.size.height + 10, width: max(1, size.width - 24), height: 78),
-                withAttributes: [.font: UIFont.systemFont(ofSize: 9, weight: .medium),
-                                 .foregroundColor: UIColor(Color.atlasInk), .paragraphStyle: style])
+            (text as NSString).draw(in: CGRect(x: 12, y: image.size.height + 10, width: width, height: textHeight + 2), withAttributes: attributes)
         }
     }
 }
 
 @MainActor
 enum EmptyRoomPDFExporter {
-    static func render(image: UIImage, document: EmptyRoomDocument, showDimensions: Bool) throws -> Data {
+    static func render(image: UIImage, document: EmptyRoomDocument, showDimensions: Bool, review: EmptyRoomSurfaceReview? = nil) throws -> Data {
         if showDimensions && document.dimensions.count > 10_000 { throw EmptyRoomError.presentationLimit }
         let page = CGRect(x: 0, y: 0, width: 595, height: 842)
         return UIGraphicsPDFRenderer(bounds: page).pdfData { pdf in
@@ -175,14 +203,47 @@ enum EmptyRoomPDFExporter {
             text("Размеры на модели: \(showDimensions ? "включены (до 500 подписей)" : "выключены") · Этаж \(document.story)\nПоверхностей: \(document.surfaces.count) · Шкафов storage: \(document.storage.count) · Удалено объектов: \(document.removedObjectCount)", CGRect(x: 40, y: 492, width: 515, height: 52), size: 11, weight: .medium)
             text("Потолок не наблюдён и не построен. Высота каждой стены не определяет общую высоту помещения.\n\nЗакрытые мебелью поверхности могут быть восстановлены RoomPlan. Проверьте геометрию контрольным обмером. Уверенность относится к классификации, а не к точности.\n\nОригиналы room.json и room-data.json сохраняются без изменений. Ручная правка плана не меняет эту 3D-модель.", CGRect(x: 40, y: 556, width: 515, height: 160), size: 10, color: .darkGray)
             text("SHA-256 исходного room.json: \(document.sourceRoomJSONSHA256)", CGRect(x: 40, y: 726, width: 515, height: 40), size: 8, color: .gray)
+            begin("Площади и полнота обмера")
+            let quantities = EmptyRoomQuantities.summary(document, review: review)
+            text("Пол по наблюдённым контурам до отверстий: \(EmptyRoomReviewPresentation.number(quantities.floorGrossSquareMeters)) м²\nПол после вычета отверстий: неизвестно — отверстия отдельно не обследованы\nСтены до вычета, известная часть: \(EmptyRoomReviewPresentation.number(quantities.wallGrossSquareMeters)) м²\nСтены после вычета: \(EmptyRoomReviewPresentation.number(quantities.wallNetSquareMeters))\nНеизвестна площадь до вычета у \(quantities.unknownWallCount) стен; после вычета у \(quantities.unknownNetWallCount).", CGRect(x: 40, y: y, width: 515, height: 120), size: 11, weight: .medium)
+            y += 135
+            text("Площади семантического черновика, не гарантия полного обследования. Пол — горизонтальная проекция, без объединения пересекающихся контуров. Стена — одна сторона; прямоугольный габарит L×H не описывает все неровности, наклонный верх и откосы. Площадь после вычета доступна только после подтверждения полноты обследования и проверки привязанных плоских контуров проёмов. W×H вместо неизвестного арочного контура не вычитается.", CGRect(x: 40, y: y, width: 515, height: 95), size: 10, color: .darkGray)
+            y += 108
+            for (index, wall) in quantities.walls.enumerated() {
+                if y + 70 > 765 { begin("Площади стен — продолжение") }
+                text("Стена \(index + 1) · \(wall.id.uuidString.prefix(8))\nДо вычета: \(EmptyRoomReviewPresentation.number(wall.grossSquareMeters)) м² · После вычета: \(EmptyRoomReviewPresentation.number(wall.netSquareMeters))\(wall.usesRectangularEnvelope ? " · прямоугольный габарит" : " · полигон поверхности")", CGRect(x: 40, y: y, width: 515, height: 35), size: 10, weight: .medium)
+                if let issue = wall.issue { text(issue, CGRect(x: 40, y: y + 37, width: 515, height: 28), size: 8, color: .gray) }
+                y += 70
+            }
             guard showDimensions else { return }
             begin("Ведомость размеров RoomPlan")
+            text("L — длина · W — ширина · H — вертикаль · Hₛ — вдоль поверхности. D/W/P/K — тип объекта; ? — классификация не проверена. Исходные габариты не становятся размером светового прохода или полотна после исправления типа.", CGRect(x: 40, y: y, width: 515, height: 42), size: 9, color: .gray)
+            y += 55
             if document.dimensions.isEmpty { text("Нет пригодных размеров поверхностей.", CGRect(x: 40, y: y, width: 515, height: 28)) }
-            for dimension in document.dimensions {
+            for dimension in EmptyRoomReviewPresentation.dimensions(document, review: review) {
                 if y + 57 > 765 { begin("Размеры — продолжение") }
                 text(dimension.label, CGRect(x: 40, y: y, width: 515, height: 22), size: 11, weight: .medium)
                 text("Поверхность \(dimension.sourceID.uuidString.prefix(8)) · Уверенность классификации: \(dimension.confidence.title)", CGRect(x: 40, y: y + 24, width: 515, height: 21), size: 9, color: .gray)
                 y += 54
+            }
+            if let review, !review.events.isEmpty {
+                begin("Контрольные обмеры специалиста")
+                var targets = Set<UUID>()
+                for event in review.events.reversed() where targets.insert(event.targetID).inserted {
+                    let controls = review.controls(for: event.targetID)
+                    if y + 56 > 765 { begin("Контрольные обмеры — продолжение") }
+                    text("\(event.role.symbol) · \(event.label) · \(event.semanticVerified ? "Тип проверен" : "Не проверено")\n\(event.dimensionMeaning.title) · координаты не совмещаются автоматически", CGRect(x: 40, y: y, width: 515, height: 40), size: 10, weight: .medium)
+                    y += 48
+                    for range in EmptyRoomReviewPresentation.ranges(controls) {
+                        if y + 26 > 765 { begin("Контрольные обмеры — продолжение") }
+                        text(range, CGRect(x: 40, y: y, width: 515, height: 24), size: 10); y += 27
+                    }
+                    for control in controls {
+                        if y + 54 > 765 { begin("Контрольные обмеры — продолжение") }
+                        text("\(EmptyRoomReviewPresentation.notation(control.role)) \(EmptyRoomReviewPresentation.number(control.effectiveMeters)) м · \(EmptyRoomReviewPresentation.position(control.position))\(control.positionNote.isEmpty ? "" : " · \(control.positionNote)")\n\(EmptyRoomReviewPresentation.definition(control.definition)) · Обмер \(control.measurementID.uuidString.prefix(8)), рев. \(control.measurementRevision)\(control.frameID.map { " · AR-система \($0.uuidString.prefix(8))" } ?? " · без AR-координат")", CGRect(x: 40, y: y, width: 515, height: 49), size: 9)
+                        y += 55
+                    }
+                }
             }
         }
     }

@@ -20,14 +20,15 @@ import zipfile
 
 REPOSITORY = 'alinkarelia/atlasios'
 IPA_ARTIFACT = 'Atlas-unsigned-device-IPA-candidate'
-MINIMUM_UI_TESTS = 13
+MINIMUM_UI_TESTS = 16
 REQUIRED_VISUAL_STATES = {
     'initial_3D', 'orbit_rotated', 'foreground_return', 'walk_forward',
     'transfer_manual', 'transfer_automatic', 'transfer_restored_manual',
     'free_tools', 'object_unavailable', 'viewer_section',
     'field_map', 'burial_unknown', 'candidate_restored', 'map_layers',
     'map_search', 'empty_room_unavailable', 'building_plans', 'plan_dimensions',
-    'tour_contours', 'tour_linked_card',
+    'tour_contours', 'tour_linked_card', 'survey_stations', 'survey_boundary',
+    'opening_measurement', 'measurement_journal', 'surface_classification', 'cabinet_door_review',
 }
 REQUIRED_SCREENSHOT_LABELS = {
     '01-project-created', '02-project-reopened', '03-capture-lidar-unavailable',
@@ -37,7 +38,9 @@ REQUIRED_SCREENSHOT_LABELS = {
     '13-transfer-restored-manual', '14-free-tools', '15-object-unavailable', '16-viewer-section',
     '17-field-map', '18-burial-unknown', '19-burial-candidate-restored', '20-map-layers',
     '20b-map-search', '21-empty-room-unavailable', '22-building-plans', '22b-plan-dimensions',
-    '23-tour-contours', '24-tour-linked-card',
+    '23-tour-contours', '24-tour-linked-card', '25-survey-stations',
+    '26-survey-boundary', '27-opening-measurement', '28-measurement-journal',
+    '29-surface-classification', '30-cabinet-door-review',
 }
 EXPECTED_JOBS = {
     'Source project and Server',

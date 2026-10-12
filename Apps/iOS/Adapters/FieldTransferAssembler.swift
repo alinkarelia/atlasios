@@ -115,6 +115,21 @@ actor FieldTransferAssembler {
                 }
             }
         }
+        var projectJournalAssets: [FieldAsset] = []
+        try ProjectJournalExport.forEachFile(project: original.project, assetDirectory: managed) { journal in
+            guard paths.insert(journal.managedRelativePath).inserted else {
+                throw FieldTransferError.invalidManifest
+            }
+            let digest = journal.sha256
+            // Save the exact bounded bytes that were validated, without the
+            // mutable source file's size/mtime digest cache or a second read.
+            try saveBlob(journal.data, sha256: digest)
+            let asset = FieldAsset(id: stableID("file:" + journal.managedRelativePath), materialID: projectMaterial.id,
+                relativePath: journal.managedRelativePath, mediaType: "application/json",
+                byteCount: journal.byteCount, sha256: digest, kind: .metadata)
+            projectJournalAssets.append(asset)
+            assets.append(asset)
+        }
         // These materials are editable domain data, carried in the complete
         // project snapshot rather than being mislabeled as camera captures.
         for feature in snapshot.features {
@@ -180,6 +195,19 @@ actor FieldTransferAssembler {
             }
             if !unchanged { groups.append(Group(material: material, assets: references)) }
         }
+        // Journals can change without a project/scans revision. Keep each file
+        // as a bounded project-owned group so journal-only deltas are retained
+        // and a large collection can span packages without duplicating owners.
+        for asset in projectJournalAssets.sorted(by: { $0.relativePath < $1.relativePath }) {
+            let unchanged = previous.contains { prior in
+                prior.projectID == original.project.id && prior.assets.contains { old in
+                    old.materialID == projectMaterial.id && old.relativePath == asset.relativePath &&
+                        old.kind == .metadata && old.mediaType == asset.mediaType &&
+                        old.byteCount == asset.byteCount && old.sha256 == asset.sha256
+                }
+            }
+            if !unchanged { groups.append(Group(material: projectMaterial, assets: [asset])) }
+        }
         if groups.isEmpty, let latest = previous.sorted(by: { $0.createdAt > $1.createdAt }).first,
            let prior = try? self.snapshot(for: latest),
            try FieldTransferJSON.encode(prior.project) == FieldTransferJSON.encode(snapshot.project) {
@@ -204,7 +232,9 @@ actor FieldTransferAssembler {
         if !current.isEmpty || batches.isEmpty { batches.append(current) }
         var result: [PreparedFieldTransfer] = []
         for batch in batches {
-            var batchMaterials = [projectMaterial] + batch.map(\.material)
+            var batchMaterials = [projectMaterial]
+            var materialIDs: Set<UUID> = [projectMaterial.id]
+            for group in batch where materialIDs.insert(group.material.id).inserted { batchMaterials.append(group.material) }
             let ids = Set(batch.map { $0.material.sourceEntityID })
             var batchSnapshot = snapshot
             batchSnapshot.scans = snapshot.scans.filter { ids.contains($0.id) }
@@ -315,6 +345,18 @@ actor FieldTransferAssembler {
         var assets = [FieldAsset(id: stableID("archive:project:" + projectID.uuidString), materialID: projectID,
             relativePath: "project.json", mediaType: "application/json", byteCount: Int64(projectData.count),
             sha256: FieldTransferDigest.sha256(projectData), kind: .projectSnapshot)]
+        var stationJournalDetails: [String: (size: Int64, sha256: String)] = [:]
+        try ProjectJournalExport.forEachFile(project: snapshot.project, assetDirectory: managed) { journal in
+            let digest = journal.sha256
+            if journal.archiveRelativePath.hasPrefix("ModelMeasurements/") {
+                assets.append(FieldAsset(id: stableID("archive:" + journal.managedRelativePath), materialID: projectID,
+                    relativePath: journal.archiveRelativePath, mediaType: "application/json",
+                    byteCount: journal.byteCount, sha256: digest, kind: .metadata))
+            } else {
+                references[journal.managedRelativePath] = (projectID, .metadata)
+                stationJournalDetails[journal.managedRelativePath] = (journal.byteCount, digest)
+            }
+        }
         if let enumerator = FileManager.default.enumerator(at: captures,
             includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey], options: [.skipsHiddenFiles]) {
             for case let file as URL in enumerator {
@@ -326,9 +368,11 @@ actor FieldTransferAssembler {
                 guard relative.hasPrefix(prefix) else { throw FieldTransferError.invalidAssetPath(relative) }
                 let safe = try FieldTransferPaths.resolve(relativePath: relative, root: managed)
                 let mapping = references[relative] ?? (projectID, .other)
+                let journalDetails = stationJournalDetails[relative]
                 assets.append(FieldAsset(id: stableID("archive:" + relative), materialID: mapping.0,
                     relativePath: "Captures/" + String(relative.dropFirst(prefix.count)), mediaType: mediaType(safe),
-                    byteCount: try fileSize(safe), sha256: try FieldTransferDigest.sha256(fileURL: safe), kind: mapping.1))
+                    byteCount: try journalDetails?.size ?? fileSize(safe),
+                    sha256: try journalDetails?.sha256 ?? FieldTransferDigest.sha256(fileURL: safe), kind: mapping.1))
                 guard assets.count <= 50_000 else { throw FieldTransportError.tooLarge }
             }
         }

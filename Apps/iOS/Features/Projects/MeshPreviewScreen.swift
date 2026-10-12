@@ -1,4 +1,5 @@
 import Combine
+import AtlasCore
 import SceneKit
 import simd
 import SwiftUI
@@ -6,6 +7,11 @@ import UIKit
 
 struct MeshPreviewScreen: View {
     let url: URL
+    let projectID: UUID?
+    let journalDirectory: URL?
+    init(url: URL, projectID: UUID? = nil, journalDirectory: URL? = nil) {
+        self.url = url; self.projectID = projectID; self.journalDirectory = journalDirectory
+    }
     @Environment(\.scenePhase) private var scenePhase
     @State private var controller: MeshPreviewController?
     @State private var issue: String?
@@ -53,17 +59,24 @@ struct MeshPreviewScreen: View {
         isLoading = true; issue = nil; controller = nil
         let sourceURL = url
         let worker = Task.detached(priority: .userInitiated) {
+            let before = try MeshDimensionSource.inspect(sourceURL, atlasOBJ: false)
             let mesh = try OBJPreviewLoader.load(sourceURL)
-            return (mesh, try MeshSectionProcessor.surfaceArea(mesh))
+            let evidence = try MeshDimensionSource.inspect(sourceURL, atlasOBJ: mesh.isAtlasCapture)
+            guard before.sha256 == evidence.sha256 else { throw OBJPreviewError.invalidMesh }
+            return (mesh, try MeshSectionProcessor.surfaceArea(mesh), evidence)
         }
         await withTaskCancellationHandler {
             do {
-                let (payload, area) = try await worker.value
+                let (payload, area, dimensionSource) = try await worker.value
                 try Task.checkCancellation()
                 // Parsing, world transforms and normal generation already ran
                 // off the UI actor. SceneKit only receives three data buffers.
                 await Task.yield()
-                controller = MeshPreviewController(mesh: payload, sourceURL: sourceURL, surfaceArea: area, isActive: scenePhase == .active)
+                let prepared = MeshPreviewController(mesh: payload, sourceURL: sourceURL, surfaceArea: area, dimensionSource: dimensionSource,
+                    projectID: projectID, journalDirectory: journalDirectory, isActive: scenePhase == .active)
+                await prepared.loadMeasurements()
+                try Task.checkCancellation()
+                controller = prepared
                 isLoading = false
             } catch is CancellationError {
                 // Leaving the screen cancels the read/normal worker.
@@ -101,6 +114,9 @@ private struct MeshPreviewContent: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .background(Color.atlasCanvas)
                 }
+                if controller.isMeasuring, let overlay = controller.dimensionOverlay {
+                    MeasurementDimensionDrawing(overlay: overlay)
+                }
                 VStack(alignment: .leading, spacing: 5) {
                     Label(controller.mode == .orbit ? "Обзор модели" : "Свободный просмотр", systemImage: controller.mode == .orbit ? "rotate.3d" : "figure.walk")
                         .font(.subheadline.weight(.semibold))
@@ -121,6 +137,7 @@ private struct MeshPreviewContent: View {
                     }.padding(16)
                 }
             }
+            .frame(minHeight: controller.isMeasuring ? 180 : 0)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color.atlasGraphite)
             VStack(spacing: 14) {
@@ -155,12 +172,48 @@ private struct MeshPreviewContent: View {
                     .accessibilityIdentifier("viewer.snapshot").accessibilityLabel("Сохранить изображение текущего ракурса PNG")
                 }.font(.subheadline.weight(.semibold))
                 if controller.isMeasuring {
-                    HStack {
+                    ScrollView {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Picker("Размер", selection: Binding(get: { controller.measurementRole }, set: { controller.setMeasurementRole($0) })) {
+                                ForEach(MeasurementRole.allCases, id: \.self) { Text($0.fieldMeasurementTitle).tag($0) }
+                            }.accessibilityIdentifier("viewer.measurementRole")
+                            Picker("Расчёт", selection: Binding(get: { controller.measurementKind }, set: { controller.setMeasurementKind($0) })) {
+                                Text("3D · прямая").tag(MeasurementKind.distance)
+                                Text("Плоскость XZ").tag(MeasurementKind.horizontalDistance)
+                                Text(controller.gravityYKnown ? "Высота · Y" : "Ось Y модели").tag(MeasurementKind.verticalDistance)
+                            }.accessibilityIdentifier("viewer.measurementProjection")
+                        }.font(.caption)
+                        HStack {
+                            Picker("Объект", selection: Binding(get: { controller.measurementTarget }, set: { controller.setMeasurementTarget($0) })) { ForEach(MeasurementTarget.allCases, id: \.self) { Text($0.fieldMeasurementTitle).tag($0) } }.accessibilityIdentifier("viewer.measurementTarget")
+                            Picker("Место", selection: $controller.samplePosition) { ForEach(MeasurementSamplePosition.allCases, id: \.self) { Text($0.fieldMeasurementTitle).tag($0) } }.accessibilityIdentifier("viewer.measurementPosition")
+                        }.font(.caption)
+                        Picker("Границы размера", selection: $controller.measurementDefinition) { ForEach(MeasurementDefinition.allCases, id: \.self) { Text($0.fieldMeasurementTitle).tag($0) } }.font(.caption).accessibilityIdentifier("viewer.measurementDefinition")
+                        HStack {
+                            TextField("Участок замера", text: $controller.measurementPositionNote).font(.caption).accessibilityIdentifier("viewer.measurementPositionNote")
+                            Button("Другой объект") { controller.newMeasurementProfile() }.font(.caption).accessibilityIdentifier("viewer.measurementNewProfile")
+                        }
+                        HStack {
                         Text(controller.measurementLabel).font(.subheadline.monospacedDigit())
                             .accessibilityIdentifier("viewer.measurementValue")
                         Spacer()
                         Button("Сброс") { controller.clearMeasurement() }
+                        }
+                        Button(controller.hasProjectJournal ? "Сохранить отдельный замер" : "Запомнить до закрытия", systemImage: "checkmark") { controller.saveMeasurement() }
+                            .disabled(!controller.hasMeasurementPair || controller.savingMeasurement)
+                            .accessibilityIdentifier("viewer.measurementSave")
+                        Text(controller.gravityYKnown ? "H — |ΔY| по силе тяжести; наклон A–B показан отдельно. Исходные A/B сохраняются в системе модели." : "Ось Y файла не подтверждена как вертикаль. Масштаб и единицы файла требуют проверки; физическая высота H не заявляется.")
+                            .font(.caption2).foregroundStyle(Color.atlasMuted)
+                        if !controller.hasProjectJournal { Text("Просмотр без проекта: размеры хранятся только до закрытия этой модели.").font(.caption2).foregroundStyle(Color.atlasMuted) }
+                        DisclosureGroup("Сохранённые замеры · \(controller.savedMeasurements.count)") {
+                            ForEach(controller.savedMeasurements.suffix(20).reversed()) { reading in
+                                Text(reading.context.role.symbol + " " + String(format: "%.3f %@", reading.value, reading.unit == "m" ? "м" : "ед.") + " · " + reading.context.position.fieldMeasurementTitle + " · " + reading.createdAt.formatted(date: .omitted, time: .shortened))
+                                    .font(.caption).accessibilityIdentifier("viewer.measurementSaved." + reading.id.uuidString)
+                            }
+                            Text("Каждый замер имеет отдельные A/B и время. Файл модели остаётся неизменным.").font(.caption2).foregroundStyle(Color.atlasMuted)
+                        }.font(.caption).accessibilityIdentifier("viewer.measurementJournal")
                     }
+                    }.frame(maxHeight: 250).scrollDismissesKeyboard(.interactively)
                 }
                 if controller.isSectioned {
                     HStack {
@@ -305,6 +358,20 @@ private struct MeshPreviewContent: View {
     private let meshNode = SCNNode()
     private let measurementNode = SCNNode()
     private var measurementPoints: [SIMD3<Float>] = []
+    private let dimensionSource: MeshDimensionSource
+    private let measurementJournal: MeshMeasurementJournal
+    private let projectID: UUID?
+    let hasProjectJournal: Bool
+    @Published private(set) var dimensionOverlay: MeasurementDimensionOverlay?
+    @Published private(set) var measurementRole = MeasurementRole.distance
+    @Published private(set) var measurementKind = MeasurementKind.distance
+    @Published var measurementTarget = MeasurementTarget.unspecified
+    @Published var measurementDefinition = MeasurementDefinition.unspecified
+    @Published var samplePosition = MeasurementSamplePosition.unspecified
+    @Published var measurementPositionNote = ""
+    @Published private(set) var savedMeasurements: [MeshDimensionObservation] = []
+    @Published private(set) var savingMeasurement = false
+    private var measurementProfileID = UUID()
     weak var renderView: SCNView?
     @Published private(set) var isMeasuring = false
     @Published private(set) var isSectioned = false
@@ -332,7 +399,11 @@ private struct MeshPreviewContent: View {
     private var movementTask: Task<Void, Never>?
     private var movingDirection: Direction?
 
-    init(mesh: OBJPreviewPayload, sourceURL: URL, surfaceArea: Double, isActive: Bool) {
+    init(mesh: OBJPreviewPayload, sourceURL: URL, surfaceArea: Double, dimensionSource: MeshDimensionSource,
+         projectID: UUID?, journalDirectory: URL?, isActive: Bool) {
+        self.dimensionSource = dimensionSource
+        self.projectID = projectID; hasProjectJournal = projectID != nil && journalDirectory != nil
+        measurementJournal = MeshMeasurementJournal(directory: journalDirectory, projectID: projectID)
         self.originalMesh = mesh; self.sourceURL = sourceURL; self.surfaceArea = surfaceArea
         self.visibleTriangleCount = mesh.triangleCount
         self.isActive = isActive
@@ -377,11 +448,13 @@ private struct MeshPreviewContent: View {
     }
 
     private var meterScale: Bool {
-        isAtlasCapture || ["room.usdz", "object.usdz"].contains(sourceURL.lastPathComponent)
+        dimensionSource.metresKnown
     }
+    var gravityYKnown: Bool { dimensionSource.gravityYKnown }
+    var hasMeasurementPair: Bool { measurementPoints.count == 2 }
     var dimensionsLabel: String {
         let extent = bounds.halfExtent * 2
-        return String(format: "%.2f × %.2f × %.2f %@", extent.x, extent.y, extent.z, meterScale ? "м" : "ед.")
+        return String(format: "X %.2f · Y %.2f · Z %.2f %@", extent.x, extent.y, extent.z, meterScale ? "м" : "ед.")
     }
     var areaLabel: String { String(format: "%.2f %@", surfaceArea, meterScale ? "м²" : "ед.²") }
 
@@ -394,6 +467,7 @@ private struct MeshPreviewContent: View {
         measurementPoints.removeAll()
         measurementNode.childNodes.forEach { $0.removeFromParentNode() }
         measurementLabel = "Выберите две точки на поверхности"
+        dimensionOverlay = nil
         revision &+= 1
     }
 
@@ -407,24 +481,127 @@ private struct MeshPreviewContent: View {
         if measurementPoints.count == 2 { clearMeasurement() }
         let point = SIMD3<Float>(hit.worldCoordinates.x, hit.worldCoordinates.y, hit.worldCoordinates.z)
         measurementPoints.append(point)
+        rebuildMeasurementGeometry()
+        revision &+= 1
+    }
+
+    func setMeasurementRole(_ role: MeasurementRole) {
+        guard role != .height || gravityYKnown else { toolIssue = "Ось Y этой модели не подтверждена как вертикаль. Используйте 3D-размер или Hₛ вдоль выбранной поверхности."; return }
+        measurementRole = role
+        if role == .height { measurementKind = .verticalDistance }
+        if role == .surfaceHeight { measurementKind = .distance }
+        toolIssue = nil; rebuildMeasurementGeometry(); revision &+= 1
+    }
+
+    func setMeasurementKind(_ kind: MeasurementKind) {
+        measurementKind = kind
+        if measurementRole == .height && kind != .verticalDistance { measurementRole = .distance }
+        if measurementRole == .surfaceHeight && kind != .distance { measurementRole = .distance }
+        if kind == .verticalDistance && gravityYKnown && measurementRole == .distance { measurementRole = .height }
+        rebuildMeasurementGeometry(); revision &+= 1
+    }
+
+    func setMeasurementTarget(_ target: MeasurementTarget) {
+        if measurementTarget != target { measurementTarget = target; newMeasurementProfile() }
+    }
+
+    private var projectedMeasurementEnd: SIMD3<Float>? {
+        guard measurementPoints.count == 2 else { return nil }
+        let a = measurementPoints[0], b = measurementPoints[1]
+        switch measurementKind {
+        case .distance: return b
+        case .horizontalDistance: return .init(b.x, a.y, b.z)
+        case .verticalDistance: return .init(a.x, b.y, a.z)
+        }
+    }
+
+    private var measurementValue: Double? {
+        guard let end = projectedMeasurementEnd else { return nil }
+        let start = measurementPoints[0]
+        let dx = Double(end.x) - Double(start.x), dy = Double(end.y) - Double(start.y), dz = Double(end.z) - Double(start.z)
+        return sqrt(dx * dx + dy * dy + dz * dz)
+    }
+
+    private var dimensionValueLabel: String {
+        guard let value = measurementValue else { return "Выберите две точки на поверхности" }
+        let symbol = measurementKind == .verticalDistance && !gravityYKnown ? "Y" : measurementRole.symbol
+        return symbol + String(format: " %.3f %@", value, meterScale ? "м" : "ед.")
+    }
+
+    private func rebuildMeasurementGeometry() {
+        measurementNode.childNodes.forEach { $0.removeFromParentNode() }
         let radius = CGFloat(max(0.008, bounds.diagonal * 0.003))
-        let marker = SCNNode(geometry: SCNSphere(radius: radius))
-        marker.geometry?.firstMaterial?.diffuse.contents = UIColor(Color.atlasAccent)
-        marker.geometry?.firstMaterial?.lightingModel = .constant
-        marker.simdPosition = point
-        measurementNode.addChildNode(marker)
-        if measurementPoints.count == 2 {
-            let delta = measurementPoints[1] - measurementPoints[0]
+        for point in measurementPoints {
+            let marker = SCNNode(geometry: SCNSphere(radius: radius))
+            marker.geometry?.firstMaterial?.diffuse.contents = UIColor(Color.atlasAccent)
+            marker.geometry?.firstMaterial?.lightingModel = .constant
+            marker.simdPosition = point; measurementNode.addChildNode(marker)
+        }
+        if let end = projectedMeasurementEnd {
+            let delta = end - measurementPoints[0]
             let length = simd_length(delta)
             let rod = SCNNode(geometry: SCNCylinder(radius: radius * 0.45, height: CGFloat(length)))
             rod.geometry?.firstMaterial?.diffuse.contents = UIColor(Color.atlasAccent)
             rod.geometry?.firstMaterial?.lightingModel = .constant
-            rod.simdPosition = (measurementPoints[0] + measurementPoints[1]) / 2
+            rod.simdPosition = (measurementPoints[0] + end) / 2
             if length > 0.00001 { rod.simdOrientation = simd_quatf(from: SIMD3<Float>(0, 1, 0), to: delta / length) }
             measurementNode.addChildNode(rod)
-            measurementLabel = String(format: "%.3f %@ · расстояние по прямой", length, meterScale ? "м" : "ед.")
-        } else { measurementLabel = "Первая точка отмечена — выберите вторую" }
-        revision &+= 1
+            let direct = simd_distance(measurementPoints[0], measurementPoints[1])
+            measurementLabel = dimensionValueLabel + (measurementKind == .distance ? " · расстояние по прямой" : String(format: " · A–B в 3D %.3f %@", direct, meterScale ? "м" : "ед."))
+        } else { measurementLabel = measurementPoints.isEmpty ? "Выберите две точки на поверхности" : "A отмечена — выберите B" }
+        refreshMeasurementOverlay()
+    }
+
+    private func refreshMeasurementOverlay() {
+        guard isMeasuring, let view = renderView, let a = measurementPoints.first else { dimensionOverlay = nil; return }
+        let pose = camera.simdWorldTransform
+        let origin = SIMD3<Float>(pose.columns.3.x, pose.columns.3.y, pose.columns.3.z)
+        let forward = -SIMD3<Float>(pose.columns.2.x, pose.columns.2.y, pose.columns.2.z)
+        func project(_ point: SIMD3<Float>) -> CGPoint? {
+            guard simd_dot(point - origin, forward) > 0.01 else { return nil }
+            let value = view.projectPoint(SCNVector3(point.x, point.y, point.z))
+            guard value.x.isFinite, value.y.isFinite, value.z.isFinite, value.z >= 0, value.z <= 1 else { return nil }
+            return .init(x: CGFloat(value.x), y: CGFloat(value.y))
+        }
+        dimensionOverlay = .init(pointA: project(a), pointB: measurementPoints.count == 2 ? project(measurementPoints[1]) : nil,
+            dimensionA: projectedMeasurementEnd == nil ? nil : project(a), dimensionB: projectedMeasurementEnd.flatMap(project),
+            label: dimensionValueLabel, preview: false)
+    }
+
+    func newMeasurementProfile() { measurementProfileID = UUID(); measurementPositionNote = ""; samplePosition = .unspecified; clearMeasurement() }
+
+    func loadMeasurements() async {
+        guard hasProjectJournal else { return }
+        do {
+            savedMeasurements = try await measurementJournal.load(source: dimensionSource.sha256)
+            if let latest = savedMeasurements.last {
+                measurementProfileID = latest.context.profileID ?? UUID()
+                measurementTarget = latest.context.target
+                measurementDefinition = latest.context.effectiveDefinition
+                samplePosition = latest.context.position; measurementPositionNote = latest.context.positionNote
+                measurementRole = latest.context.role; measurementKind = latest.kind
+            }
+        } catch { toolIssue = "Сохранённые размеры требуют проверки. Исходная модель сохранена: " + error.localizedDescription }
+    }
+
+    func saveMeasurement() {
+        guard !savingMeasurement, measurementPoints.count == 2, let value = measurementValue else { return }
+        let center = (originalMesh.minimum + originalMesh.maximum) / 2
+        let a = measurementPoints[0], b = measurementPoints[1]
+        let record = MeshDimensionObservation(sourceSHA256: dimensionSource.sha256, projectID: projectID, frameID: dimensionSource.frameID,
+            start: [Double(a.x) + Double(center.x), Double(a.y) + Double(center.y), Double(a.z) + Double(center.z)],
+            end: [Double(b.x) + Double(center.x), Double(b.y) + Double(center.y), Double(b.z) + Double(center.z)], kind: measurementKind,
+            context: .init(role: measurementRole, target: measurementTarget, targetID: measurementProfileID,
+                           profileID: measurementProfileID, position: samplePosition, positionNote: measurementPositionNote, definition: measurementDefinition),
+            value: value, unit: meterScale ? "m" : "model-unit", gravityYKnown: gravityYKnown)
+        if !hasProjectJournal { savedMeasurements.append(record); clearMeasurement(); return }
+        savingMeasurement = true
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.savingMeasurement = false }
+            do { self.savedMeasurements = try await self.measurementJournal.append(record); self.clearMeasurement() }
+            catch { self.toolIssue = "Размер не сохранён: " + error.localizedDescription }
+        }
     }
 
     func toggleSection() {
@@ -604,6 +781,7 @@ private struct MeshPreviewContent: View {
             orientCamera(yaw: walkYaw, pitch: walkPitch)
         }
         SCNTransaction.commit()
+        refreshMeasurementOverlay()
         revision &+= 1
     }
 }

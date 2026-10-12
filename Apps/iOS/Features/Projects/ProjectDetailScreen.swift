@@ -12,6 +12,9 @@ struct ProjectDetailScreen: View {
     @State private var captures: [URL] = []
     @State private var loading = true
     @State private var refreshID = UUID()
+    #if DEBUG
+    @State private var reviewFixture: EmptyRoomReviewUITestFixture?
+    #endif
 
     private var currentRevision: Int64 {
         model.projects.first(where: { $0.id == project.id })?.revision ?? project.revision
@@ -19,6 +22,18 @@ struct ProjectDetailScreen: View {
 
     var body: some View {
         List {
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--uitest-seed-review") {
+                Section("Синтетический источник · проверка интерфейса") {
+                    Button("Проверить каталог поверхностей") {
+                        Task {
+                            do { reviewFixture = try await EmptyRoomReviewUITestFixture.prepare(project: project, root: model.directory) }
+                            catch { model.issue = error.localizedDescription }
+                        }
+                    }.accessibilityIdentifier("project.testSurfaceReview")
+                }
+            }
+            #endif
             Section {
                 ProjectPreview(project: project, directory: model.captureDirectory(for: project))
                     .frame(height: 220).clipShape(RoundedRectangle(cornerRadius: 24))
@@ -156,10 +171,21 @@ struct ProjectDetailScreen: View {
         .toolbarBackground(.visible, for: .navigationBar)
         .task(id: currentRevision) { await refresh() }
         .refreshable { await refresh() }
-        .sheet(isPresented: Binding(get: { meshURL != nil }, set: { if !$0 { meshURL = nil } })) {
+        #if DEBUG
+        .sheet(item: $reviewFixture) { fixture in
+            NavigationStack {
+                EmptyRoomSurfaceCatalogScreen(model: model, project: project, document: fixture.document,
+                    directory: fixture.directory, review: fixture.review, onSaved: { _ in })
+            }
+        }
+        #endif
+        .sheet(isPresented: Binding(get: { meshURL != nil }, set: { if !$0 { meshURL = nil } }),
+               onDismiss: { model.fieldMaterialsDidChange(projectID: project.id) }) {
             if let meshURL {
                 NavigationStack {
-                    MeshPreviewScreen(url: meshURL)
+                    MeshPreviewScreen(url: meshURL, projectID: project.id,
+                        journalDirectory: model.captureDirectory(for: project).deletingLastPathComponent()
+                            .appendingPathComponent("ModelMeasurements", isDirectory: true))
                         .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Закрыть") { self.meshURL = nil } } }
                         .toolbarBackground(Color.atlasCanvas, for: .navigationBar)
                         .toolbarBackground(.visible, for: .navigationBar)

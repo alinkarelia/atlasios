@@ -300,6 +300,24 @@ final class RoomCaptureAdapter: NSObject, ObservableObject, RoomCaptureViewDeleg
         } catch { state = .saved; errorMessage = error.localizedDescription; throw error }
     }
 
+    func savedStructuralRoom(keepStorage: Bool) async throws -> EmptyRoomExport? {
+        guard state == .saved, let source = roomJSON, let writer, let metadata = manifest else { return nil }
+        return try await writer.savedStructuralRoom(source: source, metadata: metadata, keepStorage: keepStorage)
+    }
+
+    /// Registers a legacy derivative's review journal before the UI can append
+    /// an operator decision. Existing malformed journals are retained for review.
+    func ensureStructuralReview(_ result: EmptyRoomExport) async throws -> URL {
+        guard state == .saved, let writer, let metadata = manifest,
+              result.document.captureID == metadata.id else { throw RoomCaptureError.noRoom }
+        state = .exporting
+        do {
+            manifest = try await writer.ensureStructuralReview(result: result, metadata: metadata)
+            state = .saved
+            return result.manifestURL
+        } catch { state = .saved; errorMessage = error.localizedDescription; throw error }
+    }
+
     /// Explicitly reopens a durable RoomPlan source; no camera session starts.
     func loadSavedRoom(at directory: URL, projectID: UUID) async throws {
         guard state != .recording, state != .processing, state != .exporting, state != .preparing else { throw CaptureError.operationInProgress }
@@ -329,10 +347,12 @@ final class RoomCaptureAdapter: NSObject, ObservableObject, RoomCaptureViewDeleg
             guard wall.curve == nil, wall.dimensions.x > 0 else { return nil }
             let start = wall.transform * SIMD4<Float>(-wall.dimensions.x / 2, 0, 0, 1)
             let end = wall.transform * SIMD4<Float>(wall.dimensions.x / 2, 0, 0, 1)
+            let vertical = wall.transform.columns.1
+            let hasGravityHeight = abs(vertical.x) < 0.001 && abs(vertical.z) < 0.001 && abs(abs(vertical.y) - 1) < 0.001
             return PlanWall(id: wall.identifier,
                 start: MetricPoint2D(x: Double(start.x), y: Double(start.z)),
                 end: MetricPoint2D(x: Double(end.x), y: Double(end.z)),
-                heightMeters: wall.dimensions.y > 0 ? Double(wall.dimensions.y) : nil,
+                heightMeters: wall.dimensions.y > 0 && hasGravityHeight ? Double(wall.dimensions.y) : nil,
                 thicknessMeters: wall.dimensions.z > 0.001 ? Double(wall.dimensions.z) : nil)
         }
         let rooms = room.floors.enumerated().compactMap { index, floor -> PlanRoom? in
@@ -660,10 +680,11 @@ private actor RoomCheckpointWriter {
         }
         let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]; encoder.dateEncodingStrategy = .iso8601
         try encoder.encode(document).write(to: stage.appendingPathComponent("dimensions.json"), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        try encoder.encode(EmptyRoomSurfaceReview(source: document)).write(to: stage.appendingPathComponent(EmptyRoomSurfaceReviewPolicy.fileName), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
         try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
         try FileManager.default.moveItem(at: stage, to: destination)
         var updated = metadata; updated.status = "ready"
-        var assets = ["structural-room.json", "structural-room.usdz", "dimensions.json"]
+        var assets = ["structural-room.json", "structural-room.usdz", "dimensions.json", EmptyRoomSurfaceReviewPolicy.fileName]
         if hasOBJ { assets.append("structural-room.obj") }
         updated.completedAssets += assets.map { "\(relative)/\($0)" }
         updated.notes = Array(Set(updated.notes + ["Clean RoomPlan derivatives preserve this capture's local frame and immutable originals. Semantic draft requires independent review; ceilings are not inferred."])).sorted()
@@ -671,6 +692,80 @@ private actor RoomCheckpointWriter {
         catch { try? FileManager.default.removeItem(at: destination); throw error }
         return (updated, .init(manifestURL: root.appendingPathComponent("manifest.json"), documentURL: destination.appendingPathComponent("dimensions.json"),
             usdzURL: destination.appendingPathComponent("structural-room.usdz"), objURL: hasOBJ ? destination.appendingPathComponent("structural-room.obj") : nil, document: document))
+    }
+
+    func savedStructuralRoom(source: Data, metadata: RoomManifest, keepStorage: Bool) throws -> EmptyRoomExport? {
+        let expectedHash = FieldTransferDigest.sha256(source)
+        let roomID = try JSONDecoder().decode(CapturedRoom.self, from: source).identifier
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        let candidates = metadata.completedAssets.filter { $0.hasPrefix("empty-room/") && $0.hasSuffix("/dimensions.json") }
+        guard candidates.count <= 2_000 else { throw EmptyRoomError.sourceLimit }
+        var exports: [(EmptyRoomExport, Date)] = []
+        for relative in candidates {
+            let parts = relative.split(separator: "/", omittingEmptySubsequences: false)
+            guard parts.count == 3, parts[0] == "empty-room", UUID(uuidString: String(parts[1])) != nil,
+                  parts[2] == "dimensions.json" else { throw EmptyRoomError.unsupportedSchema }
+            let folder = root.appendingPathComponent("empty-room", isDirectory: true).appendingPathComponent(String(parts[1]), isDirectory: true)
+            try validateStructuralFolder(folder)
+            let documentURL = folder.appendingPathComponent("dimensions.json")
+            let values = try documentURL.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey, .isSymbolicLinkKey, .contentModificationDateKey])
+            guard values.isRegularFile == true, values.isSymbolicLink != true,
+                  let bytes = values.fileSize, bytes > 0, bytes <= 4 * 1_024 * 1_024 else { throw EmptyRoomError.unsupportedSchema }
+            let document = try decoder.decode(EmptyRoomDocument.self, from: Data(contentsOf: documentURL))
+            guard document.projectID == metadata.projectID, document.captureID == metadata.id,
+                  document.frameID == metadata.frameID, document.sourceRoomID == roomID,
+                  document.sourceRoomJSONSHA256 == expectedHash else { throw EmptyRoomError.wrongProject }
+            guard document.keepStorage == keepStorage else { continue }
+            try EmptyRoomSurfaceReviewPolicy.validate(EmptyRoomSurfaceReview(source: document), source: document)
+            let usdz = folder.appendingPathComponent("structural-room.usdz")
+            let modelValues = try usdz.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
+            guard modelValues.isRegularFile == true, modelValues.isSymbolicLink != true,
+                  (modelValues.fileSize ?? 0) > 0 else { throw EmptyRoomError.noSource }
+            let obj = folder.appendingPathComponent("structural-room.obj")
+            let objValues = try? obj.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
+            let objURL = objValues?.isRegularFile == true && objValues?.isSymbolicLink != true && (objValues?.fileSize ?? 0) > 0 ? obj : nil
+            exports.append((.init(manifestURL: root.appendingPathComponent("manifest.json"), documentURL: documentURL,
+                usdzURL: usdz, objURL: objURL, document: document), values.contentModificationDate ?? .distantPast))
+        }
+        return exports.sorted { ($0.1, $0.0.documentURL.path) > ($1.1, $1.0.documentURL.path) }.first?.0
+    }
+
+    func ensureStructuralReview(result: EmptyRoomExport, metadata: RoomManifest) throws -> RoomManifest {
+        let folder = result.documentURL.deletingLastPathComponent()
+        try validateStructuralFolder(folder)
+        guard result.document.projectID == metadata.projectID, result.document.captureID == metadata.id,
+              result.document.frameID == metadata.frameID else { throw EmptyRoomError.wrongProject }
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        var updated = try decoder.decode(RoomManifest.self, from: boundedManifest(root.appendingPathComponent("manifest.json")))
+        guard updated.id == metadata.id, updated.projectID == metadata.projectID, updated.frameID == metadata.frameID else { throw EmptyRoomError.wrongProject }
+        let url = folder.appendingPathComponent(EmptyRoomSurfaceReviewPolicy.fileName)
+        let existed = FileManager.default.fileExists(atPath: url.path)
+        if existed {
+            let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
+            guard values.isRegularFile == true, values.isSymbolicLink != true,
+                  let bytes = values.fileSize, bytes >= 0, bytes <= EmptyRoomSurfaceReviewPolicy.maximumFileBytes else { throw EmptyRoomError.unsupportedSchema }
+        } else {
+            let review = EmptyRoomSurfaceReview(source: result.document)
+            try EmptyRoomSurfaceReviewPolicy.validate(review, source: result.document)
+            let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601; encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            try encoder.encode(review).write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        }
+        let relative = "empty-room/\(folder.lastPathComponent)/\(EmptyRoomSurfaceReviewPolicy.fileName)"
+        if !updated.completedAssets.contains(relative) { updated.completedAssets.append(relative) }
+        do { try saveManifest(updated) }
+        catch { if !existed { try? FileManager.default.removeItem(at: url) }; throw error }
+        return updated
+    }
+
+    private func validateStructuralFolder(_ folder: URL) throws {
+        let collection = root.appendingPathComponent("empty-room", isDirectory: true)
+        guard folder.isFileURL, UUID(uuidString: folder.lastPathComponent) != nil,
+              folder.deletingLastPathComponent().standardizedFileURL == collection.standardizedFileURL else { throw EmptyRoomError.invalidGeometry }
+        for directory in [collection, folder] {
+            let values = try directory.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            guard values.isDirectory == true, values.isSymbolicLink != true,
+                  directory.resolvingSymlinksInPath().path.hasPrefix(root.resolvingSymlinksInPath().path + "/") else { throw EmptyRoomError.invalidGeometry }
+        }
     }
 
     func savePresentation(result: EmptyRoomExport, metadata: RoomManifest, png: Data, pdf: Data) throws -> RoomManifest {

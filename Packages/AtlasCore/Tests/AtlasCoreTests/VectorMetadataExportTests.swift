@@ -24,6 +24,70 @@ private func fixtureBoundary(_ frame: UUID) -> MetricPolygon {
           holes: [[.init(x: -1, y: 4), .init(x: 0, y: 4), .init(x: 0, y: 5), .init(x: -1, y: 5)]])
 }
 
+@Test func measurementCSVSeparatesHeightProjectionFromDirectDistanceAndPreservesProfileContext() throws {
+    let frame = UUID(), target = UUID(), profile = UUID()
+    let project = AtlasProject(name: "Measurements", kind: .building, coordinateReference: .localMeters(frameID: frame))
+    let ar = try MeasurementRecord.arRaycast(projectID: project.id, kind: .verticalDistance, frameID: frame,
+        start: .init(x: 1, y: 2, z: 3), end: .init(x: 4, y: 14, z: 7), trackingQuality: .normal,
+        context: .init(role: .height, target: .door, targetID: target, profileID: profile,
+                       position: .left, positionNote: "A / B", definition: .clearOpening))
+    let manual = MeasurementRecord(projectID: project.id, source: .laserReference, originalMeters: 0.9,
+        context: .init(role: .width, target: .cabinetDoor, targetID: UUID(), position: .upper))
+    let artifact = try AtlasExporter.export(.init(project: project, measurements: [ar, manual]), format: .csv)
+    try independentlyReadExports(["measurements.csv": artifact.data], python: #"""
+        import csv, json, pathlib, sys
+        with (pathlib.Path(sys.argv[1]) / 'measurements.csv').open(encoding='utf-8-sig', newline='') as f:
+            rows = list(csv.DictReader(f, strict=True))
+        ar = next(r for r in rows if r['source'] == 'arRaycast')
+        assert ar['units'] == 'm' and ar['dimension_symbol'] == 'H'
+        assert ar['measurement_role'] == 'height' and ar['measurement_target'] == 'door'
+        assert ar['measurement_definition'] == 'clearOpening'
+        assert ar['value_method'] == 'verticalDistance' and ar['coordinate_basis'] == 'arKitYUp'
+        assert ar['start_label'] == 'A' and ar['end_label'] == 'B'
+        assert float(ar['effective_value_m']) == float(ar['height_m']) == 12
+        assert float(ar['direct_distance_m']) == 13 and float(ar['horizontal_component_m']) == 5
+        assert float(ar['vertical_component_m']) == 12 and ar['sample_position'] == 'left'
+        context = json.loads(ar['metadata_json'])['context']
+        assert context['profileID'] == ar['measurement_profile_id']
+        assert context['targetID'] == ar['measurement_target_id']
+        assert context['positionNote'] == ar['sample_position_note'] == 'A / B'
+        manual = next(r for r in rows if r['source'] == 'laserReference')
+        assert manual['measurement_target'] == 'cabinetDoor' and manual['dimension_symbol'] == 'W'
+        assert manual['measurement_definition'] == 'unspecified'
+        assert float(manual['effective_value_m']) == 0.9
+        assert manual['coordinate_basis'] == manual['start_label'] == manual['end_label'] == ''
+        assert manual['direct_distance_m'] == manual['vertical_component_m'] == ''
+        """#)
+}
+
+@Test func planQuantityCSVExportsFloorHolesAndKnownSingleFaceWallSubtotalWithUnknownNetArea() throws {
+    let frame = UUID()
+    let project = AtlasProject(name: "Quantities", kind: .building, coordinateReference: .localMeters(frameID: frame))
+    let plan = AtlasFloorPlan(projectID: project.id, frameID: frame,
+        rooms: [.init(name: "Room", boundary: fixtureBoundary(frame))],
+        walls: [.init(start: .init(x: -2, y: 3), end: .init(x: 2, y: 3), heightMeters: 2.8),
+                .init(start: .init(x: 2, y: 3), end: .init(x: 2, y: 8))])
+    let artifact = try AtlasExporter.export(.init(project: project, floorPlans: [plan]), format: .csv)
+    try independentlyReadExports(["quantities.csv": artifact.data], python: #"""
+        import csv, pathlib, sys
+        with (pathlib.Path(sys.argv[1]) / 'quantities.csv').open(encoding='utf-8-sig', newline='') as f:
+            rows = list(csv.DictReader(f, strict=True))
+        plan = next(r for r in rows if r['record_type'] == 'floorPlan')
+        assert float(plan['floor_gross_area_m2']) == 20 and float(plan['floor_net_area_m2']) == 19
+        assert abs(float(plan['known_wall_gross_area_m2']) - 11.2) < 1e-10
+        assert plan['known_wall_net_area_m2'] == ''
+        assert plan['measured_room_count'] == '1' and plan['excluded_room_count'] == '0'
+        assert plan['measured_wall_count'] == '1' and plan['unknown_height_wall_count'] == '1'
+        assert 'without_union' in plan['area_method'] and 'single_face_gross' in plan['area_method']
+        room = next(r for r in rows if r['record_type'] == 'room')
+        assert float(room['floor_net_area_m2']) == float(room['area_m2']) == 19
+        walls = [r for r in rows if r['record_type'] == 'wall']
+        assert len(walls) == 2
+        assert walls[1]['known_wall_gross_area_m2'] == walls[1]['height_m'] == ''
+        assert all(r['known_wall_net_area_m2'] == '' for r in walls)
+        """#)
+}
+
 @Test func svgIsReadableVectorGeometryWithMetricScaleHolesWallsAndSafeLabels() throws {
     let frame = UUID()
     let project = AtlasProject(name: "Дом <сектор> & \"А\"", kind: .building, coordinateReference: .localMeters(frameID: frame))

@@ -21,6 +21,7 @@ struct GeometryEditorScreen: View {
     @State private var showSearch = false
     @State private var showLayers = false
     @State private var showTrack = false
+    @State private var showStations = false
     @State private var showGeographicProject = false
     @State private var geographicName = ""
     @State private var createdProject: AtlasProject?
@@ -122,6 +123,9 @@ struct GeometryEditorScreen: View {
                 Task { await refresh() }
             }
         }
+        .sheet(isPresented: $showStations) {
+            StationSurveyScreen(model: model, project: project) { Task { await refresh() } }
+        }
         .sheet(isPresented: $showGeographicProject) { geographicProjectSheet }
         .navigationDestination(item: $createdProject) { project in
             GeometryEditorScreen(model: model, project: project)
@@ -212,6 +216,11 @@ struct GeometryEditorScreen: View {
                         if isGeographic { showTrack = true } else { offerGeographicProject() }
                     } label: { Label("GPS-трек", systemImage: "figure.walk") }
                     .buttonStyle(.bordered).accessibilityIdentifier("map.track")
+                }
+                HStack {
+                    Button("Съёмка по точкам", systemImage: "scope") { showStations = true }
+                        .buttonStyle(.bordered).accessibilityIdentifier("map.stations")
+                    Spacer()
                 }
                 HStack {
                     Button { showLayers = true } label: {

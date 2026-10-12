@@ -152,6 +152,16 @@ extension AtlasExporter {
             var row = ExportCSVRow(kind: "floorPlan", id: plan.id, projectID: project.id)
             row.text("name", plan.name); row.number("revision", plan.revision)
             row.reference(.localMeters(frameID: plan.frameID)); row.number("floor_index", plan.floorIndex)
+            let quantities = PlanQuantities.summary(of: plan)
+            row.number("floor_gross_area_m2", quantities.floorGrossSquareMeters)
+            row.number("floor_net_area_m2", quantities.floorNetSquareMeters)
+            row.number("known_wall_gross_area_m2", quantities.wallGrossSquareMeters)
+            row.number("known_wall_net_area_m2", quantities.wallNetSquareMeters)
+            row.number("measured_room_count", quantities.measuredRoomCount)
+            row.number("excluded_room_count", quantities.roomCount - quantities.measuredRoomCount)
+            row.number("measured_wall_count", quantities.measuredWallCount)
+            row.number("unknown_height_wall_count", quantities.unknownHeightWallCount)
+            row.text("area_method", "sum_horizontal_room_contours_without_union;wall_rectangular_single_face_gross")
             row.text("metadata_json", try exportJSONString(plan))
             table.rows.append(row)
             for room in plan.rooms {
@@ -159,6 +169,10 @@ extension AtlasExporter {
                 roomRow.text("name", room.name); roomRow.reference(.localMeters(frameID: plan.frameID))
                 roomRow.number("floor_index", plan.floorIndex)
                 roomRow.number("area_m2", try PolygonGeometry.area(of: room.boundary))
+                let roomArea = try PlanQuantities.floorArea(of: room.boundary, expectedFrameID: plan.frameID)
+                roomRow.number("floor_gross_area_m2", roomArea.grossSquareMeters)
+                roomRow.number("floor_net_area_m2", roomArea.netSquareMeters)
+                roomRow.text("area_method", "horizontal_room_contour;net_excludes_observed_holes")
                 roomRow.number("perimeter_m", try PolygonGeometry.perimeter(of: room.boundary))
                 roomRow.text("geometry_json", try exportJSONString(room.boundary))
                 roomRow.text("metadata_json", try exportJSONString(room))
@@ -169,6 +183,8 @@ extension AtlasExporter {
                 wallRow.reference(.localMeters(frameID: plan.frameID)); wallRow.number("floor_index", plan.floorIndex)
                 wallRow.number("length_m", hypot(wall.end.x - wall.start.x, wall.end.y - wall.start.y))
                 wallRow.number("height_m", wall.heightMeters); wallRow.number("thickness_m", wall.thicknessMeters)
+                wallRow.number("known_wall_gross_area_m2", try PlanQuantities.wallGrossArea(of: wall))
+                wallRow.text("area_method", "rectangular_single_face_gross;net_unknown_openings_not_recorded")
                 wallRow.text("geometry_json", try exportJSONString([wall.start, wall.end]))
                 wallRow.text("metadata_json", try exportJSONString(wall))
                 table.rows.append(wallRow)
@@ -200,10 +216,28 @@ extension AtlasExporter {
             row.text("name", record.label); row.text("category", record.kind.rawValue)
             row.text("source", record.source.rawValue); row.number("revision", record.revision)
             row.number("length_m", record.effectiveMeters); row.number("original_length_m", record.originalMeters)
+            row.number("effective_value_m", record.effectiveMeters)
+            row.text("value_method", record.kind.rawValue); row.text("units", "m")
+            row.text("dimension_symbol", record.notation)
+            if let context = record.context {
+                row.text("measurement_role", context.role.rawValue)
+                row.text("measurement_target", context.target.rawValue)
+                row.text("measurement_definition", context.effectiveDefinition.rawValue)
+                row.text("measurement_target_id", context.targetID?.uuidString ?? "")
+                row.text("measurement_profile_id", context.profileID?.uuidString ?? "")
+                row.text("sample_position", context.position.rawValue)
+                row.text("sample_position_note", context.positionNote)
+            }
+            if record.kind == .verticalDistance { row.number("height_m", record.effectiveMeters) }
+            if let basis = record.coordinateBasis { row.text("coordinate_basis", basis.rawValue) }
             row.date("created_at_utc", record.createdAt); row.date("captured_at_utc", record.createdAt)
             if let frameID = record.frameID { row.reference(.localMeters(frameID: frameID)) }
             if let start = record.start, let end = record.end {
                 row.text("geometry_json", try exportJSONString([start, end]))
+                row.text("start_label", "A"); row.text("end_label", "B")
+                row.number("direct_distance_m", try MeasurementGeometry.distance(from: start, to: end))
+                row.number("horizontal_component_m", try MeasurementGeometry.horizontalDistance(from: start, to: end))
+                row.number("vertical_component_m", try MeasurementGeometry.verticalDistance(from: start, to: end))
             }
             row.text("metadata_json", try exportJSONString(record))
             table.rows.append(row)
@@ -449,7 +483,13 @@ private struct ExportCSVTable {
         "observed_at_utc", "longitude", "latitude", "altitude_m", "horizontal_accuracy_m", "location_source", "location_simulated",
         "original_longitude", "original_latitude", "original_observed_at_utc", "original_location_source", "geotag_json", "geometry_json",
         "area_m2", "perimeter_m", "length_m", "original_length_m", "height_m", "thickness_m", "relative_path", "asset_kind", "bytes", "sha256",
-        "attributes_json", "notes", "metadata_json", "geometry_type", "length_method", "x_m", "y_m"]
+        "attributes_json", "notes", "metadata_json", "geometry_type", "length_method", "x_m", "y_m",
+        "effective_value_m", "value_method", "units", "dimension_symbol", "measurement_role", "measurement_target",
+        "measurement_target_id", "measurement_profile_id", "sample_position", "sample_position_note", "coordinate_basis",
+        "start_label", "end_label", "direct_distance_m", "horizontal_component_m", "vertical_component_m",
+        "floor_gross_area_m2", "floor_net_area_m2", "known_wall_gross_area_m2", "known_wall_net_area_m2",
+        "measured_room_count", "excluded_room_count", "measured_wall_count", "unknown_height_wall_count", "area_method",
+        "measurement_definition"]
     func artifact(fileName: String) -> ExportArtifact {
         func csv(_ value: String) -> String { "\"" + value.replacingOccurrences(of: "\"", with: "\"\"") + "\"" }
         let lines = [Self.columns.map(csv).joined(separator: ",")] + rows.map { row in

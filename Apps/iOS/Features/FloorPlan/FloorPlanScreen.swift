@@ -125,7 +125,8 @@ struct FloorPlanScreen: View {
         }.pickerStyle(.menu)
     }
     private func planHeader(_ plan: AtlasFloorPlan) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let quantities = PlanQuantities.summary(of: plan)
+        return VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text(plan.name).font(.title2.bold()).foregroundStyle(Color.atlasInk)
                 Spacer()
@@ -136,11 +137,55 @@ struct FloorPlanScreen: View {
             HStack {
                 Label("\(plan.rooms.count) комнат", systemImage: "square.split.2x2")
                 Spacer()
-                Text("\(totalArea(plan).formatted(.number.precision(.fractionLength(2)))) м²").fontWeight(.semibold)
+                Text("\(plan.walls.count) стен").fontWeight(.semibold)
             }.font(.subheadline).foregroundStyle(Color.atlasInk)
-            Text("Сумма площадей контуров комнат. Пересечения между комнатами не вычитаются. Геопривязка не заявляется.")
-                .font(.caption).foregroundStyle(Color.atlasMuted)
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(alignment: .top, spacing: 16) {
+                    quantityMetric("Пол · до отверстий", value: quantities.floorGrossSquareMeters)
+                    quantityMetric("Пол · без отверстий", value: quantities.floorNetSquareMeters)
+                }
+                Text("Контуров учтено: \(quantities.measuredRoomCount)/\(quantities.roomCount)")
+                    .font(.caption2).foregroundStyle(Color.atlasMuted)
+                HStack {
+                    Text("Стены · до вычета проёмов").font(.caption)
+                    Spacer()
+                    Text(areaText(quantities.wallGrossSquareMeters)).font(.subheadline.weight(.semibold))
+                }
+                Text("Одна сторона, прямоугольная модель · \(quantities.measuredWallCount)/\(quantities.wallCount) стен · без H: \(quantities.unknownHeightWallCount)")
+                    .font(.caption2).foregroundStyle(Color.atlasMuted)
+                Text("После вычета проёмов: неизвестно — данные неполные.")
+                    .font(.caption2).foregroundStyle(Color.atlasMuted)
+                Text(heightRangeText(plan)).font(.caption2).foregroundStyle(Color.atlasMuted)
+                if quantities.invalidRoomCount + quantities.crossFrameRoomCount + quantities.duplicateRoomCount
+                    + quantities.invalidWallCount + quantities.duplicateWallCount > 0 {
+                    Text("Исключено: контуры \(quantities.invalidRoomCount), чужая система \(quantities.crossFrameRoomCount), дубли комнат \(quantities.duplicateRoomCount); стены \(quantities.invalidWallCount), дубли стен \(quantities.duplicateWallCount).")
+                        .font(.caption2).foregroundStyle(.orange)
+                }
+            }.padding(12).background(Color.atlasCard, in: RoundedRectangle(cornerRadius: 14))
+                .accessibilityIdentifier("floorPlan.quantities")
+            Text(quantities.aggregationNote).font(.caption2).foregroundStyle(Color.atlasMuted)
         }
+    }
+
+    private func quantityMetric(_ title: String, value: Double?) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.caption2).foregroundStyle(Color.atlasMuted)
+            Text(areaText(value)).font(.subheadline.weight(.semibold).monospacedDigit())
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+    private func areaText(_ value: Double?) -> String {
+        value.map { $0.formatted(.number.precision(.fractionLength(2))) + " м²" } ?? "Не измерена"
+    }
+    private func heightRangeText(_ plan: AtlasFloorPlan) -> String {
+        var identifiers = Set<UUID>()
+        let heights = plan.walls.compactMap { wall -> Double? in
+            guard identifiers.insert(wall.id).inserted, (try? PlanQuantities.wallGrossArea(of: wall)) != nil else { return nil }
+            return wall.heightMeters
+        }
+        guard let minimum = heights.min(), let maximum = heights.max() else { return "H стен не измерена; высота потолка не определена." }
+        let range = minimum == maximum ? minimum.formatted(.number.precision(.fractionLength(2)))
+            : minimum.formatted(.number.precision(.fractionLength(2))) + "–" + maximum.formatted(.number.precision(.fractionLength(2)))
+        return "H отдельных стен: \(range) м · это не высота потолка."
     }
     private func editingActions(_ plan: AtlasFloorPlan) -> some View {
         HStack(spacing: 12) {
@@ -181,8 +226,14 @@ struct FloorPlanScreen: View {
                     Button { editor = .wall(plan, wall) } label: {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Стена \(index + 1)").font(.headline).foregroundStyle(Color.atlasInk)
-                            Text("\(hypot(wall.end.x - wall.start.x, wall.end.y - wall.start.y).formatted(.number.precision(.fractionLength(2)))) м" + (wall.heightMeters.map { " · высота \($0.formatted(.number.precision(.fractionLength(2)))) м" } ?? ""))
+                            Text("L \(hypot(wall.end.x - wall.start.x, wall.end.y - wall.start.y).formatted(.number.precision(.fractionLength(2)))) м" + (wall.heightMeters.flatMap { $0.isFinite && $0 > 0 ? " · H \($0.formatted(.number.precision(.fractionLength(2)))) м" : nil } ?? " · H неизвестна"))
                                 .font(.caption).foregroundStyle(Color.atlasMuted)
+                            Text("Площадь одной стороны: \(areaText(try? PlanQuantities.wallGrossArea(of: wall))) · вычет проёмов неизвестен")
+                                .font(.caption2).foregroundStyle(Color.atlasMuted)
+                            if let thickness = wall.thicknessMeters, thickness.isFinite, thickness > 0 {
+                                Text("W · толщина: \(thickness.formatted(.number.precision(.fractionLength(2)))) м")
+                                    .font(.caption2).foregroundStyle(Color.atlasMuted)
+                            }
                         }.frame(maxWidth: .infinity, alignment: .leading)
                     }.buttonStyle(.plain)
                     Button("Удалить стену", systemImage: "trash", role: .destructive) { deletion = .wall(wall.id) }.labelStyle(.iconOnly)
@@ -207,7 +258,6 @@ struct FloorPlanScreen: View {
         let frame = UUID()
         editor = .metadata(AtlasFloorPlan(projectID: project.id, frameID: frame, name: "Новый обмер"), isNew: true)
     }
-    private func totalArea(_ plan: AtlasFloorPlan) -> Double { plan.rooms.reduce(0) { $0 + ((try? PolygonGeometry.area(of: $1.boundary)) ?? 0) } }
     private func reload() async {
         plans = await model.plans(in: project)
         if !plans.contains(where: { $0.id == selectedID }) { selectedID = plans.first?.id }
@@ -297,9 +347,12 @@ private struct PlanDrawingView: View {
                     for edge in edges {
                         let a = viewport.point(.init(x: edge.start.x, y: edge.start.z))
                         let b = viewport.point(.init(x: edge.end.x, y: edge.end.z))
-                        let text = context.resolve(Text("\(edge.holeIndex == nil ? "" : "Отв. ")\(edge.length.formatted(.number.precision(.fractionLength(2)))) м").font(.system(size: 10, weight: .semibold)).foregroundStyle(Color.atlasAccent))
+                        let text = context.resolve(Text("\(edge.holeIndex == nil ? "L " : "Отв. · L ")\(edge.length.formatted(.number.precision(.fractionLength(2)))) м").font(.system(size: 10, weight: .semibold)).foregroundStyle(Color.atlasAccent))
                         let textSize = text.measure(in: CGSize(width: 1_024, height: 1_024))
                         if let center = PlanDimensionLabelLayout.floor(start: a, end: b, textSize: textSize, wallLineWidth: maximumWallWidth, minimumOffset: 13, normalSign: normalSigns[edge.holeIndex.map { $0 + 1 } ?? 0]) {
+                            if let guides = PlanDimensionLabelLayout.guides(start: a, end: b, label: .init(center: center, rotationRadians: 0), textSize: textSize, wallLineWidth: maximumWallWidth) {
+                                drawGuides(guides, in: &context, color: .atlasAccent)
+                            }
                             context.draw(text, at: center)
                         }
                     }
@@ -307,11 +360,14 @@ private struct PlanDrawingView: View {
                 for wall in plan.walls {
                     let start = viewport.point(wall.start), end = viewport.point(wall.end)
                     let length = hypot(wall.end.x - wall.start.x, wall.end.y - wall.start.y)
-                    let height = wall.heightMeters.map { " · h \($0.formatted(.number.precision(.fractionLength(2)))) м" } ?? ""
-                    let text = context.resolve(Text("\(length.formatted(.number.precision(.fractionLength(2)))) м\(height)").font(.system(size: 10, weight: .medium)).foregroundStyle(Color.atlasInk))
+                    let height = wall.heightMeters.flatMap { $0.isFinite && $0 > 0 ? " · H \($0.formatted(.number.precision(.fractionLength(2)))) м" : nil } ?? " · H ?"
+                    let text = context.resolve(Text("L \(length.formatted(.number.precision(.fractionLength(2)))) м\(height)").font(.system(size: 10, weight: .medium)).foregroundStyle(Color.atlasInk))
                     let textSize = text.measure(in: CGSize(width: 1_024, height: 1_024))
                     let width = max(2, min(12, CGFloat(wall.thicknessMeters ?? 0.05) * viewport.scale))
                     if let placement = PlanDimensionLabelLayout.wall(start: start, end: end, textSize: textSize, wallLineWidth: width, toward: viewport.point(viewport.center)) {
+                        if let guides = PlanDimensionLabelLayout.guides(start: start, end: end, label: placement, textSize: textSize, wallLineWidth: width) {
+                            drawGuides(guides, in: &context, color: .atlasInk)
+                        }
                         var labelContext = context
                         labelContext.translateBy(x: placement.center.x, y: placement.center.y)
                         labelContext.rotate(by: .radians(placement.rotationRadians))
@@ -320,6 +376,19 @@ private struct PlanDrawingView: View {
                 }
             }
         }
+    }
+
+    private func drawGuides(_ guides: PlanDimensionLabelLayout.DimensionGuides, in context: inout GraphicsContext, color: Color) {
+        var extensions = Path()
+        for segment in guides.extensionLines {
+            extensions.move(to: segment.start); extensions.addLine(to: segment.end)
+        }
+        context.stroke(extensions, with: .color(color.opacity(0.6)), lineWidth: 0.7)
+        var dimensions = Path()
+        for segment in [guides.dimensionLine] + guides.endpointTicks {
+            dimensions.move(to: segment.start); dimensions.addLine(to: segment.end)
+        }
+        context.stroke(dimensions, with: .color(color.opacity(0.9)), lineWidth: 1)
     }
 }
 

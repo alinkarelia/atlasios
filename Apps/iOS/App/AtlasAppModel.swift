@@ -335,7 +335,7 @@ final class AtlasAppModel: ObservableObject {
                 let files = try AssistantProjectPackage.prepare(snapshot: snapshot, passportData: passportData,
                     histories: retainedHistories, staging: staging)
                 return try Self.writeArchive(metadata: metadata, passport: passport, packageFiles: files,
-                                             captureRoot: captureRoot, destination: destination)
+                                             project: snapshot.project, captureRoot: captureRoot, destination: destination)
             }.value
         } catch { issue = error.localizedDescription; return nil }
     }
@@ -344,8 +344,14 @@ final class AtlasAppModel: ObservableObject {
     /// The detached utility task calls this helper without moving file IO onto
     /// MainActor or allowing the enumerator to cross a suspension point.
     private nonisolated static func writeArchive(metadata: URL, passport: URL, packageFiles: [URL],
-                                               captureRoot: URL, destination: URL) throws -> URL {
+                                               project: AtlasProject, captureRoot: URL, destination: URL) throws -> URL {
         let delivery = try FieldTransferJSON.decode(FieldDeliveryPassport.self, from: Data(contentsOf: passport))
+        guard delivery.projectID == project.id,
+              captureRoot.lastPathComponent == "Captures",
+              captureRoot.deletingLastPathComponent().lastPathComponent == project.id.uuidString,
+              captureRoot.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent == "Projects" else {
+            throw AtlasExportError.entityProjectMismatch
+        }
         var hashes: [String: String] = [:]
         for asset in delivery.assets {
             guard hashes.updateValue(asset.sha256, forKey: asset.relativePath) == nil else {
@@ -359,6 +365,12 @@ final class AtlasAppModel: ObservableObject {
             guard let hash = hashes[file.lastPathComponent] else { throw AtlasArchiveError.sourceChanged(file.lastPathComponent) }
             entries.append(AtlasArchiveEntry(relativePath: file.lastPathComponent, fileURL: file, expectedSHA256: hash))
         }
+        let assetDirectory = captureRoot.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let journalEntries = try ProjectJournalExport.archiveEntries(project: project,
+            assetDirectory: assetDirectory, passportAssets: delivery.assets)
+        // StationSurvey is already enumerated as an original Captures member
+        // below. Model journals are its sibling at the ZIP root.
+        entries.append(contentsOf: journalEntries.filter { $0.relativePath.hasPrefix("ModelMeasurements/") })
         if let enumerator = FileManager.default.enumerator(at: captureRoot,
             includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey], options: [.skipsHiddenFiles]) {
             for case let url as URL in enumerator {

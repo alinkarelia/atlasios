@@ -15,3 +15,11 @@ bash "$test_directory/building-index-checks.sh"
   "$test_directory/PlanDimensionLayoutChecks.swift" \
   -o "$test_workspace/plan-dimension-checks"
 "$test_workspace/plan-dimension-checks"
+"$swift_compiler" -swift-version 6 -D ATLAS_EMPTY_ROOM_REVIEW_CHECKS \
+  "$test_directory/../../../Adapters/EmptyRoomDocument.swift" \
+  "$test_directory/../EmptyRoomSurfaceReview.swift" \
+  "$test_directory/../EmptyRoomQuantities.swift" \
+  "$test_directory/../EmptyRoomReviewPresentation.swift" \
+  "$test_directory/EmptyRoomSurfaceReviewChecks.swift" \
+  -o "$test_workspace/empty-room-review-checks"
+"$test_workspace/empty-room-review-checks"

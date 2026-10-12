@@ -8,7 +8,7 @@ import XCTest
 /// Simulator cannot validate camera frames, LiDAR geometry, or measurement accuracy.
 final class AtlasUITests: XCTestCase {
     @MainActor
-    private func launch(seedMesh: Bool = false, seedCemetery: Bool = false, seedBuilding: Bool = false, seedTour: Bool = false) -> XCUIApplication {
+    private func launch(seedMesh: Bool = false, seedCemetery: Bool = false, seedBuilding: Bool = false, seedTour: Bool = false, seedReview: Bool = false) -> XCUIApplication {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = ["-AppleLanguages", "(ru)", "-AppleLocale", "ru_RU"]
@@ -16,6 +16,7 @@ final class AtlasUITests: XCTestCase {
         if seedCemetery { app.launchArguments.append("--uitest-seed-cemetery") }
         if seedBuilding { app.launchArguments.append("--uitest-seed-building") }
         if seedTour { app.launchArguments.append("--uitest-seed-tour") }
+        if seedReview { app.launchArguments.append("--uitest-seed-review") }
         app.launch()
         return app
     }
@@ -263,6 +264,22 @@ final class AtlasUITests: XCTestCase {
             if towardTop { app.swipeDown() } else { app.swipeUp() }
         }
         XCTFail("Could not reveal control: \(control)", file: file, line: line)
+    }
+
+    @MainActor
+    private func revealWholeDrawing(_ drawing: XCUIElement, in app: XCUIApplication) {
+        let window = app.windows.firstMatch.frame
+        let top = app.navigationBars.firstMatch.frame.maxY + 8
+        let bottom = app.tabBars.firstMatch.exists ? app.tabBars.firstMatch.frame.minY - 8 : window.maxY - 40
+        let origin = app.coordinate(withNormalizedOffset: .zero)
+        for _ in 0..<10 {
+            if drawing.exists, drawing.frame.minY >= top, drawing.frame.maxY <= bottom { return }
+            let upward = drawing.exists ? drawing.frame.maxY > bottom : true
+            let start = origin.withOffset(CGVector(dx: window.midX - window.minX, dy: window.height * 0.65))
+            let finish = origin.withOffset(CGVector(dx: window.midX - window.minX, dy: window.height * 0.65 + (upward ? -160 : 160)))
+            start.press(forDuration: 0.05, thenDragTo: finish)
+        }
+        XCTFail("The complete drawing must be visible between navigation and tabs for real pixel and screenshot checks")
     }
 
     @MainActor
@@ -523,6 +540,7 @@ final class AtlasUITests: XCTestCase {
         XCTAssertEqual(dimensions.value as? String, "1")
         let drawing = element("floorPlan.drawing", in: app)
         XCTAssertTrue(drawing.waitForExistence(timeout: 10))
+        revealWholeDrawing(drawing, in: app)
         XCTAssertTrue(drawing.label.contains("1 комнат") && drawing.label.contains("4 стен"),
                       "The viewport must receive the actual persisted room and walls")
         guard let withDimensions = drawingPixels(drawing.screenshot().image) else {
@@ -545,6 +563,7 @@ final class AtlasUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [visibleDimensions], timeout: 5), .completed,
                        "Tapping the dimension switch thumb must restore the drawing annotations")
         XCTAssertEqual(dimensions.value as? String, "1")
+        revealWholeDrawing(drawing, in: app)
         screenshot("22b-plan-dimensions", app: app)
         let panMode = app.switches["floorPlan.panMode"]
         scrollToControl(panMode, in: app)
@@ -787,7 +806,7 @@ final class AtlasUITests: XCTestCase {
         var firstHit: Int?
         for (index, point) in points.enumerated() {
             surface.coordinate(withNormalizedOffset: point).tap()
-            if waitForLabel(result, containing: "Первая точка", timeout: 1) {
+            if waitForLabel(result, containing: "A отмечена", timeout: 1) {
                 firstHit = index
                 break
             }
@@ -807,7 +826,7 @@ final class AtlasUITests: XCTestCase {
         XCTAssertTrue(measured, "A second real surface hit must calculate a distance: \(result.label)",
                       file: file, line: line)
         let label = result.label
-        let numeric = label.split(whereSeparator: { $0.isWhitespace }).first.map(String.init) ?? ""
+        let numeric = label.split(whereSeparator: { $0.isWhitespace }).dropFirst().first.map(String.init) ?? ""
         let distance = Double(numeric.replacingOccurrences(of: ",", with: "."))
         XCTAssertTrue(distance.map { $0 > 0.001 && $0 < 12 } ?? false,
                       "Two distinct points within the 8 × 3 × 6 fixture must have a finite, nonzero distance: \(label)",
@@ -934,6 +953,177 @@ final class AtlasUITests: XCTestCase {
             if button.exists { button.tap(); return }
         }
         XCTFail("Unexpected system permission alert: \(alert.debugDescription)")
+    }
+
+    @MainActor
+    private func enter(_ value: String, identifier: String, in app: XCUIApplication) {
+        let field = element(identifier, in: app)
+        scrollToControl(field, in: app)
+        XCTAssertTrue(field.isHittable)
+        field.tap()
+        if let previous = field.value as? String, !previous.isEmpty,
+           previous != field.placeholderValue {
+            field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: previous.count))
+        }
+        field.typeText(value)
+    }
+
+    @MainActor
+    func testManualSurveyPersistsItsStationsAndMeasuresTheActualBoundary() {
+        let app = launch()
+        let name = createProject(in: app)
+        app.tabBars.buttons["Карта"].tap()
+        tap("map.stations", in: app)
+        let manual = element("stations.addManual", in: app)
+        XCTAssertTrue(manual.waitForExistence(timeout: 15))
+        waitUntilEnabled(manual)
+        XCTAssertFalse(element("stations.addGPS", in: app).isEnabled,
+                       "GPS coordinates must not be silently inserted into a local metre frame")
+        for point in [("0", "0"), ("4", "0"), ("0", "3")] {
+            scrollAndTap("stations.addManual", in: app, towardTop: true)
+            enter(point.0, identifier: "stations.manual.first", in: app)
+            enter(point.1, identifier: "stations.manual.second", in: app)
+            tap("stations.manual.save", in: app)
+            waitForAbsence(element("stations.manual.save", in: app))
+        }
+        let third = element("stations.label.A003", in: app)
+        scrollToControl(third, in: app)
+        XCTAssertTrue(third.exists)
+        screenshot("25-survey-stations", app: app)
+        scrollAndTap("stations.preview", in: app)
+        let area = element("stations.area", in: app)
+        XCTAssertTrue(area.waitForExistence(timeout: 10))
+        XCTAssertTrue(area.label.replacingOccurrences(of: ",", with: ".").contains("6.0"),
+                      "The actual 3-4-5 triangular boundary must measure 6 square metres")
+        XCTAssertTrue(element("stations.perimeter", in: app).label.replacingOccurrences(of: ",", with: ".").contains("12.0"))
+        screenshot("26-survey-boundary", app: app)
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.staticTexts[name].firstMatch.waitForExistence(timeout: 15))
+        app.tabBars.buttons["Карта"].tap()
+        tap("map.stations", in: app)
+        scrollToControl(element("stations.label.A003", in: app), in: app)
+        XCTAssertTrue(element("stations.label.A003", in: app).exists,
+                      "The station journal must survive an actual process restart")
+        scrollAndTap("stations.preview", in: app)
+        XCTAssertTrue(element("stations.area", in: app).waitForExistence(timeout: 10))
+        XCTAssertTrue(element("stations.area", in: app).label.replacingOccurrences(of: ",", with: ".").contains("6.0"))
+    }
+
+    @MainActor
+    func testManualOpeningMeasurementsRetainSeparatePositionsAndSurviveRestart() {
+        let app = launch()
+        let name = createProject(in: app)
+        app.tabBars.buttons["Съёмка"].tap()
+        scrollAndTap("tools.measurements", in: app)
+        for (index, value) in ["0.91", "0.93"].enumerated() {
+            scrollAndTap("measurement.manual", in: app)
+            enter("Контроль проёма \(index + 1)", identifier: "measurement.editor.label", in: app)
+            tap("measurement.editor.role", in: app)
+            app.buttons["W · ширина"].firstMatch.tap()
+            tap("measurement.editor.target", in: app)
+            app.buttons["Дверной проём"].firstMatch.tap()
+            tap("measurement.editor.definition", in: app)
+            app.buttons["Световой проход"].firstMatch.tap()
+            tap("measurement.editor.position", in: app)
+            app.buttons[index == 0 ? "Снизу" : "Сверху"].firstMatch.tap()
+            enter(value, identifier: "measurement.editor.meters", in: app)
+            tap("measurement.editor.keyboardDone", in: app)
+            waitForAbsence(app.keyboards.firstMatch)
+            if index == 1 { screenshot("27-opening-measurement", app: app) }
+            tap("measurement.editor.save", in: app)
+            waitForAbsence(element("measurement.editor.save", in: app))
+        }
+        scrollAndTap("measurement.mode.journal", in: app, towardTop: true)
+        let records = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "measurement.record."))
+        XCTAssertEqual(records.count, 2, "Both source observations must remain separate")
+        XCTAssertTrue(records.element(boundBy: 0).label.contains("Контроль проёма"))
+        screenshot("28-measurement-journal", app: app)
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.staticTexts[name].firstMatch.waitForExistence(timeout: 15))
+        app.tabBars.buttons["Съёмка"].tap()
+        scrollAndTap("tools.measurements", in: app)
+        scrollAndTap("measurement.mode.journal", in: app, towardTop: true)
+        XCTAssertEqual(records.count, 2, "The persisted observations disappeared after restart")
+        records.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["Карточка обмера"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Световой проход"].firstMatch.exists)
+        XCTAssertTrue(app.staticTexts["Дверной проём"].firstMatch.exists)
+    }
+
+    @MainActor
+    func testSurfaceClassificationAndManualCabinetDoorPersistWithoutChangingTheSource() {
+        let app = launch(seedReview: true)
+        let name = createProject(in: app)
+        tap("projects.openSelected", in: app)
+        tap("project.testSurfaceReview", in: app)
+        XCTAssertTrue(app.navigationBars["Поверхности и проёмы"].waitForExistence(timeout: 10))
+        for (suffix, symbol) in [("101", "D"), ("102", "W"), ("103", "P")] {
+            let row = element("emptyRoom.surface.C0610000-1234-4000-8000-000000000" + suffix, in: app)
+            scrollToControl(row, in: app)
+            XCTAssertTrue(row.label.hasPrefix(symbol + " ·"), "The real catalog must keep distinct source classifications")
+            XCTAssertTrue(row.label.contains("Не проверено"), "A synthetic source must not imply operator confirmation")
+        }
+        scrollToControl(element("emptyRoom.surface.C0610000-1234-4000-8000-000000000101", in: app), in: app, towardTop: true)
+        screenshot("29-surface-classification", app: app)
+        scrollAndTap("emptyRoom.addManualTarget", in: app)
+        enter("Шкаф · дверца 1", identifier: "emptyRoom.review.label", in: app)
+        let verified = app.switches["emptyRoom.review.verified"]
+        scrollToControl(verified, in: app)
+        XCTAssertEqual(verified.value as? String, "0")
+        verified.tap()
+        enter("Дверца осмотрена специалистом; габарит шкафа не использован как её размер.", identifier: "emptyRoom.review.note", in: app)
+        tap("emptyRoom.review.keyboardDone", in: app)
+        waitForAbsence(app.keyboards.firstMatch)
+        tap("emptyRoom.review.save", in: app)
+        waitForAbsence(element("emptyRoom.review.save", in: app))
+        let manual = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "emptyRoom.manualTarget.")).firstMatch
+        scrollToControl(manual, in: app)
+        XCTAssertTrue(manual.label.hasPrefix("K · Шкаф · дверца 1"))
+        screenshot("30-cabinet-door-review", app: app)
+        let doorID = "C0610000-1234-4000-8000-000000000101"
+        scrollAndTap("emptyRoom.measure." + doorID, in: app, towardTop: true)
+        scrollAndTap("measurement.manual", in: app)
+        enter("Контроль двери по рулетке", identifier: "measurement.editor.label", in: app)
+        enter("0.88", identifier: "measurement.editor.meters", in: app)
+        tap("measurement.editor.keyboardDone", in: app)
+        waitForAbsence(app.keyboards.firstMatch)
+        tap("measurement.editor.save", in: app)
+        waitForAbsence(element("measurement.editor.save", in: app))
+        app.navigationBars["Инструменты обмера"].buttons.firstMatch.tap()
+        XCTAssertTrue(app.navigationBars["Поверхности и проёмы"].waitForExistence(timeout: 10))
+        scrollAndTap("emptyRoom.surface." + doorID, in: app, towardTop: true)
+        XCTAssertTrue(element("emptyRoom.source.classification", in: app).label.contains("Дверь"))
+        let doorVerified = app.switches["emptyRoom.review.verified"]
+        scrollToControl(doorVerified, in: app)
+        doorVerified.tap()
+        scrollAndTap("emptyRoom.review.meaning", in: app)
+        app.buttons["Чистый проём · контрольный обмер"].firstMatch.tap()
+        scrollAndTap("emptyRoom.review.measurement", in: app)
+        let choice = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Контроль двери по рулетке")).firstMatch
+        XCTAssertTrue(choice.waitForExistence(timeout: 10), "A genuine measurement of this exact surface must be available for attachment")
+        choice.tap()
+        enter("Тип двери проверен; световая ширина измерена контрольной рулеткой.", identifier: "emptyRoom.review.note", in: app)
+        tap("emptyRoom.review.keyboardDone", in: app)
+        waitForAbsence(app.keyboards.firstMatch)
+        tap("emptyRoom.review.save", in: app)
+        waitForAbsence(element("emptyRoom.review.save", in: app))
+        let door = element("emptyRoom.surface." + doorID, in: app)
+        scrollToControl(door, in: app, towardTop: true)
+        XCTAssertTrue(door.label.replacingOccurrences(of: ",", with: ".").contains("0.880"), "The attached control must appear on its exact source surface")
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.staticTexts[name].firstMatch.waitForExistence(timeout: 15))
+        tap("projects.openSelected", in: app)
+        tap("project.testSurfaceReview", in: app)
+        XCTAssertTrue(app.navigationBars["Поверхности и проёмы"].waitForExistence(timeout: 10))
+        scrollToControl(manual, in: app)
+        XCTAssertTrue(manual.label.hasPrefix("K · Шкаф · дверца 1"), "The operator classification journal must survive process restart")
+        scrollToControl(element("emptyRoom.surface.C0610000-1234-4000-8000-000000000101", in: app), in: app, towardTop: true)
+        XCTAssertTrue(element("emptyRoom.surface.C0610000-1234-4000-8000-000000000101", in: app).label.hasPrefix("D ·"),
+                      "A manual cabinet door must not overwrite the original room-door classification")
+        XCTAssertTrue(door.label.replacingOccurrences(of: ",", with: ".").contains("0.880"), "The attached control journal must persist across restart")
     }
 
     @MainActor

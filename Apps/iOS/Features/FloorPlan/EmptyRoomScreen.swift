@@ -18,6 +18,8 @@ struct EmptyRoomScreen: View {
     @State private var isWorking = false
     @State private var finishRequested = false
     @State private var result: EmptyRoomExport?
+    @State private var review: EmptyRoomSurfaceReview?
+    @State private var reviewIssue: String?
     @State private var controller: EmptyRoomSceneController?
     @State private var issue: String?
     @State private var savedSources: [SavedEmptyRoomSource] = []
@@ -186,12 +188,28 @@ struct EmptyRoomScreen: View {
                 .onReceive(controller.$hasRendered) { sceneReady = $0 }
             Text("Поверните модель пальцем · Масштаб двумя пальцами").font(.caption).foregroundStyle(Color.atlasMuted)
             Text("На устройстве · Этаж \(result.document.story) · Удалено объектов: \(result.document.removedObjectCount)").font(.caption)
-            if result.document.surfaces.contains(where: { $0.kind == .floor && $0.floorAreaSquareMeters > 0 }) {
-                Text("Площадь контуров пола в горизонтальной проекции: \(result.document.floorAreaSquareMeters.formatted(.number.precision(.fractionLength(2)))) м²")
-                    .font(.subheadline)
-            } else {
+            quantitySummary(result.document)
+            if !result.document.surfaces.contains(where: { $0.kind == .floor && $0.floorAreaSquareMeters > 0 }) {
                 notice("Контур пола не распознан. Добавьте его в ручном редакторе плана; синтетический пол не строится.", symbol: "square.dashed", warning: true)
             }
+            if let review {
+                NavigationLink("Проверить поверхности и проёмы", systemImage: "checklist") {
+                    EmptyRoomSurfaceCatalogScreen(model: model, project: project, document: result.document,
+                        directory: result.documentURL.deletingLastPathComponent(), review: review) { next in
+                        self.review = next; presentationSaved = false
+                        controller.updateAnnotations(document: result.document, review: next)
+                        if !(await model.registerCapture(manifest: result.manifestURL, project: project)) {
+                            issue = "Журнал сохранён, но каталог проекта не обновлён: \(model.issue ?? "Повторите обновление каталога.")"
+                        }
+                    }
+                }.accessibilityIdentifier("emptyRoom.surfaceCatalog")
+            }
+            if let reviewIssue { notice("Журнал проверки не открыт: \(reviewIssue) Исходник и сохранённый журнал не изменены.", symbol: "exclamationmark.triangle", warning: true) }
+            NavigationLink("Исправить контур пола и отверстия", systemImage: "square.and.pencil") {
+                FloorPlanScreen(model: model, project: project, initialPlanID: result.document.sourceRoomID)
+            }
+            Text("Ручной план и его площади сохраняются отдельно. Правка контура не изменяет исходную 3D-модель RoomPlan.")
+                .font(.caption).foregroundStyle(Color.atlasMuted)
             Text("Поверхностей с неполной/невысокой уверенностью классификации: \(result.document.uncertainSurfaceCount). Это не оценка точности размеров.")
                 .font(.caption).foregroundStyle(Color.atlasMuted)
             if showDimensions {
@@ -199,7 +217,7 @@ struct EmptyRoomScreen: View {
                     notice("На 3D-модели и PNG показаны первые 500 подписей. Полная ведомость остаётся в JSON; PDF поддерживает до 10 000 размеров.", symbol: "text.badge.plus", warning: false)
                 }
                 DisclosureGroup("Размеры RoomPlan · \(result.document.dimensions.count)") {
-                    ForEach(result.document.dimensions) { dimension in
+                    ForEach(EmptyRoomReviewPresentation.dimensions(result.document, review: review)) { dimension in
                         VStack(alignment: .leading, spacing: 3) {
                             Text(dimension.label).font(.subheadline)
                             Text("\(dimension.sourceID.uuidString.prefix(8)) · Классификация: \(dimension.confidence.title)").font(.caption2).foregroundStyle(Color.atlasMuted)
@@ -209,6 +227,32 @@ struct EmptyRoomScreen: View {
             }
         }
     }
+
+    private func quantitySummary(_ document: EmptyRoomDocument) -> some View {
+        let quantities = EmptyRoomQuantities.summary(document, review: review)
+        let wallHeights = document.surfaces.filter { $0.kind == .wall }.flatMap(\.dimensions).filter { $0.id.hasSuffix("-height") }
+        let gravityHeights = wallHeights.filter { hypot($0.end.x - $0.start.x, $0.end.z - $0.start.z) <= max(0.00001, $0.valueMeters * 0.001) }.map(\.valueMeters)
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("Площади черновой модели").font(.headline)
+            LabeledContent("Пол · по контурам до отверстий", value: area(quantities.floorGrossSquareMeters))
+            LabeledContent("Пол · без отверстий", value: "Неизвестно: отверстия не обследованы")
+            LabeledContent("Стены · до вычета проёмов", value: area(quantities.wallGrossSquareMeters))
+            LabeledContent("Стены · после вычета проёмов", value: area(quantities.wallNetSquareMeters))
+            Text("Неизвестна площадь до вычета у \(quantities.unknownWallCount) стен; после вычета у \(quantities.unknownNetWallCount). Подсчёт одной стороны стены; прямоугольные габариты — оценка модели, без откосов. Пересечения контуров пола не объединяются.")
+                .font(.caption).foregroundStyle(Color.atlasMuted)
+            Text("Контуры пола: \(quantities.measuredFloorCount) пригодных, \(quantities.unknownFloorCount) без полной геометрии. Скрытые отверстия не предполагаются.")
+                .font(.caption).foregroundStyle(Color.atlasMuted)
+            if let minimum = gravityHeights.min(), let maximum = gravityHeights.max() {
+                Text("H отдельных стен: \(EmptyRoomReviewPresentation.number(minimum))–\(EmptyRoomReviewPresentation.number(maximum)) м · общей высоты потолка не заявляем")
+                    .font(.caption)
+            }
+            if wallHeights.count > gravityHeights.count { Text("Наклонные поверхности: Hₛ вдоль поверхности хранится отдельно от вертикального H.").font(.caption).foregroundStyle(Color.atlasMuted) }
+            Text("Площадь после вычета требует подтверждённого обследования и реальных контуров всех проёмов. Габариты окна, дверного полотна и светового прохода не взаимозаменяемы.")
+                .font(.caption).foregroundStyle(Color.atlasMuted)
+        }.font(.subheadline).padding(14).background(Color.atlasCard, in: RoundedRectangle(cornerRadius: 14))
+            .accessibilityIdentifier("emptyRoom.quantities")
+    }
+    private func area(_ value: Double?) -> String { value.map { "\(EmptyRoomReviewPresentation.number($0)) м²" } ?? "Неизвестно" }
 
     private func exportControls(_ result: EmptyRoomExport) -> some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -280,7 +324,7 @@ struct EmptyRoomScreen: View {
         isStarting = true
         let ticket = UUID(); startTicket = ticket
         defer { isStarting = false }
-        issue = nil; result = nil; controller = nil; presentationSaved = false; finishRequested = false
+        issue = nil; result = nil; review = nil; reviewIssue = nil; controller = nil; presentationSaved = false; finishRequested = false
         // A first-time GPS permission sheet makes the scene inactive. Settle it
         // before RoomPlan recording so willResignActive cannot end a new scan.
         // Denied/disabled GPS still permits a scan without an automatic GeoTag.
@@ -301,14 +345,17 @@ struct EmptyRoomScreen: View {
         if room.state != .recording { location.stop() }
     }
 
-    @MainActor private func buildStructural(saveFloorPlan: Bool) async {
+    @MainActor private func buildStructural(saveFloorPlan: Bool, reuseExisting: Bool = false) async {
         guard !isWorking else { return }
         isWorking = true; issue = nil; presentationSaved = false; location.stop()
         defer { isWorking = false }
         do {
-            let exported = try await room.exportStructuralRoom(keepStorage: keepStorage)
+            let exported: EmptyRoomExport
+            if reuseExisting, let saved = try await room.savedStructuralRoom(keepStorage: keepStorage) { exported = saved }
+            else { exported = try await room.exportStructuralRoom(keepStorage: keepStorage) }
             result = exported
-            guard await model.registerCapture(manifest: exported.manifestURL, project: project) else {
+            let manifest = try await room.ensureStructuralReview(exported)
+            guard await model.registerCapture(manifest: manifest, project: project) else {
                 throw EmptyRoomScreenError.catalog(model.issue ?? "Файлы сохранены, но каталог проекта не обновился. Повторите сохранение.")
             }
             if saveFloorPlan {
@@ -324,6 +371,10 @@ struct EmptyRoomScreen: View {
                     }
                 }
             }
+            do {
+                review = try await EmptyRoomSurfaceReviewStore(directory: exported.documentURL.deletingLastPathComponent(), source: exported.document).load()
+                reviewIssue = nil
+            } catch { review = nil; reviewIssue = error.localizedDescription }
             try await prepareScene(exported)
             await refreshSources()
             if pendingExit { pendingExit = false; dismiss() }
@@ -334,7 +385,7 @@ struct EmptyRoomScreen: View {
         let url = exported.usdzURL
         let worker = Task.detached(priority: .userInitiated) { try OBJPreviewLoader.load(url) }
         let payload = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
-        controller = EmptyRoomSceneController(mesh: payload, document: exported.document)
+        controller = EmptyRoomSceneController(mesh: payload, document: exported.document, review: review)
     }
     @MainActor private func loadPreview(_ exported: EmptyRoomExport) async {
         guard !busy else { return }
@@ -350,9 +401,9 @@ struct EmptyRoomScreen: View {
         defer { isWorking = false }
         do {
             controller.setDimensions(showDimensions)
-            let image = EmptyRoomPNGExporter.render(image: try controller.snapshot(), document: result.document, showDimensions: showDimensions)
+            let image = EmptyRoomPNGExporter.render(image: try controller.snapshot(), document: result.document, showDimensions: showDimensions, review: review)
             guard let png = image.pngData() else { throw EmptyRoomError.noRenderedImage }
-            let pdf = try EmptyRoomPDFExporter.render(image: image, document: result.document, showDimensions: showDimensions)
+            let pdf = try EmptyRoomPDFExporter.render(image: image, document: result.document, showDimensions: showDimensions, review: review)
             let manifest = try await room.saveStructuralPresentation(result, png: png, pdf: pdf)
             guard await model.registerCapture(manifest: manifest, project: project) else {
                 throw EmptyRoomScreenError.catalog(model.issue ?? "PNG/PDF сохранены, но каталог не обновился. Повторите сохранение.")
@@ -364,9 +415,9 @@ struct EmptyRoomScreen: View {
     @MainActor private func open(_ source: SavedEmptyRoomSource) async {
         guard !busy else { return }
         do {
-            result = nil; controller = nil; issue = nil; presentationSaved = false
+            result = nil; review = nil; reviewIssue = nil; controller = nil; issue = nil; presentationSaved = false
             try await room.loadSavedRoom(at: source.directory, projectID: project.id)
-            await buildStructural(saveFloorPlan: true)
+            await buildStructural(saveFloorPlan: true, reuseExisting: true)
         } catch { issue = error.localizedDescription }
     }
 
