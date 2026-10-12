@@ -1140,9 +1140,11 @@ final class AtlasUITests: XCTestCase {
         scrollAndTap("emptyRoom.surface." + doorID, in: app, towardTop: true)
         XCTAssertTrue(element("emptyRoom.source.classification", in: app).label.contains("Дверь"))
         confirmSwitch("emptyRoom.review.verified", in: app)
-        scrollAndTap("emptyRoom.review.meaning", in: app)
+        revealWholeControl(element("emptyRoom.review.meaning", in: app), in: app)
+        tap("emptyRoom.review.meaning", in: app)
         app.buttons["Чистый проём · контрольный обмер"].firstMatch.tap()
-        scrollAndTap("emptyRoom.review.measurement", in: app)
+        revealWholeControl(element("emptyRoom.review.measurement", in: app), in: app)
+        tap("emptyRoom.review.measurement", in: app)
         let choice = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Контроль двери по рулетке")).firstMatch
         XCTAssertTrue(choice.waitForExistence(timeout: 10), "A genuine measurement of this exact surface must be available for attachment")
         choice.tap()
