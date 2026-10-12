@@ -39,27 +39,44 @@ enum PlanPDFExporter {
                 let center = viewport.point(PlanViewport.labelPoint(room.boundary))
                 let area = (try? PolygonGeometry.area(of: room.boundary)) ?? 0
                 drawText("\(room.name)\n\(number(area)) м²", rect: CGRect(x: center.x - 60, y: center.y - 15, width: 120, height: 40), font: .systemFont(ofSize: 8, weight: .medium), alignment: .center)
-                if showDimensions {
-                    let edges = EmptyRoomRingGeometry.edges(outer: room.boundary.vertices.map { .init(x: $0.x, y: 0, z: $0.y) }, holes: room.boundary.holes.map { ring in ring.map { .init(x: $0.x, y: 0, z: $0.y) } })
-                    for edge in edges {
-                        let a = viewport.point(.init(x: edge.start.x, y: edge.start.z)), b = viewport.point(.init(x: edge.end.x, y: edge.end.z))
-                        let midpoint = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
-                        let length = hypot(b.x - a.x, b.y - a.y)
-                        let dx = length > 0 ? -(b.y - a.y) / length * 10 : 0
-                        let dy = length > 0 ? (b.x - a.x) / length * 10 : 0
-                        drawText("\(edge.holeIndex == nil ? "" : "Отв. ")\(number(edge.length)) м", rect: CGRect(x: midpoint.x + dx - 40, y: midpoint.y + dy - 5, width: 80, height: 16), font: .systemFont(ofSize: 7, weight: .medium), alignment: .center)
-                    }
-                }
             }
+            let maximumWallWidth = plan.walls.map { max(1.5, min(10, CGFloat($0.thicknessMeters ?? 0.05) * viewport.scale)) }.max() ?? 1
             for wall in plan.walls {
                 let path = UIBezierPath()
                 path.move(to: viewport.point(wall.start)); path.addLine(to: viewport.point(wall.end))
                 path.lineWidth = max(1.5, min(10, CGFloat(wall.thicknessMeters ?? 0.05) * viewport.scale))
                 UIColor.black.setStroke(); path.stroke()
-                if showDimensions {
+            }
+            if showDimensions {
+                for room in plan.rooms {
+                    let edges = EmptyRoomRingGeometry.edges(outer: room.boundary.vertices.map { .init(x: $0.x, y: 0, z: $0.y) }, holes: room.boundary.holes.map { ring in ring.map { .init(x: $0.x, y: 0, z: $0.y) } })
+                    let normalSigns = ([room.boundary.vertices] + room.boundary.holes).enumerated().map {
+                        PlanDimensionLabelLayout.floorNormalSign(ring: $0.element.map { viewport.point($0) }, isHole: $0.offset > 0)
+                    }
+                    for edge in edges {
+                        let a = viewport.point(.init(x: edge.start.x, y: edge.start.z)), b = viewport.point(.init(x: edge.end.x, y: edge.end.z))
+                        let text = "\(edge.holeIndex == nil ? "" : "Отв. ")\(number(edge.length)) м"
+                        let font = UIFont.systemFont(ofSize: 7, weight: .medium)
+                        let textSize = dimensionTextSize(text, font: font)
+                        if let center = PlanDimensionLabelLayout.floor(start: a, end: b, textSize: textSize, wallLineWidth: maximumWallWidth, minimumOffset: 10, normalSign: normalSigns[edge.holeIndex.map { $0 + 1 } ?? 0]) {
+                            drawText(text, rect: CGRect(x: center.x - textSize.width / 2, y: center.y - textSize.height / 2, width: textSize.width, height: textSize.height), font: font, alignment: .center)
+                        }
+                    }
+                }
+                for wall in plan.walls {
                     let a = viewport.point(wall.start), b = viewport.point(wall.end)
                     let height = wall.heightMeters.map { " · h \(number($0)) м" } ?? ""
-                    drawText("\(number(hypot(wall.end.x - wall.start.x, wall.end.y - wall.start.y))) м\(height)", rect: CGRect(x: (a.x + b.x) / 2 - 75, y: (a.y + b.y) / 2 - 21, width: 150, height: 17), font: .systemFont(ofSize: 7), alignment: .center)
+                    let text = "\(number(hypot(wall.end.x - wall.start.x, wall.end.y - wall.start.y))) м\(height)"
+                    let font = UIFont.systemFont(ofSize: 7)
+                    let textSize = dimensionTextSize(text, font: font)
+                    let width = max(1.5, min(10, CGFloat(wall.thicknessMeters ?? 0.05) * viewport.scale))
+                    if let placement = PlanDimensionLabelLayout.wall(start: a, end: b, textSize: textSize, wallLineWidth: width, toward: viewport.point(viewport.center)) {
+                        pdf.cgContext.saveGState()
+                        pdf.cgContext.translateBy(x: placement.center.x, y: placement.center.y)
+                        pdf.cgContext.rotate(by: CGFloat(placement.rotationRadians))
+                        drawText(text, rect: CGRect(x: -textSize.width / 2, y: -textSize.height / 2, width: textSize.width, height: textSize.height), font: font, alignment: .center)
+                        pdf.cgContext.restoreGState()
+                    }
                 }
             }
             pdf.cgContext.restoreGState()
@@ -103,6 +120,10 @@ enum PlanPDFExporter {
         return url
     }
     private static func number(_ value: Double) -> String { value.formatted(.number.precision(.fractionLength(2))) }
+    private static func dimensionTextSize(_ text: String, font: UIFont) -> CGSize {
+        let size = (text as NSString).size(withAttributes: [.font: font])
+        return CGSize(width: ceil(size.width) + 2, height: ceil(size.height) + 2)
+    }
     private static func drawText(_ text: String, rect: CGRect, font: UIFont, color: UIColor = .black, alignment: NSTextAlignment = .left) {
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = alignment; paragraph.lineBreakMode = .byWordWrapping

@@ -77,7 +77,7 @@ struct TourPhotoViewer: View {
                 Button("Карточка",systemImage:"rectangle.portrait") { onOpenFeature(feature); dismiss() }.accessibilityIdentifier("tour.feature.card")
             }
             if feature.category == .grave,let metadata = try? BurialMetadata(attributes:feature.attributes) {
-                Text(metadata.identityStatus == .unknown ? "Личность неизвестна" : "Личность: \(metadata.identityStatus.rawValue)").font(.caption)
+                Text(metadata.identityStatus.title).font(.caption)
                 if !metadata.people.isEmpty { Text(metadata.people.map(\.fullName).filter { !$0.isEmpty }.joined(separator:" · ")).font(.subheadline) }
                 if let photo = metadata.photoIDs.compactMap({ id in service.photos.first { $0.id == id } }).first {
                     BurialPhotoThumbnail(service:service,photo:photo,directory:directory)
@@ -85,9 +85,19 @@ struct TourPhotoViewer: View {
                 if !metadata.condition.isEmpty { Text(metadata.condition).font(.caption).lineLimit(2) }
                 Text("Фотографии и полный комментарий — в связанной карточке.").font(.caption).foregroundStyle(Color.atlasMuted)
             } else { Text(feature.category.title).font(.caption) }
-            Text("\(SurveyFeatureLifecycle.status(of:feature).rawValue) · контур в кадре отметил оператор").font(.caption2).foregroundStyle(Color.atlasMuted)
+            Text("\(statusTitle(feature)) · контур в кадре отметил оператор").font(.caption2).foregroundStyle(Color.atlasMuted)
+                .accessibilityIdentifier("tour.feature.status")
             if !feature.notes.isEmpty { Text(feature.notes).font(.caption).lineLimit(2) }
         }.padding(14).background(Color.atlasCard)
+    }
+    private func statusTitle(_ feature: AtlasFeature) -> String {
+        let status = SurveyFeatureLifecycle.status(of: feature)
+        if feature.category == .grave { return status.burialTitle }
+        switch status {
+        case .candidate: return "Нужна проверка"
+        case .confirmed: return "Подтверждено"
+        case .rejected: return "Отклонено"
+        }
     }
     private func footer(_ value:TourStation) -> some View {
         VStack(alignment:.leading,spacing:10) {

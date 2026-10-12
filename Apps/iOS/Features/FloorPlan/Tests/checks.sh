@@ -10,3 +10,8 @@ bash "$test_directory/building-index-checks.sh"
   "$test_directory/EmptyRoomGeometryChecks.swift" \
   -o "$test_workspace/empty-room-checks"
 "$test_workspace/empty-room-checks"
+"$swift_compiler" -swift-version 6 -D ATLAS_PLAN_DIMENSION_CHECKS \
+  "$test_directory/../PlanDimensionLabelLayout.swift" \
+  "$test_directory/PlanDimensionLayoutChecks.swift" \
+  -o "$test_workspace/plan-dimension-checks"
+"$test_workspace/plan-dimension-checks"

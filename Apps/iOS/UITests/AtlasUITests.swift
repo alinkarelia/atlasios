@@ -585,6 +585,8 @@ final class AtlasUITests: XCTestCase {
         let card = element("tour.feature.card", in: app)
         XCTAssertTrue(card.waitForExistence(timeout: 15), "The central reticle must select the saved operator contour")
         XCTAssertTrue(app.staticTexts["Участок 001"].firstMatch.exists)
+        XCTAssertEqual(element("tour.feature.status", in: app).label,
+                       "Захоронение подтверждено · контур в кадре отметил оператор")
         screenshot("23-tour-contours", app: app)
         app.buttons["Вперёд"].firstMatch.tap()
         XCTAssertTrue(app.staticTexts["2 / 2 · Учебная остановка 2"].waitForExistence(timeout: 15))

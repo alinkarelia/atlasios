@@ -361,6 +361,13 @@
 			"path" = "Apps/iOS/Features/FloorPlan/FloorPlanScreen.swift";
 			"sourceTree" = "SOURCE_ROOT";
 		};
+		"C0A6D283B5EBF448970BA7A7" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "PlanDimensionLabelLayout.swift";
+			"path" = "Apps/iOS/Features/FloorPlan/PlanDimensionLabelLayout.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
 		"07CF2D50EDD05F021B924E1B" = {
 			"isa" = "PBXFileReference";
 			"lastKnownFileType" = "sourcecode.swift";
@@ -695,6 +702,7 @@
 				6F515818902DAC12D8A1AEF6,
 				1405821DB85292304DAAB233,
 				EFBCF484286CB636B2FE6F65,
+				C0A6D283B5EBF448970BA7A7,
 				07CF2D50EDD05F021B924E1B,
 				81708E50C70E0B56225F4BE7,
 				B5C684C7CC826B8247C524A3,
@@ -1059,6 +1067,10 @@
 			"isa" = "PBXBuildFile";
 			"fileRef" = EFBCF484286CB636B2FE6F65;
 		};
+		"7030AA1B68A45E34FD673E3F" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = C0A6D283B5EBF448970BA7A7;
+		};
 		"F2A88FD30C49A7367A115FD2" = {
 			"isa" = "PBXBuildFile";
 			"fileRef" = 07CF2D50EDD05F021B924E1B;
@@ -1250,6 +1262,7 @@
 				8BDA595E6B7E8BB52B77D07C,
 				3BA76A9B502CFB0C995A14C6,
 				B19F08E12F31C28966E6F60B,
+				7030AA1B68A45E34FD673E3F,
 				F2A88FD30C49A7367A115FD2,
 				C51D537775FEC7E699B9DDBB,
 				4FC2C30339DB4A33DC0B8027,

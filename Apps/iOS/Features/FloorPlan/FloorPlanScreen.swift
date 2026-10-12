@@ -279,27 +279,44 @@ private struct PlanDrawingView: View {
                 let center = PlanViewport.labelPoint(room.boundary)
                 let area = (try? PolygonGeometry.area(of: room.boundary)) ?? 0
                 context.draw(Text("\(room.name)\n\(area.formatted(.number.precision(.fractionLength(2)))) м²").font(.system(size: 11, weight: .medium)).foregroundStyle(Color.atlasInk), at: viewport.point(center))
-                if showDimensions {
-                    let edges = EmptyRoomRingGeometry.edges(outer: room.boundary.vertices.map { .init(x: $0.x, y: 0, z: $0.y) }, holes: room.boundary.holes.map { ring in ring.map { .init(x: $0.x, y: 0, z: $0.y) } })
-                    for edge in edges {
-                        let a = viewport.point(.init(x: edge.start.x, y: edge.start.z))
-                        let b = viewport.point(.init(x: edge.end.x, y: edge.end.z))
-                        let midpoint = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
-                        let length = hypot(b.x - a.x, b.y - a.y)
-                        let offset = length > 0 ? CGSize(width: -(b.y - a.y) / length * 13, height: (b.x - a.x) / length * 13) : .zero
-                        context.draw(Text("\(edge.holeIndex == nil ? "" : "Отв. ")\(edge.length.formatted(.number.precision(.fractionLength(2)))) м").font(.system(size: 10, weight: .semibold)).foregroundStyle(Color.atlasAccent), at: CGPoint(x: midpoint.x + offset.width, y: midpoint.y + offset.height))
-                    }
-                }
             }
+            let maximumWallWidth = plan.walls.map { max(2, min(12, CGFloat($0.thicknessMeters ?? 0.05) * viewport.scale)) }.max() ?? 1.5
             for wall in plan.walls {
                 var path = Path()
                 path.move(to: viewport.point(wall.start)); path.addLine(to: viewport.point(wall.end))
                 context.stroke(path, with: .color(.atlasInk), lineWidth: max(2, min(12, CGFloat(wall.thicknessMeters ?? 0.05) * viewport.scale)))
-                if showDimensions {
+            }
+            // All annotations follow the wall strokes, so a later wall cannot
+            // paint over a unit or the height marker of an earlier label.
+            if showDimensions {
+                for room in plan.rooms {
+                    let edges = EmptyRoomRingGeometry.edges(outer: room.boundary.vertices.map { .init(x: $0.x, y: 0, z: $0.y) }, holes: room.boundary.holes.map { ring in ring.map { .init(x: $0.x, y: 0, z: $0.y) } })
+                    let normalSigns = ([room.boundary.vertices] + room.boundary.holes).enumerated().map {
+                        PlanDimensionLabelLayout.floorNormalSign(ring: $0.element.map { viewport.point($0) }, isHole: $0.offset > 0)
+                    }
+                    for edge in edges {
+                        let a = viewport.point(.init(x: edge.start.x, y: edge.start.z))
+                        let b = viewport.point(.init(x: edge.end.x, y: edge.end.z))
+                        let text = context.resolve(Text("\(edge.holeIndex == nil ? "" : "Отв. ")\(edge.length.formatted(.number.precision(.fractionLength(2)))) м").font(.system(size: 10, weight: .semibold)).foregroundStyle(Color.atlasAccent))
+                        let textSize = text.measure(in: CGSize(width: 1_024, height: 1_024))
+                        if let center = PlanDimensionLabelLayout.floor(start: a, end: b, textSize: textSize, wallLineWidth: maximumWallWidth, minimumOffset: 13, normalSign: normalSigns[edge.holeIndex.map { $0 + 1 } ?? 0]) {
+                            context.draw(text, at: center)
+                        }
+                    }
+                }
+                for wall in plan.walls {
                     let start = viewport.point(wall.start), end = viewport.point(wall.end)
                     let length = hypot(wall.end.x - wall.start.x, wall.end.y - wall.start.y)
                     let height = wall.heightMeters.map { " · h \($0.formatted(.number.precision(.fractionLength(2)))) м" } ?? ""
-                    context.draw(Text("\(length.formatted(.number.precision(.fractionLength(2)))) м\(height)").font(.system(size: 10, weight: .medium)).foregroundStyle(Color.atlasInk), at: CGPoint(x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 - 25))
+                    let text = context.resolve(Text("\(length.formatted(.number.precision(.fractionLength(2)))) м\(height)").font(.system(size: 10, weight: .medium)).foregroundStyle(Color.atlasInk))
+                    let textSize = text.measure(in: CGSize(width: 1_024, height: 1_024))
+                    let width = max(2, min(12, CGFloat(wall.thicknessMeters ?? 0.05) * viewport.scale))
+                    if let placement = PlanDimensionLabelLayout.wall(start: start, end: end, textSize: textSize, wallLineWidth: width, toward: viewport.point(viewport.center)) {
+                        var labelContext = context
+                        labelContext.translateBy(x: placement.center.x, y: placement.center.y)
+                        labelContext.rotate(by: .radians(placement.rotationRadians))
+                        labelContext.draw(text, at: .zero)
+                    }
                 }
             }
         }
