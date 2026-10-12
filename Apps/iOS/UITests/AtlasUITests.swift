@@ -388,31 +388,13 @@ final class AtlasUITests: XCTestCase {
         screenshot("18-burial-unknown", app: app)
 
         let historyButton = app.buttons["burial.history"]
-        let cardNavigation = app.navigationBars["Карточка захоронения"]
-        XCTAssertTrue(cardNavigation.waitForExistence(timeout: 10))
-        let window = app.frame
-        let top = cardNavigation.frame.maxY + 8
-        // Leave room above the home indicator. A partially clipped Form row
-        // can report isHittable even while its actionable centre is offscreen.
-        let bottom = window.maxY - 60
-        let viewport = CGRect(x: window.minX, y: top, width: window.width, height: bottom - top)
-        var historyFullyVisible = false
-        for _ in 0..<10 {
-            let frame = historyButton.exists ? historyButton.frame : CGRect.zero
-            if historyButton.exists && historyButton.isHittable && viewport.contains(frame) {
-                historyFullyVisible = true
-                break
-            }
-            let towardTop = historyButton.exists && frame.minY < viewport.minY
-            let origin = app.coordinate(withNormalizedOffset: .zero)
-            let distance = min(240, viewport.height / 3)
-            let startY = viewport.minY + viewport.height * (towardTop ? 0.38 : 0.62)
-            let start = origin.withOffset(CGVector(dx: viewport.midX - window.minX, dy: startY - window.minY))
-            let finish = origin.withOffset(CGVector(dx: viewport.midX - window.minX,
-                dy: startY - window.minY + (towardTop ? distance : -distance)))
-            start.press(forDuration: 0.05, thenDragTo: finish)
-        }
-        XCTAssertTrue(historyFullyVisible, "The actual history button must be fully inside the visible Form before tapping")
+        XCTAssertTrue(historyButton.waitForExistence(timeout: 10))
+        let window = app.windows.firstMatch.frame
+        // History is now a fixed native bottom-toolbar action, reachable from
+        // every position in the long card rather than a distant Form row.
+        let historyFullyVisible = historyButton.isHittable
+            && window.insetBy(dx: 0, dy: 8).contains(historyButton.frame)
+        XCTAssertTrue(historyFullyVisible, "The fixed history action must be completely visible before tapping")
         guard historyFullyVisible else { return }
         XCTAssertTrue(historyButton.isEnabled)
         historyButton.tap()
@@ -958,9 +940,10 @@ final class AtlasUITests: XCTestCase {
     @MainActor
     private func enter(_ value: String, identifier: String, in app: XCUIApplication) {
         let field = element(identifier, in: app)
-        scrollToControl(field, in: app)
-        XCTAssertTrue(field.isHittable)
+        revealWholeControl(field, in: app)
         field.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5),
+                      "Tapping the fully visible field must focus it before text entry")
         if let previous = field.value as? String, !previous.isEmpty,
            previous != field.placeholderValue {
             field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: previous.count))
@@ -973,6 +956,51 @@ final class AtlasUITests: XCTestCase {
             done?.tap()
             waitForAbsence(app.keyboards.firstMatch)
         }
+    }
+
+    @MainActor
+    private func revealWholeControl(_ control: XCUIElement, in app: XCUIApplication,
+                                    file: StaticString = #filePath, line: UInt = #line) {
+        let window = app.windows.firstMatch.frame
+        for _ in 0..<20 {
+            let top = app.navigationBars.allElementsBoundByIndex
+                .filter { $0.exists && $0.frame.intersects(window) }
+                .map { $0.frame.maxY + 8 }.max() ?? window.minY + 60
+            var bottom = window.maxY - 40
+            for bar in app.tabBars.allElementsBoundByIndex + app.toolbars.allElementsBoundByIndex {
+                if bar.exists && bar.isHittable && bar.frame.midY > window.midY {
+                    bottom = min(bottom, bar.frame.minY - 8)
+                }
+            }
+            if app.keyboards.firstMatch.exists { bottom = min(bottom, app.keyboards.firstMatch.frame.minY - 8) }
+            let viewport = CGRect(x: window.minX, y: top, width: window.width,
+                                  height: max(1, bottom - top))
+            let frame = control.exists ? control.frame : CGRect.zero
+            if control.exists && control.isHittable && viewport.contains(frame) { return }
+            let towardTop = control.exists && frame.minY < viewport.minY
+            let origin = app.coordinate(withNormalizedOffset: .zero)
+            let distance = min(300, viewport.height * 0.42)
+            let startY = viewport.minY + viewport.height * (towardTop ? 0.38 : 0.68)
+            let start = origin.withOffset(CGVector(dx: viewport.midX - window.minX, dy: startY - window.minY))
+            let finish = origin.withOffset(CGVector(dx: viewport.midX - window.minX,
+                dy: startY - window.minY + (towardTop ? distance : -distance)))
+            start.press(forDuration: 0.05, thenDragTo: finish)
+        }
+        XCTFail("The complete control did not enter the visible content viewport: \(control)", file: file, line: line)
+    }
+
+    @MainActor
+    private func confirmSwitch(_ identifier: String, in app: XCUIApplication) {
+        let control = app.switches[identifier]
+        revealWholeControl(control, in: app)
+        if control.value as? String != "1" {
+            // SwiftUI exposes the label and thumb as one switch. Its centre can
+            // fall on descriptive text, so touch the actual trailing thumb.
+            control.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5)).tap()
+        }
+        let confirmed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1"), object: control)
+        XCTAssertEqual(XCTWaiter.wait(for: [confirmed], timeout: 5), .completed,
+                       "Operator confirmation must actually change the switch value")
     }
 
     @MainActor
@@ -1053,8 +1081,8 @@ final class AtlasUITests: XCTestCase {
         XCTAssertEqual(records.count, 2, "The persisted observations disappeared after restart")
         records.element(boundBy: 0).tap()
         XCTAssertTrue(app.navigationBars["Карточка обмера"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.staticTexts["Световой проход"].firstMatch.exists)
-        XCTAssertTrue(app.staticTexts["Дверной проём"].firstMatch.exists)
+        XCTAssertTrue(element("measurement.record.definition", in: app).label.contains("Световой проход"))
+        XCTAssertTrue(element("measurement.record.target", in: app).label.contains("Дверной проём"))
     }
 
     @MainActor
@@ -1077,7 +1105,7 @@ final class AtlasUITests: XCTestCase {
         let verified = app.switches["emptyRoom.review.verified"]
         scrollToControl(verified, in: app)
         XCTAssertEqual(verified.value as? String, "0")
-        verified.tap()
+        confirmSwitch("emptyRoom.review.verified", in: app)
         enter("Дверца осмотрена специалистом; габарит шкафа не использован как её размер.", identifier: "emptyRoom.review.note", in: app)
         tap("emptyRoom.review.save", in: app)
         waitForAbsence(element("emptyRoom.review.save", in: app))
@@ -1097,9 +1125,7 @@ final class AtlasUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Поверхности и проёмы"].waitForExistence(timeout: 10))
         scrollAndTap("emptyRoom.surface." + doorID, in: app, towardTop: true)
         XCTAssertTrue(element("emptyRoom.source.classification", in: app).label.contains("Дверь"))
-        let doorVerified = app.switches["emptyRoom.review.verified"]
-        scrollToControl(doorVerified, in: app)
-        doorVerified.tap()
+        confirmSwitch("emptyRoom.review.verified", in: app)
         scrollAndTap("emptyRoom.review.meaning", in: app)
         app.buttons["Чистый проём · контрольный обмер"].firstMatch.tap()
         scrollAndTap("emptyRoom.review.measurement", in: app)

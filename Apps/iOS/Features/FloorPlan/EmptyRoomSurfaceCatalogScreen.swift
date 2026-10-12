@@ -243,6 +243,7 @@ private struct EmptyRoomSurfaceReviewEditor: View {
                     Toggle("Классификация проверена мной", isOn: $verified).accessibilityIdentifier("emptyRoom.review.verified")
                     Text("Это решение о типе объекта. Оно не подтверждает сантиметровую точность и не исправляет исходную геометрию.").font(.caption)
                 }
+                reviewNoteSection
                 if let source {
                     Section("Исходник RoomPlan · без изменений") {
                         Text("\(source.title) · \(source.confidence.title) уверенность классификации").accessibilityIdentifier("emptyRoom.source.classification")
@@ -283,11 +284,6 @@ private struct EmptyRoomSurfaceReviewEditor: View {
                         Text("Подтверждайте только после проверки формы и положения контура в системе RoomPlan. Одна проверка типа и отдельный размер W/H не исправляют контур и не подтверждают площадь проёма.").font(.caption)
                     }
                 }
-                Section("Причина / место обмера") {
-                    TextField("Что проверено и где", text: $note, axis: .vertical).lineLimit(3...8)
-                        .focused($focusedField, equals: .note).accessibilityIdentifier("emptyRoom.review.note")
-                    Text("Каждое сохранение добавляет решение в историю. Предыдущие записи не удаляются.").font(.caption)
-                }
             }
             .pickerStyle(.menu)
             .navigationTitle("Проверить поверхность")
@@ -311,6 +307,18 @@ private struct EmptyRoomSurfaceReviewEditor: View {
             } message: { Text(issue ?? "") }
         }.tint(.atlasAccent)
     }
+
+    // Keep the operator's reason beside the classification decision. Placing
+    // this input after the long source/control explanations left its tappable
+    // accessibility rectangle below the viewport on a normal-sized iPhone.
+    private var reviewNoteSection: some View {
+        Section("Причина / место обмера") {
+            TextField("Что проверено и где", text: $note, axis: .vertical).lineLimit(3...8)
+                .focused($focusedField, equals: .note).accessibilityIdentifier("emptyRoom.review.note")
+            Text("Каждое сохранение добавляет решение в историю. Предыдущие записи не удаляются.").font(.caption)
+        }
+    }
+
     private func commit() async {
         guard !saving else { return }
         saving = true; defer { saving = false }

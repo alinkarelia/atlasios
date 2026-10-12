@@ -87,10 +87,7 @@ struct BurialCardScreen: View {
                 conditionSection
                 positionSection
                 if !isNew {
-                    Section("История и состояние записи") {
-                        Button("История изменений", systemImage: "clock.arrow.circlepath") { showHistory = true }
-                            .buttonStyle(.borderless)
-                            .accessibilityIdentifier("burial.history")
+                    Section("Состояние записи") {
                         SurveyRecordActions(feature: feature, disabled: !canSave) { action in Task { await save(action: action) } }
                     }
                 }
@@ -114,6 +111,15 @@ struct BurialCardScreen: View {
                     Button("Готово") {
                         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
                     }.accessibilityIdentifier("burial.keyboardDone")
+                }
+                if !isNew {
+                    ToolbarItem(placement: .bottomBar) {
+                        Button("История", systemImage: "clock.arrow.circlepath") { showHistory = true }
+                            .labelStyle(.titleAndIcon)
+                            .disabled(metadataIssue != nil)
+                            .accessibilityLabel("История карточки")
+                            .accessibilityIdentifier("burial.history")
+                    }
                 }
             }
             .interactiveDismissDisabled(changed || busy)

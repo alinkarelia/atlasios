@@ -58,8 +58,11 @@ struct MeasurementRecordEditor: View {
                         LabeledContent("Обозначение", value: initial.notation)
                         if let context = initial.context {
                             LabeledContent("Объект", value: context.target.fieldMeasurementTitle)
+                                .accessibilityIdentifier("measurement.record.target")
                             LabeledContent("Границы", value: context.effectiveDefinition.fieldMeasurementTitle)
+                                .accessibilityIdentifier("measurement.record.definition")
                             LabeledContent("Место", value: context.position.fieldMeasurementTitle + (context.positionNote.isEmpty ? "" : " · " + context.positionNote))
+                                .accessibilityIdentifier("measurement.record.position")
                         }
                         LabeledContent("Исходный размер", value: number(initial.originalMeters) + " м")
                         LabeledContent("Текущее значение", value: number(initial.effectiveMeters) + " м")
