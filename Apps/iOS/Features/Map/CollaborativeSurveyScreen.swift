@@ -646,10 +646,14 @@ private struct CollaborativeSurveyPlanCanvas: View {
                           }) else { return }
                     onSelect(selected)
                 }
-            pannable(canvas)
-                .overlay(alignment: .topTrailing) { zoomControls }
-                .accessibilityIdentifier("collaboration.canvas")
-                .accessibilityLabel(plan.coordinateReference == .wgs84 ? "План участков в проекции WGS84. Север сверху; GPS показан с кругом погрешности." : "План участков в локальных метрах. GPS в этой системе недоступен.")
+            ZStack(alignment: .topTrailing) {
+                pannable(canvas)
+                    .accessibilityIdentifier("collaboration.canvas")
+                    .accessibilityLabel(plan.coordinateReference == .wgs84 ? "План участков в проекции WGS84. Север сверху; GPS показан с кругом погрешности." : "План участков в локальных метрах. GPS в этой системе недоступен.")
+                // Controls are siblings of the plotted accessibility leaf;
+                // its identifier and label must not replace theirs.
+                zoomControls
+            }
         }
     }
     @ViewBuilder

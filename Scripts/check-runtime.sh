@@ -8,14 +8,21 @@ if [[ "$(uname -s)" != "Darwin" ]] || ! xcrun --sdk iphonesimulator --show-sdk-p
 fi
 
 launch_only=false
+team_plan_only=false
 if [[ "${1:-}" == "--launch-only" ]]; then
   launch_only=true
+elif [[ "${1:-}" == "--team-plan-only" ]]; then
+  team_plan_only=true
 elif [[ -n "${1:-}" ]]; then
   printf 'Unknown argument: %s\n' "$1" >&2
   exit 2
 fi
 
 artifacts="$repo_root/artifacts/runtime"
+if "$team_plan_only"; then
+  # Keep a focused diagnostic separate from the complete release evidence.
+  artifacts="$repo_root/artifacts/focused-team-runtime"
+fi
 derived_data="$artifacts/DerivedData"
 screenshots="$artifacts/screenshots"
 mkdir -p "$screenshots" "$artifacts/diagnostics"
@@ -118,9 +125,19 @@ if "$launch_only"; then
 fi
 
 xcrun simctl terminate "$device_id" com.atlasfield.app || true
+# The macOS system Bash 3.2 treats an empty array as unbound under set -u.
+# Keep the default invocation nonempty and identical to the full test command.
+focused_arguments=(test)
+if "$team_plan_only"; then
+  focused_arguments=(-only-testing:AtlasUITests/AtlasUITests/testTeamPlanCreatesFiveRealAssignmentsAndPersistsTheExplicitWorkerSelection test)
+fi
 xcodebuild -project "$repo_root/Atlas.xcodeproj" -scheme AtlasUITests -configuration Debug \
   -destination "platform=iOS Simulator,id=$device_id" -derivedDataPath "$derived_data" \
   -resultBundlePath "$result_bundle" -parallel-testing-enabled NO \
-  CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO ONLY_ACTIVE_ARCH=YES test
+  CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO ONLY_ACTIVE_ARCH=YES "${focused_arguments[@]}"
 
-printf 'Native UI tests passed in Simulator. Results and screenshots: %s\n' "$artifacts"
+if "$team_plan_only"; then
+  printf 'Focused team-plan diagnostic passed. This is not a complete release UI check. Results: %s\n' "$artifacts"
+else
+  printf 'Native UI tests passed in Simulator. Results and screenshots: %s\n' "$artifacts"
+fi

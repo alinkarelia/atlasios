@@ -1,0 +1,88 @@
+name: Focused team-plan UI diagnosis
+
+on:
+  workflow_dispatch:
+    inputs:
+      runtime:
+        description: 'Simulator generation for the focused diagnostic'
+        type: choice
+        options: ['26', '18']
+        default: '26'
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terraview-focused-team-${{ github.ref }}-${{ inputs.runtime }}
+  cancel-in-progress: true
+
+jobs:
+  focused:
+    name: Focused team-plan diagnostic (iOS ${{ inputs.runtime }})
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Select the actual Apple toolchain
+        env:
+          TERRAVIEW_DIAGNOSTIC_MAJOR: ${{ inputs.runtime }}
+        run: |
+          python3 - <<'PY' > /tmp/terraview-diagnostic-xcode.txt
+          import os, pathlib, re
+          if os.environ['TERRAVIEW_DIAGNOSTIC_MAJOR'] == '26':
+              candidates = []
+              for app in pathlib.Path('/Applications').glob('Xcode_26*.app'):
+                  match = re.fullmatch(r'Xcode_(26(?:\.[0-9]+){0,2})\.app', app.name)
+                  if match:
+                      candidates.append((tuple(map(int, match[1].split('.'))), app))
+              if not candidates:
+                  raise SystemExit('No installed stable Xcode 26 toolchain.')
+              app = max(candidates)[1]
+          else:
+              app = pathlib.Path('/Applications/Xcode_16.4.app')
+          developer = app / 'Contents/Developer'
+          if not developer.is_dir():
+              raise SystemExit('Required Apple toolchain is missing.')
+          print(developer)
+          PY
+          sudo xcode-select -s "$(cat /tmp/terraview-diagnostic-xcode.txt)"
+          xcodebuild -version
+          xcrun swift --version
+      - name: Install the project generator dependency
+        run: python3 -m pip install 'PyYAML==6.0.3'
+      - name: Run only the team-plan interaction diagnostic
+        env:
+          ATLAS_RUNTIME_IOS_MAJOR: ${{ inputs.runtime }}
+        run: bash Scripts/check-runtime.sh --team-plan-only
+      - name: Require the actual single passing case and its two screenshots
+        run: |
+          python3 - <<'PY'
+          import json, pathlib
+          root = pathlib.Path('artifacts/focused-team-runtime')
+          summary = json.loads((root / 'diagnostics/test-summary.json').read_text())
+          assert summary['totalTestCount'] == 1 and summary['passedTests'] == 1
+          assert summary['failedTests'] == 0 and summary['skippedTests'] == 0
+          assert summary.get('expectedFailures', 0) == 0
+          manifest = json.loads((root / 'screenshots/test-attachments/manifest.json').read_text())
+          text = json.dumps(manifest)
+          assert '33-team-planning' in text and '34-team-coverage' in text
+          print('Focused team-plan diagnosis passed. Full 18-case dual-runtime verification remains required for publication.')
+          PY
+      - name: Preserve the actual focused diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: focused-team-ios${{ inputs.runtime }}-diagnostics
+          path: |
+            artifacts/focused-team-runtime/simulator-selection.json
+            artifacts/focused-team-runtime/screenshots/
+            artifacts/focused-team-runtime/diagnostics/
+          if-no-files-found: warn
+          retention-days: 14
