@@ -1,0 +1,99 @@
+{
+  "checked_at": "2026-10-13T19:21:16.443116+00:00",
+  "reviewer": "release_asset_verify",
+  "repository": "alinkarelia/atlasios",
+  "release_id": 412022540,
+  "release_tag": "v0.7.0-preview.9",
+  "release_url": "https://github.com/alinkarelia/atlasios/releases/tag/v0.7.0-preview.9",
+  "release_public": true,
+  "prerelease": true,
+  "published_at": "2026-10-13T19:18:33Z",
+  "source_sha": "531f36191c01fd7b62f7f4da01e54ff3b89aafcd",
+  "tag_exact_source_verified": true,
+  "publisher_run_id": 38453755565,
+  "publisher_run_url": "https://github.com/alinkarelia/atlasios/actions/runs/38453755565",
+  "publisher_conclusion": "success",
+  "source_run_id": 38414711616,
+  "source_run_conclusion": "success",
+  "source_all_6_jobs_success": true,
+  "assets": [
+    {
+      "name": "atlas-source.zip",
+      "asset_id": 638004850,
+      "bytes": 5939074,
+      "sha256": "707e68a9081707c9784e94c47da5280f72cb53977a4f0ca4093aa2bae1d57a65",
+      "url": "https://github.com/alinkarelia/atlasios/releases/download/v0.7.0-preview.9/atlas-source.zip",
+      "actual_api_length_and_digest_verified": true
+    },
+    {
+      "name": "atlas-source.zip.sha256",
+      "asset_id": 638004941,
+      "bytes": 83,
+      "sha256": "a2e11e4c6a5cd12180a3cb9cd46ba1dd90f2592625cec3f0a3c5cee0e890cda6",
+      "url": "https://github.com/alinkarelia/atlasios/releases/download/v0.7.0-preview.9/atlas-source.zip.sha256",
+      "actual_api_length_and_digest_verified": true
+    },
+    {
+      "name": "Atlas-unsigned.ipa",
+      "asset_id": 638004753,
+      "bytes": 12306402,
+      "sha256": "e6b7a9b702e1eab4cede1492949a3faf928bda2b2f9fb67b50dce1cc51185f96",
+      "url": "https://github.com/alinkarelia/atlasios/releases/download/v0.7.0-preview.9/Atlas-unsigned.ipa",
+      "actual_api_length_and_digest_verified": true
+    },
+    {
+      "name": "Atlas-unsigned.ipa.sha256",
+      "asset_id": 638004801,
+      "bytes": 85,
+      "sha256": "ca51d995f49a431f95fff7193e63d151c9cb80730e496c2e686cf1b768d5091c",
+      "url": "https://github.com/alinkarelia/atlasios/releases/download/v0.7.0-preview.9/Atlas-unsigned.ipa.sha256",
+      "actual_api_length_and_digest_verified": true
+    },
+    {
+      "name": "verification.json",
+      "asset_id": 638005020,
+      "bytes": 25850,
+      "sha256": "ee793108876cb147cba192b0e705c47e118421f8b282bc17141c9f7f651fe693",
+      "url": "https://github.com/alinkarelia/atlasios/releases/download/v0.7.0-preview.9/verification.json",
+      "actual_api_length_and_digest_verified": true
+    }
+  ],
+  "source_archive_verification": {
+    "source_sha": "531f36191c01fd7b62f7f4da01e54ff3b89aafcd",
+    "source_archive_sha256": "707e68a9081707c9784e94c47da5280f72cb53977a4f0ca4093aa2bae1d57a65",
+    "source_archive_bytes": 5939074,
+    "source_archive_verified_files": 271,
+    "source_archive_prefix": "atlas-source/"
+  },
+  "current_screenshot_hash_binding": [
+    {
+      "runtime": "ios18",
+      "actual_artifact_id": 11827465021,
+      "artifact_sha256": "2c684fdff6fffea7c433acef4b8a3c6db1a9ab7b99b3f78d60a51a0756ef23b3",
+      "PNG_count": 36,
+      "individual_original_PNG_hashes_match_final_release_proof_and_root_acceptance": true,
+      "root_visual_acceptance_bound": true,
+      "this_agent_visual_acceptance": false
+    },
+    {
+      "runtime": "ios26",
+      "actual_artifact_id": 11828040083,
+      "artifact_sha256": "43f41e80c6ca52699b114581c0b905287faf558c6987d14960bc4de9004719a5",
+      "PNG_count": 36,
+      "individual_original_PNG_hashes_match_final_release_proof_and_root_acceptance": true,
+      "root_visual_acceptance_bound": true,
+      "this_agent_visual_acceptance": false
+    }
+  ],
+  "PNG_total": 72,
+  "IPA_identity": {
+    "CFBundleDisplayName": "TerraView",
+    "CFBundleShortVersionString": "0.7.0",
+    "CFBundleVersion": "9",
+    "CFBundleIdentifier": "com.atlasfield.app"
+  },
+  "IPA_ZIP_CRC_verified": true,
+  "personally_signed": false,
+  "physical_camera_LiDAR_tested": false,
+  "validation_passed": true
+}
