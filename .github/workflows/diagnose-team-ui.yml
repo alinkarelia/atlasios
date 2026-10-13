@@ -1,4 +1,4 @@
-name: Focused team-plan UI diagnosis
+name: Focused fieldwork UI diagnosis
 
 on:
   workflow_dispatch:
@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   focused:
-    name: Focused team-plan diagnostic (iOS ${{ inputs.runtime }})
+    name: Focused fieldwork diagnostic (iOS ${{ inputs.runtime }})
     runs-on: macos-15
     timeout-minutes: 25
     steps:
@@ -57,32 +57,33 @@ jobs:
           xcrun swift --version
       - name: Install the project generator dependency
         run: python3 -m pip install 'PyYAML==6.0.3'
-      - name: Run only the team-plan interaction diagnostic
+      - name: Run the three fieldwork interaction diagnostics
         env:
           ATLAS_RUNTIME_IOS_MAJOR: ${{ inputs.runtime }}
-        run: bash Scripts/check-runtime.sh --team-plan-only
-      - name: Require the actual single passing case and its two screenshots
+        run: bash Scripts/check-runtime.sh --field-interactions-only
+      - name: Require the three actual passing cases and their screenshots
         run: |
           python3 - <<'PY'
           import json, pathlib
-          root = pathlib.Path('artifacts/focused-team-runtime')
+          root = pathlib.Path('artifacts/focused-fieldwork-runtime')
           summary = json.loads((root / 'diagnostics/test-summary.json').read_text())
-          assert summary['totalTestCount'] == 1 and summary['passedTests'] == 1
+          assert summary['totalTestCount'] == 3 and summary['passedTests'] == 3
           assert summary['failedTests'] == 0 and summary['skippedTests'] == 0
           assert summary.get('expectedFailures', 0) == 0
           manifest = json.loads((root / 'screenshots/test-attachments/manifest.json').read_text())
           text = json.dumps(manifest)
-          assert '33-team-planning' in text and '34-team-coverage' in text
-          print('Focused team-plan diagnosis passed. Full 18-case dual-runtime verification remains required for publication.')
+          for label in ['18-burial-unknown', '19-burial-candidate-restored', '33-team-planning', '34-team-coverage']:
+              assert label in text
+          print('Focused fieldwork diagnosis passed. Full 18-case dual-runtime verification remains required for publication.')
           PY
       - name: Preserve the actual focused diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: focused-team-ios${{ inputs.runtime }}-diagnostics
+          name: focused-fieldwork-ios${{ inputs.runtime }}-diagnostics
           path: |
-            artifacts/focused-team-runtime/simulator-selection.json
-            artifacts/focused-team-runtime/screenshots/
-            artifacts/focused-team-runtime/diagnostics/
+            artifacts/focused-fieldwork-runtime/simulator-selection.json
+            artifacts/focused-fieldwork-runtime/screenshots/
+            artifacts/focused-fieldwork-runtime/diagnostics/
           if-no-files-found: warn
           retention-days: 14

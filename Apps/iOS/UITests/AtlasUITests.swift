@@ -220,7 +220,10 @@ final class AtlasUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Демо · полевое обследование"].firstMatch.waitForExistence(timeout: 15),
                       "The labelled synthetic project must be stored through the normal project flow")
         tap("projects.openSelected", in: app)
-        scrollAndTap("projects.cemetery", in: app)
+        // iOS 26 can report an occluded lazy row as hittable even when its
+        // centre lies behind the navigation bar. Require the whole real row.
+        revealWholeControl(element("projects.cemetery", in: app), in: app)
+        tap("projects.cemetery", in: app)
         XCTAssertTrue(app.staticTexts["Учебное кладбище"].firstMatch.waitForExistence(timeout: 15),
                       "Fieldwork must load the actual saved cemetery rather than an empty demonstration screen")
         tap("cemetery.map", in: app)
