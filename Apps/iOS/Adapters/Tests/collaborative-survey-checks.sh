@@ -13,7 +13,7 @@ sources.mkdir(parents=True)
 dependency = json.dumps(str(repository / 'Packages' / 'AtlasCore'), ensure_ascii=False)
 (scratch / 'Package.swift').write_text('''// swift-tools-version: 6.0
 import PackageDescription
-let package = Package(name: "CollaborativeNativeChecks", dependencies: [.package(path: ''' + dependency + ''')], targets: [.executableTarget(name: "Checks", dependencies: [.product(name: "AtlasCore", package: "AtlasCore")])], swiftLanguageModes: [.v6])
+let package = Package(name: "CollaborativeNativeChecks", platforms: [.macOS(.v14)], dependencies: [.package(path: ''' + dependency + ''')], targets: [.executableTarget(name: "Checks", dependencies: [.product(name: "AtlasCore", package: "AtlasCore")])], swiftLanguageModes: [.v6])
 ''')
 for relative in [
     'Apps/iOS/Adapters/CollaborativeSurveyStore.swift',

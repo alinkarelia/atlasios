@@ -138,8 +138,11 @@ struct FragmentAssemblyScreen: View {
         document = next; readiness = state
     }
     private func bootstrap() async {
-        guard let anchorID else { return }; busy = true; issue = nil; defer { busy = false }
-        do { try await display(try await store.bootstrap(scans: scans, anchorCaptureID: anchorID)); changed() }
+        guard let anchorID, let anchor = scans.first(where: { $0.id == anchorID }) else { return }
+        busy = true; issue = nil; defer { busy = false }
+        // Start with the explicitly selected original. Unsupported or very large
+        // older scans must not block a valid independent subset of this project.
+        do { try await display(try await store.bootstrap(scans: [anchor], anchorCaptureID: anchorID)); changed() }
         catch { issue = error.localizedDescription }
     }
     private func add(_ scan: ScanRecord) async {
