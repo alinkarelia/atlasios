@@ -8,10 +8,11 @@ import Foundation
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let output = directory.appendingPathComponent("output", isDirectory: true)
         let source = directory.appendingPathComponent("source.obj")
+        let frameID = UUID(uuidString: "A7100000-1234-4000-8000-000000000101")!
         // A two-metre edge, physical creases, reversed/slash/relative indices,
         // and an unused vertex expose scaling, winding and accessor-bounds bugs.
         let original = Data("""
-        # Atlas ARKit mesh. metres. Y up. local frame fixture
+        # Atlas ARKit mesh. metres. Y up. local frame \(frameID.uuidString)
         v 1.25 -2 0.5
         v 3.25 -2 0.5
         v 1.25 1 0.5
@@ -36,8 +37,50 @@ import Foundation
         try check(try Data(contentsOf: second) == Data(contentsOf: URL(fileURLWithPath: files["glb"]!)),
                   "Repeated exports have identical geometry bytes")
 
+        // A registered derivative declares a metric anchor without becoming
+        // an acquisition original. Header-only changes must not rescale its
+        // actual GLB positions, bounds or wire-format units.
+        let derivative = directory.appendingPathComponent("aligned-derivative.obj")
+        let derivativeBytes = Data(String(decoding: original, as: UTF8.self)
+            .replacingOccurrences(of: "# Atlas ARKit mesh. metres. Y up. local frame ",
+                                  with: "# TerraView aligned fragment derivative. metres. Y up. local frame ").utf8)
+        try derivativeBytes.write(to: derivative)
+        let derivativeMesh = try OBJPreviewLoader.load(derivative)
+        try check(!derivativeMesh.isAtlasCapture && derivativeMesh.declaredMetricFrame?.frameID == frameID,
+                  "Derivative metres/frame do not relabel original provenance")
+        let derivativeGLB = try MeshExportService.export(source: derivative, format: .glb, outputDirectory: output)
+        let derivativeGLBBytes = try Data(contentsOf: derivativeGLB)
+        try check(derivativeGLBBytes == Data(contentsOf: second), "Automatic derivative GLB retains actual metric geometry and bounds")
+        let jsonSize = Int(derivativeGLBBytes.withUnsafeBytes { UInt32(littleEndian: $0.loadUnaligned(fromByteOffset: 12, as: UInt32.self)) })
+        let derivativeDocument = try JSONSerialization.jsonObject(with: derivativeGLBBytes.subdata(in: 20..<(20 + jsonSize))) as? [String: Any]
+        let derivativeAsset = derivativeDocument?["asset"] as? [String: Any]
+        let derivativeExtras = derivativeAsset?["extras"] as? [String: Any]
+        try check(derivativeExtras?["units"] as? String == "metres", "Actual derivative GLB declares metre units")
+        try check(try Data(contentsOf: derivative) == derivativeBytes, "Derivative GLB export retains source bytes")
+
+        // A plausible spelling without a real frame UUID is still unknown;
+        // GLB must refuse it, while PLY must explicitly preserve unknown units.
+        let malformedDerivative = directory.appendingPathComponent("malformed-derivative.obj")
+        let malformedBytes = Data(String(decoding: derivativeBytes, as: UTF8.self)
+            .replacingOccurrences(of: frameID.uuidString, with: "invalid").utf8)
+        try malformedBytes.write(to: malformedDerivative)
+        let malformedMesh = try OBJPreviewLoader.load(malformedDerivative)
+        try check(!malformedMesh.isAtlasCapture && malformedMesh.declaredMetricFrame == nil, "Invalid derivative frame cannot certify units")
+        let beforeMalformed = try FileManager.default.contentsOfDirectory(atPath: output.path).sorted()
+        do {
+            _ = try MeshExportService.export(source: malformedDerivative, format: .glb, outputDirectory: output)
+            throw CheckFailure("Malformed derivative units must not become GLB metres")
+        } catch MeshExportError.unknownUnitForGLB {}
+        try check(try FileManager.default.contentsOfDirectory(atPath: output.path).sorted() == beforeMalformed,
+                  "Unknown derivative units create no GLB or partial output")
+        let malformedPLY = try MeshExportService.export(source: malformedDerivative, format: .ply, outputDirectory: output)
+        let malformedPLYBytes = try Data(contentsOf: malformedPLY)
+        let malformedPLYHeader = String(decoding: malformedPLYBytes.prefix(512), as: UTF8.self)
+        try check(malformedPLYHeader.contains("units=unknown (source units)"), "Actual PLY preserves unknown derivative units")
+        try check(try Data(contentsOf: malformedDerivative) == malformedBytes, "Unknown-unit rejection and PLY export retain source bytes")
+
         let degenerate = directory.appendingPathComponent("degenerate.obj")
-        try Data("# Atlas ARKit mesh. metres. Y up. local frame degenerate\nv 0 0 0\nv 1 0 0\nv 2 0 0\nf 1 2 3\n".utf8).write(to: degenerate)
+        try Data("# Atlas ARKit mesh. metres. Y up. local frame \(frameID.uuidString)\nv 0 0 0\nv 1 0 0\nv 2 0 0\nf 1 2 3\n".utf8).write(to: degenerate)
         var degenerateFiles: [String: String] = [:]
         for format in MeshExportFormat.allCases {
             degenerateFiles[format.rawValue] = try MeshExportService.export(source: degenerate, format: format, outputDirectory: output).path
@@ -81,7 +124,7 @@ import Foundation
 
         // A real multi-chunk export crosses the streaming buffer boundary.
         let streamed = directory.appendingPathComponent("streamed.obj")
-        try Data(("# Atlas ARKit mesh. metres. Y up. local frame streamed\nv 0 0 0\nv 2 0 0\nv 0 3 0\n" + String(repeating: "f 1 2 3\n", count: 10_000)).utf8).write(to: streamed)
+        try Data(("# Atlas ARKit mesh. metres. Y up. local frame \(frameID.uuidString)\nv 0 0 0\nv 2 0 0\nv 0 3 0\n" + String(repeating: "f 1 2 3\n", count: 10_000)).utf8).write(to: streamed)
         var streamedFiles: [String: String] = [:]
         for format in MeshExportFormat.allCases {
             streamedFiles[format.rawValue] = try MeshExportService.export(source: streamed, format: format, outputDirectory: output).path
@@ -141,7 +184,7 @@ with zipfile.ZipFile(sys.argv[1], "w") as archive:
         manifest["native-usdz"] = nativeFiles
         #endif
         try JSONSerialization.data(withJSONObject: manifest, options: [.sortedKeys]).write(to: directory.appendingPathComponent("files.json"))
-        print("Swift mesh exports: STL/PLY/GLB, source retention, cancellation, limits and streaming passed")
+        print("Swift mesh exports: STL/PLY/GLB, valid original/derivative metric frames, unknown-unit refusal, source retention, cancellation, limits and streaming passed")
     }
 
     private static func check(_ value: @autoclosure () throws -> Bool, _ message: String) throws {

@@ -24,7 +24,8 @@ enum MeshExportError: LocalizedError {
 }
 
 /// Exports bounded triangles in the source local frame without inventing textures.
-/// Native captures are in metres; arbitrary OBJ coordinates have unknown units.
+/// Known original/derivative OBJ frame headers declare metres independently of
+/// acquisition provenance; arbitrary OBJ coordinates have unknown units.
 /// An explicit `.meters` override means the caller has established metre units;
 /// this exporter never guesses a scale or rescales geometry.
 /// Call from a utility task: decoding and file IO must stay away from the UI.
@@ -34,7 +35,7 @@ enum MeshExportService {
         try Task.checkCancellation()
         let mesh = try OBJPreviewLoader.load(source)
         let bounds = try validate(mesh)
-        let unit = sourceUnit ?? (mesh.isAtlasCapture || source.lastPathComponent == "room.usdz" || source.lastPathComponent == "object.usdz" ? .meters : .unknown)
+        let unit = sourceUnit ?? (mesh.declaredMetricFrame != nil || source.lastPathComponent == "room.usdz" || source.lastPathComponent == "object.usdz" ? .meters : .unknown)
         guard format != .glb || unit == .meters else { throw MeshExportError.unknownUnitForGLB }
         guard outputDirectory.isFileURL else { throw MeshExportError.invalidDestination }
         try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
