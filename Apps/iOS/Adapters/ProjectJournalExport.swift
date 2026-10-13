@@ -49,6 +49,7 @@ enum ProjectJournalExport {
     private struct TeamDocument: Decodable {
         let schemaVersion: Int; let projectID: UUID; let sourceFeatureID: UUID
         let sourceFeatureRevision: Int64; let projectName: String?; let projectKind: ProjectKind?
+        let sourceFeatureLabel: String?; let sourceFeatureCategory: FeatureCategory?
         let plan: CollaborativeSurveyPlan
         let revisionStamps: [RevisionStamp]
     }
@@ -190,7 +191,8 @@ enum ProjectJournalExport {
         guard document.schemaVersion == 1, document.projectID == project.id,
               document.plan.projectID == project.id, document.plan.coordinateReference == project.coordinateReference,
               document.sourceFeatureRevision >= 0, document.plan.revision <= 12_000,
-              document.projectName == nil || (document.projectName!.utf8.count <= 240 && !document.projectName!.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty),
+              document.projectName == nil || (document.projectName!.utf16.count <= 160 && document.projectName!.utf8.count <= 640 && !document.projectName!.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty),
+              document.sourceFeatureLabel == nil || (document.sourceFeatureLabel!.utf16.count <= 160 && document.sourceFeatureLabel!.utf8.count <= 640 && !document.sourceFeatureLabel!.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty),
               document.revisionStamps.count == Int(document.plan.revision) + 1 else {
             throw ProjectJournalExportError.invalidDocument
         }

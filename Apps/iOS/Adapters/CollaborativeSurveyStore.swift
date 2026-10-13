@@ -29,15 +29,21 @@ struct CollaborativeSurveyStoredPlan: Codable, Hashable, Sendable {
     let sourceFeatureRevision: Int64
     let projectName: String?
     let projectKind: ProjectKind?
+    /// Optional for older exchange documents. Preserve the actual source kind;
+    /// a cemetery must not turn into a generic boundary on another phone.
+    let sourceFeatureLabel: String?
+    let sourceFeatureCategory: FeatureCategory?
     var plan: CollaborativeSurveyPlan
     var revisionStamps: [CollaborativeSurveyRevisionStamp]
 
     init(plan: CollaborativeSurveyPlan, sourceFeatureID: UUID, sourceFeatureRevision: Int64,
-         projectName: String? = nil, projectKind: ProjectKind? = nil) throws {
+         projectName: String? = nil, projectKind: ProjectKind? = nil,
+         sourceFeatureLabel: String? = nil, sourceFeatureCategory: FeatureCategory? = nil) throws {
         guard plan.revision == 0, sourceFeatureRevision >= 0 else { throw CollaborativeSurveyStoreError.invalidDocument }
         schemaVersion = 1; projectID = plan.projectID
         self.sourceFeatureID = sourceFeatureID; self.sourceFeatureRevision = sourceFeatureRevision
         self.projectName = projectName; self.projectKind = projectKind
+        self.sourceFeatureLabel = sourceFeatureLabel; self.sourceFeatureCategory = sourceFeatureCategory
         self.plan = plan
         revisionStamps = [.init(revision: 0, planSHA256: try Self.digest(plan), parentSHA256: nil)]
         try validate()
@@ -53,7 +59,8 @@ struct CollaborativeSurveyStoredPlan: Codable, Hashable, Sendable {
     func validate() throws {
         try plan.validate()
         guard schemaVersion == 1, projectID == plan.projectID, sourceFeatureRevision >= 0,
-              projectName == nil || (projectName!.utf8.count <= 240 && !projectName!.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty),
+              projectName == nil || (projectName!.utf16.count <= 160 && !projectName!.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty),
+              sourceFeatureLabel == nil || (sourceFeatureLabel!.utf16.count <= 160 && !sourceFeatureLabel!.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty),
               plan.revision <= 12_000, revisionStamps.count == Int(plan.revision) + 1,
               revisionStamps.last?.planSHA256 == (try Self.digest(plan)) else { throw CollaborativeSurveyStoreError.invalidDocument }
         for (index, stamp) in revisionStamps.enumerated() {
@@ -79,6 +86,7 @@ struct CollaborativeSurveyStoredPlan: Codable, Hashable, Sendable {
         guard schemaVersion == previous.schemaVersion, projectID == previous.projectID,
               sourceFeatureID == previous.sourceFeatureID, sourceFeatureRevision == previous.sourceFeatureRevision,
               projectName == previous.projectName, projectKind == previous.projectKind,
+              sourceFeatureLabel == previous.sourceFeatureLabel, sourceFeatureCategory == previous.sourceFeatureCategory,
               plan.id == previous.plan.id, plan.revision >= previous.plan.revision,
               Array(revisionStamps.prefix(previous.revisionStamps.count)) == previous.revisionStamps else {
             throw CollaborativeSurveyStoreError.revisionConflict
@@ -173,7 +181,10 @@ actor CollaborativeSurveyStore {
         guard previous?.currentSHA256 == expectedSHA256 else { throw CollaborativeSurveyStoreError.revisionConflict }
         if let previous {
             guard document.sourceFeatureID == previous.sourceFeatureID,
-                  document.sourceFeatureRevision == previous.sourceFeatureRevision else { throw CollaborativeSurveyStoreError.revisionConflict }
+                  document.sourceFeatureRevision == previous.sourceFeatureRevision,
+                  document.projectName == previous.projectName, document.projectKind == previous.projectKind,
+                  document.sourceFeatureLabel == previous.sourceFeatureLabel,
+                  document.sourceFeatureCategory == previous.sourceFeatureCategory else { throw CollaborativeSurveyStoreError.revisionConflict }
             try document.plan.validateTransition(from: previous.plan)
             guard Array(document.revisionStamps.prefix(previous.revisionStamps.count)) == previous.revisionStamps else {
                 throw CollaborativeSurveyStoreError.revisionConflict
@@ -203,7 +214,9 @@ actor CollaborativeSurveyStore {
         }
         guard imported.sourceFeatureID == previous.sourceFeatureID,
               imported.sourceFeatureRevision == previous.sourceFeatureRevision,
-              imported.projectName == previous.projectName, imported.projectKind == previous.projectKind else {
+              imported.projectName == previous.projectName, imported.projectKind == previous.projectKind,
+              imported.sourceFeatureLabel == previous.sourceFeatureLabel,
+              imported.sourceFeatureCategory == previous.sourceFeatureCategory else {
             throw CollaborativeSurveyStoreError.revisionConflict
         }
         if imported.plan.assignments == previous.plan.assignments,

@@ -495,7 +495,8 @@ private struct CollaborativeSurveyCreationScreen: View {
                 let plan = try CollaborativeSurveyPlanner.create(projectID: project.id, boundary: selected.geometry,
                     workers: workers, cellSizeMeters: size)
                 return try CollaborativeSurveyStoredPlan(plan: plan, sourceFeatureID: selected.id,
-                    sourceFeatureRevision: selected.revision, projectName: project.name, projectKind: project.kind)
+                    sourceFeatureRevision: selected.revision, projectName: project.name, projectKind: project.kind,
+                    sourceFeatureLabel: selected.label, sourceFeatureCategory: selected.category)
             }.value
             issue = nil; onPrepared(document)
         } catch { issue = error.localizedDescription }

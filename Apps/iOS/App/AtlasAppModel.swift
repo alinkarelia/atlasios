@@ -307,6 +307,9 @@ final class AtlasAppModel: ObservableObject {
         if let known, known.geometry != document.plan.sourceBoundary {
             throw TeamError.rejected("Граница этого проекта уже изменена. Исходная граница сохранена; импорт остановлен.")
         }
+        if let known, let category = document.sourceFeatureCategory, known.category != category {
+            throw TeamError.rejected("Тип исходного участка отличается от плана команды. Проверьте карточку участка; импорт не меняет её автоматически.")
+        }
         let project: AtlasProject
         if let existing { project = existing }
         else {
@@ -316,7 +319,8 @@ final class AtlasAppModel: ObservableObject {
         }
         if known == nil {
             let boundary = AtlasFeature(id: document.sourceFeatureID, projectID: project.id,
-                label: "Граница совместной съёмки", category: .boundary,
+                label: document.sourceFeatureLabel ?? "Граница совместной съёмки",
+                category: document.sourceFeatureCategory ?? .boundary,
                 geometry: document.plan.sourceBoundary, attributes: [
                     "collaboration.boundaryOrigin": "plan-import",
                     "collaboration.sourceFeatureRevision": String(document.sourceFeatureRevision),

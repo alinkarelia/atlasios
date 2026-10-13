@@ -24,7 +24,9 @@ import AtlasCore
         let hash = FieldTransferDigest.sha256(sourceBytes)
         let scan = ScanRecord(id: captureID, projectID: projectID, source: .liDAR, status: .ready, frameID: captureFrame,
             assets: [.init(relativePath: path, kind: .mesh, byteCount: Int64(sourceBytes.count))])
-        var document = try CollaborativeSurveyStoredPlan(plan: plan, sourceFeatureID: UUID(), sourceFeatureRevision: 0)
+        let actualLabel = String(repeating: "Ж", count: 160)
+        var document = try CollaborativeSurveyStoredPlan(plan: plan, sourceFeatureID: UUID(), sourceFeatureRevision: 0,
+            projectName: actualLabel, projectKind: .cemetery, sourceFeatureLabel: actualLabel, sourceFeatureCategory: .cemetery)
         var observed = plan
         try observed.recordEvidence(.init(workerID: plan.workers[0].id, kind: .captureObserved, timestamp: Date(),
             cellIDs: [plan.cells[0].id], captureID: captureID, sourceSHA256: hash,
@@ -51,6 +53,21 @@ import AtlasCore
         check(files.count == 2, "both journals exported")
         check(files.first { $0.sourceURL == teamFile }?.data == teamBytes, "team bytes unchanged")
         check(files.first { $0.sourceURL == assemblyFile }?.data == assemblyBytes, "assembly bytes unchanged")
+        let retainedTeamBytes = files.first { $0.sourceURL == teamFile }!.data
+        let retainedDocument = try JSONDecoder().decode(CollaborativeSurveyStoredPlan.self, from: retainedTeamBytes)
+        check(retainedDocument.sourceFeatureLabel == actualLabel && retainedDocument.projectName == actualLabel,
+              "160 Cyrillic characters preserve the actual source and project names")
+        check(retainedDocument.sourceFeatureCategory == .cemetery, "actual source category preserved, not inferred from geometry")
+        var legacyTeam = try JSONSerialization.jsonObject(with: retainedTeamBytes) as! [String: Any]
+        legacyTeam.removeValue(forKey: "sourceFeatureLabel"); legacyTeam.removeValue(forKey: "sourceFeatureCategory")
+        let legacyBytes = try JSONSerialization.data(withJSONObject: legacyTeam)
+        let legacyDocument = try JSONDecoder().decode(CollaborativeSurveyStoredPlan.self, from: legacyBytes)
+        try legacyDocument.validate()
+        check(legacyDocument.sourceFeatureLabel == nil && legacyDocument.sourceFeatureCategory == nil,
+              "legacy source metadata remains unknown")
+        try legacyBytes.write(to: teamFile)
+        check(try collect().first { $0.sourceURL == teamFile }?.data == legacyBytes, "legacy exact bytes remain exportable")
+        try teamBytes.write(to: teamFile)
         check(files.allSatisfy { $0.archiveRelativePath.hasPrefix("Captures/Collaboration/") }, "archive path")
         let assets = files.map { FieldAsset(materialID: projectID, relativePath: $0.archiveRelativePath, mediaType: "application/json", byteCount: $0.byteCount, sha256: $0.sha256, kind: .metadata) }
         let passport = FieldDeliveryPassport(projectID: projectID, projectName: project.name, preparedAt: Date(),
@@ -94,12 +111,22 @@ import AtlasCore
         reject("team checksum mismatch") { _ = try collect() }
         try teamBytes.write(to: teamFile)
         var malformedOptional = try JSONSerialization.jsonObject(with: teamBytes) as! [String: Any]
-        malformedOptional["projectName"] = String(repeating: "Ж", count: 121)
+        malformedOptional["projectName"] = String(repeating: "Ж", count: 161)
         try JSONSerialization.data(withJSONObject: malformedOptional).write(to: teamFile)
         reject("bounded optional project name") { _ = try collect() }
         malformedOptional["projectName"] = "Valid name"; malformedOptional["projectKind"] = "unrecognizedKind"
         try JSONSerialization.data(withJSONObject: malformedOptional).write(to: teamFile)
         reject("known optional project kind") { _ = try collect() }
+        malformedOptional = try JSONSerialization.jsonObject(with: teamBytes) as! [String: Any]
+        malformedOptional["sourceFeatureLabel"] = String(repeating: "Ж", count: 161)
+        try JSONSerialization.data(withJSONObject: malformedOptional).write(to: teamFile)
+        reject("source label exceeds actual 160 UTF16 limit") { _ = try collect() }
+        malformedOptional["sourceFeatureLabel"] = " \n "
+        try JSONSerialization.data(withJSONObject: malformedOptional).write(to: teamFile)
+        reject("empty source label") { _ = try collect() }
+        malformedOptional["sourceFeatureLabel"] = actualLabel; malformedOptional["sourceFeatureCategory"] = "unrecognizedFeatureCategory"
+        try JSONSerialization.data(withJSONObject: malformedOptional).write(to: teamFile)
+        reject("unknown source category must not be guessed") { _ = try collect() }
         try teamBytes.write(to: teamFile)
         try Data("# foreign header\n".utf8).write(to: source)
         reject("assembly native source header") { _ = try collect([]) }

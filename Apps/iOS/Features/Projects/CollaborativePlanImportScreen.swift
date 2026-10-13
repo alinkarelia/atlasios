@@ -23,6 +23,8 @@ struct CollaborativePlanImportScreen: View {
                 if let document {
                     Section("Проверенный файл") {
                         LabeledContent("Проект", value: document.projectName ?? "Совместная съёмка")
+                        LabeledContent("Участок", value: document.sourceFeatureLabel ?? "Граница совместной съёмки")
+                        LabeledContent("Тип участка", value: document.sourceFeatureCategory?.title ?? "Не указан в исходном файле")
                         LabeledContent("Сотрудники", value: String(document.plan.workers.count))
                         LabeledContent("Ячейки", value: String(document.plan.cells.count))
                         LabeledContent("Версия", value: String(document.plan.revision))

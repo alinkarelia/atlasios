@@ -17,7 +17,8 @@ enum CollaborativeSurveyStoreChecks {
                                      holes: [[.init(x: 12, y: 12), .init(x: 18, y: 12), .init(x: 18, y: 18), .init(x: 12, y: 18)]])
         let plan = try CollaborativeSurveyPlanner.create(projectID: project, boundary: .metricPolygon(boundary), workers: workers, cellSizeMeters: 10, createdAt: date)
         let baseline = try CollaborativeSurveyStoredPlan(plan: plan, sourceFeatureID: feature, sourceFeatureRevision: 7,
-                                                        projectName: "Shared test", projectKind: .cemetery)
+                                                        projectName: "Shared test", projectKind: .cemetery,
+                                                        sourceFeatureLabel: "Учебное кладбище", sourceFeatureCategory: .cemetery)
         let directory = root.appendingPathComponent("Collaboration", isDirectory: true)
         let store = CollaborativeSurveyStore(projectID: project, reference: .localMeters(frameID: frame), directory: directory)
         let otherStore = CollaborativeSurveyStore(projectID: project, reference: .localMeters(frameID: frame), directory: directory)
@@ -27,6 +28,43 @@ enum CollaborativeSurveyStoreChecks {
         let encoded = try await store.exchangeData(baseline)
         check(try CollaborativeSurveyStore.decodeExchange(encoded, expectedProjectID: project) == baseline)
         check(baseline.plan.sourceBoundary == .metricPolygon(boundary) && baseline.plan.workers.count == 5)
+        let received = try CollaborativeSurveyStore.decodeExchange(encoded, expectedProjectID: project)
+        check(received.sourceFeatureLabel == "Учебное кладбище" && received.sourceFeatureCategory == .cemetery,
+              "Exchange must preserve the actual cemetery identity for burial-card links")
+        let legacy = try CollaborativeSurveyStoredPlan(plan: plan, sourceFeatureID: feature, sourceFeatureRevision: 7,
+                                                      projectName: "Shared test", projectKind: .cemetery)
+        let legacyBytes = try CollaborativeSurveyStoredPlan.canonical(CollaborativeSurveyExchange(document: legacy))
+        let legacyReceived = try CollaborativeSurveyStore.decodeExchange(legacyBytes)
+        check(legacyReceived.sourceFeatureLabel == nil && legacyReceived.sourceFeatureCategory == nil,
+              "Old documents remain readable without guessing their source category")
+        let legacyObject = try JSONSerialization.jsonObject(with: CollaborativeSurveyStoredPlan.canonical(legacy)) as! [String: Any]
+        check(legacyObject["sourceFeatureLabel"] == nil && legacyObject["sourceFeatureCategory"] == nil,
+              "Absent optional metadata must remain absent in legacy canonical bytes")
+        let maximumRussianLabel = String(repeating: "Ж", count: 160)
+        let maximumNames = try CollaborativeSurveyStoredPlan(plan: plan, sourceFeatureID: feature, sourceFeatureRevision: 7,
+            projectName: maximumRussianLabel, projectKind: .cemetery,
+            sourceFeatureLabel: maximumRussianLabel, sourceFeatureCategory: .cemetery)
+        check(maximumNames.projectName?.utf8.count == 320 && maximumNames.sourceFeatureLabel?.utf16.count == 160,
+              "Real SQLite-valid Russian names must not be rejected by an unrelated UTF8 limit")
+        do {
+            _ = try CollaborativeSurveyStoredPlan(plan: plan, sourceFeatureID: feature, sourceFeatureRevision: 7,
+                sourceFeatureLabel: maximumRussianLabel + "Ж", sourceFeatureCategory: .cemetery)
+            preconditionFailure("A source label beyond the database limit was accepted")
+        } catch CollaborativeSurveyStoreError.invalidDocument { check(true) }
+        var changedMetadata = try JSONSerialization.jsonObject(with: CollaborativeSurveyStoredPlan.canonical(baseline)) as! [String: Any]
+        changedMetadata["sourceFeatureCategory"] = FeatureCategory.boundary.rawValue
+        let changedDocument = try JSONDecoder().decode(CollaborativeSurveyStoredPlan.self,
+            from: JSONSerialization.data(withJSONObject: changedMetadata))
+        let changedExchange = try CollaborativeSurveyStoredPlan.canonical(CollaborativeSurveyExchange(document: changedDocument))
+        do { _ = try await store.previewExchange(changedExchange, expectedSHA256: baseline.currentSHA256); preconditionFailure("Imported source category silently changed") }
+        catch CollaborativeSurveyStoreError.revisionConflict { check(try await store.load() == baseline) }
+        do { _ = try await otherStore.save(changedDocument, expectedSHA256: baseline.currentSHA256); preconditionFailure("Local source category silently changed") }
+        catch CollaborativeSurveyStoreError.revisionConflict { check(try await store.load() == baseline) }
+        changedMetadata["sourceFeatureCategory"] = "unknown-category"
+        do {
+            _ = try JSONDecoder().decode(CollaborativeSurveyStoredPlan.self, from: JSONSerialization.data(withJSONObject: changedMetadata))
+            preconditionFailure("Unknown source category was accepted")
+        } catch DecodingError.dataCorrupted { check(true) }
 
         let cell = plan.cells.first { $0.boundaryStatus == .interior }!
         let bytesA = Data("source A: synthetic adapter fixture".utf8)
