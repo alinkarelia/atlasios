@@ -579,6 +579,7 @@ private struct CollaborativeSurveyPlanCanvas: View {
     let onSelect: (CollaborativeSurveyCell) -> Void
     @State private var zoom = 1.0
     @State private var pan = CGSize.zero
+    @State private var panEnabled = false
     @GestureState private var drag = CGSize.zero
     private let maximumVisibleCells = 600
 
@@ -590,7 +591,7 @@ private struct CollaborativeSurveyPlanCanvas: View {
             let detailed = visible.count <= maximumVisibleCells
             let strideSize = max(1, Int(ceil(Double(visible.count) / Double(maximumVisibleCells))))
             let rendered = detailed ? visible : stride(from: 0, to: visible.count, by: strideSize).map { visible[$0] }
-            Canvas { context, size in
+            let canvas = Canvas { context, size in
                 context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.atlasCanvas))
                 var mask = path(plan.boundary.vertices, transform: transform)
                 for hole in plan.boundary.holes { mask.addPath(path(hole, transform: transform)) }
@@ -645,21 +646,40 @@ private struct CollaborativeSurveyPlanCanvas: View {
                           }) else { return }
                     onSelect(selected)
                 }
-                .simultaneousGesture(DragGesture(minimumDistance: 10).updating($drag) { value, state, _ in state = value.translation }
-                    .onEnded { value in pan.width += value.translation.width; pan.height += value.translation.height })
+            pannable(canvas)
                 .overlay(alignment: .topTrailing) { zoomControls }
                 .accessibilityIdentifier("collaboration.canvas")
                 .accessibilityLabel(plan.coordinateReference == .wgs84 ? "План участков в проекции WGS84. Север сверху; GPS показан с кругом погрешности." : "План участков в локальных метрах. GPS в этой системе недоступен.")
         }
     }
+    @ViewBuilder
+    private func pannable<Content: View>(_ content: Content) -> some View {
+        // With panning off there is no DragGesture recognizer to intercept the
+        // containing List. Cell taps and the separate zoom controls remain.
+        if panEnabled {
+            content.simultaneousGesture(DragGesture(minimumDistance: 10)
+                .updating($drag) { value, state, _ in state = value.translation }
+                .onEnded { value in pan.width += value.translation.width; pan.height += value.translation.height })
+        } else { content }
+    }
     private var zoomControls: some View {
-        HStack(spacing: 8) {
+        VStack(alignment: .trailing, spacing: 6) {
+            HStack(spacing: 8) {
             Button { zoom = max(1, zoom / 1.7) } label: { Image(systemName: "minus.magnifyingglass") }
                 .accessibilityLabel("Уменьшить план").accessibilityIdentifier("collaboration.zoomOut")
             Button { zoom = min(32, zoom * 1.7) } label: { Image(systemName: "plus.magnifyingglass") }
                 .accessibilityLabel("Приблизить план").accessibilityIdentifier("collaboration.zoomIn")
             Button { zoom = 1; pan = .zero } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
                 .accessibilityLabel("Показать весь полигон")
+            }
+            Button { panEnabled.toggle() } label: {
+                Label(panEnabled ? "Сдвиг схемы включён" : "Сдвиг схемы выключен", systemImage: "hand.draw")
+                    .font(.caption)
+            }
+            .accessibilityIdentifier("collaboration.panMode")
+            .accessibilityLabel("Сдвиг схемы")
+            .accessibilityValue(panEnabled ? "Включён" : "Выключен")
+            .accessibilityHint(panEnabled ? "Выключите, чтобы прокручивать страницу поверх схемы." : "Включите, чтобы перемещать схему пальцем.")
         }.buttonStyle(.bordered).padding(8).background(Color.atlasCanvas.opacity(0.8), in: RoundedRectangle(cornerRadius: 10))
     }
     private func path(_ vertices: [MetricPoint2D], transform: PlotTransform) -> Path {

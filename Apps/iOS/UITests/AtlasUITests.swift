@@ -986,8 +986,10 @@ final class AtlasUITests: XCTestCase {
                                   height: max(1, bottom - top))
             lastViewport = viewport
             let frame = control.exists ? control.frame : CGRect.zero
-            if control.exists && control.isHittable && viewport.contains(frame) { return }
-            let towardTop = control.exists ? frame.minY < viewport.minY : towardTopWhenMissing
+            let usableFrame = frame.minX.isFinite && frame.minY.isFinite &&
+                frame.width.isFinite && frame.height.isFinite && frame.width > 0 && frame.height > 0
+            if control.exists && usableFrame && control.isHittable && viewport.contains(frame) { return }
+            let towardTop = control.exists && usableFrame ? frame.minY < viewport.minY : towardTopWhenMissing
             let origin = app.coordinate(withNormalizedOffset: .zero)
             let distance = min(300, viewport.height * 0.42)
             let startY = viewport.minY + viewport.height * (towardTop ? 0.38 : 0.68)
@@ -1194,6 +1196,10 @@ final class AtlasUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Проверка участков"].waitForExistence(timeout: 30),
                       "Planning must finish on the actual boundary and show a review before saving")
         XCTAssertTrue(element("collaboration.canvas", in: app).exists)
+        let panMode = element("collaboration.panMode", in: app)
+        XCTAssertTrue(panMode.waitForExistence(timeout: 10), "The map must expose its real interaction mode")
+        XCTAssertEqual(panMode.value as? String, "Выключен",
+                       "Review must allow normal page scrolling until diagram panning is explicitly enabled")
         screenshot("33-team-planning", app: app)
         revealWholeControl(element("collaboration.confirmPlan", in: app), in: app)
         tap("collaboration.confirmPlan", in: app)
