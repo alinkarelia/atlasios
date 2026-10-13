@@ -1219,9 +1219,12 @@ final class AtlasUITests: XCTestCase {
         firstCell.tap()
         XCTAssertTrue(element("collaboration.cell.owner", in: app).waitForExistence(timeout: 10))
         XCTAssertEqual(element("collaboration.cell.owner", in: app).label, "Назначено: Специалист QA")
-        XCTAssertTrue(element("collaboration.cell.coverage", in: app).label.contains("Без материалов"),
-                      "Planning alone must never manufacture observed or verified capture coverage")
         screenshot("34-team-coverage", app: app)
+        let coverage = element("collaboration.cell.coverage", in: app)
+        XCTAssertTrue(coverage.waitForExistence(timeout: 10), "The actual cell coverage state must be accessible")
+        XCTAssertEqual(coverage.label, "Состояние покрытия ячейки")
+        XCTAssertEqual(coverage.value as? String, "Без материалов",
+                       "Planning alone must keep the real Core.unobserved state without manufacturing capture coverage")
         revealWholeControl(element("collaboration.cell.attach", in: app), in: app)
         XCTAssertFalse(element("collaboration.cell.attach", in: app).isEnabled,
                        "A cell cannot claim a capture without a real project source file")

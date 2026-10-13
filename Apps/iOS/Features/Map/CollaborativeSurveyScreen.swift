@@ -749,6 +749,11 @@ private struct CollaborativeSurveyCellScreen: View {
             Text("Назначено: \(owner?.name ?? "Не определено")").font(.headline).accessibilityIdentifier("collaboration.cell.owner")
             Label(CollaborativeSurveyPalette.title(coverageStatus),
                   systemImage: CollaborativeSurveyPalette.symbol(coverageStatus))
+                // Give the visible state one semantic node. Otherwise SwiftUI
+                // may expose the SF Symbol as the first child with this ID.
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Состояние покрытия ячейки")
+                .accessibilityValue(CollaborativeSurveyPalette.title(coverageStatus))
                 .accessibilityIdentifier("collaboration.cell.coverage")
             Text("Рабочая площадь ≈ \(cell.estimatedWorkAreaSquareMeters.formatted(.number.precision(.fractionLength(1)))) м²")
                 .font(.caption).foregroundStyle(Color.atlasMuted)

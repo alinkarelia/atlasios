@@ -17,9 +17,13 @@ struct MeshPreviewScreen: View {
     @State private var issue: String?
     @State private var isLoading = true
     @State private var loadAttempt = 0
+    @State private var isVisible = false
+    @State private var latestSceneIsActive = false
 
     var body: some View {
-        Group {
+        // Keep one presentation identity while loading/content branches change;
+        // removing the placeholder must not deactivate the newly installed scene.
+        ZStack {
             if let controller {
                 MeshPreviewContent(controller: controller, url: url)
             } else {
@@ -47,10 +51,15 @@ struct MeshPreviewScreen: View {
         .navigationBarTitleDisplayMode(.inline)
         .tint(.atlasBlue)
         .task(id: "\(url.path)-\(loadAttempt)") { await load() }
-        .onAppear { controller?.setActive(scenePhase == .active) }
-        .onDisappear { controller?.setActive(false) }
+        .onAppear {
+            isVisible = true
+            latestSceneIsActive = scenePhase == .active
+            controller?.setActive(latestSceneIsActive)
+        }
+        .onDisappear { isVisible = false; controller?.setActive(false) }
         .onChange(of: scenePhase) { _, phase in
-            controller?.setActive(phase == .active)
+            latestSceneIsActive = phase == .active
+            controller?.setActive(isVisible && latestSceneIsActive)
         }
     }
 
@@ -73,10 +82,14 @@ struct MeshPreviewScreen: View {
                 // off the UI actor. SceneKit only receives three data buffers.
                 await Task.yield()
                 let prepared = MeshPreviewController(mesh: payload, sourceURL: sourceURL, surfaceArea: area, dimensionSource: dimensionSource,
-                    projectID: projectID, journalDirectory: journalDirectory, isActive: scenePhase == .active)
+                    projectID: projectID, journalDirectory: journalDirectory, isActive: isVisible && latestSceneIsActive)
                 await prepared.loadMeasurements()
                 try Task.checkCancellation()
                 controller = prepared
+                // Loading the journal suspends this task. A scene-phase event
+                // during that await sees controller == nil, so reconcile the
+                // current phase after installing the prepared controller.
+                prepared.setActive(isVisible && latestSceneIsActive)
                 isLoading = false
             } catch is CancellationError {
                 // Leaving the screen cancels the read/normal worker.
@@ -798,14 +811,17 @@ private struct MeshSceneSurface: UIViewRepresentable {
         view.antialiasingMode = .multisampling2X
         view.autoenablesDefaultLighting = false
         view.allowsCameraControl = false
-        // A scene installed before SwiftUI gives the SCNView a real viewport
-        // can otherwise remain blank until the first gesture. Render the first
-        // valid frame explicitly, then stop continuous rendering in the delegate.
-        view.rendersContinuously = controller.isActive
+        // Arm the first draw only after the view has a window and a real
+        // viewport. Setting this while detached can lose SceneKit's first draw.
+        view.rendersContinuously = false
         view.delegate = context.coordinator
         context.coordinator.view = view
         controller.renderView = view
         view.viewportChanged = { [weak controller] size in controller?.updateViewport(size) }
+        view.firstFrameRequested = { [weak view, weak coordinator = context.coordinator] in
+            guard let view, let coordinator else { return }
+            coordinator.requestFirstFrame(in: view)
+        }
         view.isAccessibilityElement = true
         view.accessibilityIdentifier = "viewer.scene"
         view.accessibilityLabel = "Трёхмерная модель"
@@ -820,19 +836,30 @@ private struct MeshSceneSurface: UIViewRepresentable {
 
     func updateUIView(_ view: MeshRenderView, context: Context) {
         context.coordinator.controller = controller
+        context.coordinator.view = view
+        controller.renderView = view
+        view.viewportChanged = { [weak controller] size in controller?.updateViewport(size) }
+        view.firstFrameRequested = { [weak view, weak coordinator = context.coordinator] in
+            guard let view, let coordinator else { return }
+            coordinator.requestFirstFrame(in: view)
+        }
         // Camera revisions must not reinstall an unchanged SceneKit graph.
-        if view.scene !== controller.scene { view.scene = controller.scene }
+        if view.scene !== controller.scene {
+            view.suspendFirstFrame()
+            view.scene = controller.scene
+        }
         if view.pointOfView !== controller.camera { view.pointOfView = controller.camera }
         view.accessibilityValue = controller.accessibilityPose
-        view.rendersContinuously = controller.isActive && !controller.hasRendered
+        context.coordinator.requestFirstFrame(in: view)
         view.setNeedsDisplay()
     }
 
     static func dismantleUIView(_ view: MeshRenderView, coordinator: Coordinator) {
         coordinator.controller.stopMoving()
-        view.rendersContinuously = false
+        view.suspendFirstFrame()
         view.delegate = nil
         view.viewportChanged = nil
+        view.firstFrameRequested = nil
         view.scene = nil
     }
 
@@ -842,13 +869,35 @@ private struct MeshSceneSurface: UIViewRepresentable {
         var controller: MeshPreviewController
         weak var view: MeshRenderView?
         init(controller: MeshPreviewController) { self.controller = controller }
+        func requestFirstFrame(in view: MeshRenderView) {
+            self.view = view
+            guard controller.isActive, !controller.hasRendered,
+                  view.window != nil, view.bounds.width > 0, view.bounds.height > 0,
+                  view.scene === controller.scene else {
+                view.suspendFirstFrame()
+                if controller.hasRendered { view.delegate = nil }
+                return
+            }
+            if let windowScene = view.window?.windowScene, windowScene.activationState != .foregroundActive {
+                view.suspendFirstFrame()
+                return
+            }
+            // A reused representable must retain the CURRENT coordinator until
+            // a real delegate callback confirms this exact scene was rendered.
+            view.delegate = self
+            view.armFirstFrame()
+        }
         nonisolated func renderer(_ renderer: any SCNSceneRenderer, didRenderScene scene: SCNScene, atTime time: TimeInterval) {
             // The renderer and mutable scene stay on SceneKit's callback thread.
-            // Only a no-argument completion reaches MainActor.
+            // Only immutable identity crosses to MainActor, not a SceneKit graph.
+            let renderedSceneID = ObjectIdentifier(scene)
             Task { @MainActor [weak self] in
                 guard let self, let view = self.view, view.window != nil,
-                      view.bounds.width > 0, view.bounds.height > 0 else { return }
-                view.rendersContinuously = false
+                      view.bounds.width > 0, view.bounds.height > 0,
+                      self.controller.isActive, ObjectIdentifier(self.controller.scene) == renderedSceneID,
+                      view.scene === self.controller.scene else { return }
+                if let windowScene = view.window?.windowScene, windowScene.activationState != .foregroundActive { return }
+                view.suspendFirstFrame()
                 view.delegate = nil
                 self.controller.markRendered()
             }
@@ -878,16 +927,45 @@ private struct MeshSceneSurface: UIViewRepresentable {
 /// so no ObservableObject update happens inside a SwiftUI layout transaction.
 @MainActor private final class MeshRenderView: SCNView {
     var viewportChanged: ((CGSize) -> Void)?
+    var firstFrameRequested: (() -> Void)?
     private var reportedSize: CGSize = .zero
+    private var firstFrameArmed = false
+
+    func armFirstFrame() {
+        if !firstFrameArmed {
+            firstFrameArmed = true
+            // Re-arm once per attachment/activation, without restarting the
+            // renderer on every camera revision while its first frame is pending.
+            rendersContinuously = false
+            rendersContinuously = true
+        }
+        setNeedsDisplay()
+    }
+
+    func suspendFirstFrame() {
+        firstFrameArmed = false
+        rendersContinuously = false
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard window != nil else { suspendFirstFrame(); return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.window != nil else { return }
+            self.firstFrameRequested?()
+        }
+    }
 
     override func layoutSubviews() {
         super.layoutSubviews()
         let size = bounds.size
-        guard size.width > 0, size.height > 0, size != reportedSize else { return }
+        guard size.width > 0, size.height > 0 else { suspendFirstFrame(); return }
+        let changed = size != reportedSize
         reportedSize = size
         DispatchQueue.main.async { [weak self] in
             guard let self, self.bounds.size == size else { return }
-            self.viewportChanged?(size)
+            if changed { self.viewportChanged?(size) }
+            self.firstFrameRequested?()
             self.setNeedsDisplay()
         }
     }
