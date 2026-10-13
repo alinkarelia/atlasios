@@ -56,6 +56,7 @@ enum ProjectJournalExport {
     private struct AssemblyBinding: Decodable {
         let source: FragmentSourceReference; let relativePath: String
         let byteCount: Int64; let capturedAt: Date; let gravityAlignedYUp: Bool
+        let catalogRevisionAtRegistration: Int64?
     }
     private struct AssemblyDocument: Decodable {
         let schemaVersion: Int; let projectID: UUID; let registry: FragmentRegistrationRegistry
@@ -307,6 +308,7 @@ enum ProjectJournalExport {
                   binding.relativePath.lowercased().hasSuffix(".obj"), binding.gravityAlignedYUp,
                   binding.byteCount > 0, binding.byteCount <= 64 * 1_024 * 1_024,
                   binding.capturedAt.timeIntervalSince1970.isFinite,
+                  binding.catalogRevisionAtRegistration.map({ $0 >= 0 && $0 < Int64.max }) ?? true,
                   let safe = try existingPath(binding.relativePath, root: root, directory: false) else {
                 throw ProjectJournalExportError.invalidDocument
             }

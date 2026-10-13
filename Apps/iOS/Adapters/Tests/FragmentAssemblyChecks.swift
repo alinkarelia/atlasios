@@ -16,16 +16,16 @@ import AtlasCore
         func reject(_ message: String, _ action: () throws -> Void) {
             do { try action(); preconditionFailure(message) } catch { checks += 1 }
         }
-        func fixture(frame: UUID, name: String) throws -> (ScanRecord, Data, URL) {
+        func fixture(frame: UUID, name: String, revision: Int64 = 0) throws -> (ScanRecord, Data, URL) {
             let path = "Projects/\(projectID.uuidString)/Captures/\(name)/model.obj"
             let file = root.appendingPathComponent(path)
             try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
             let data = Data("# Atlas ARKit mesh. metres. Y up. local frame \(frame.uuidString)\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n".utf8)
             try data.write(to: file)
             let asset = SourceAssetReference(relativePath: path, kind: .mesh, byteCount: Int64(data.count), sha256: FieldTransferDigest.sha256(data))
-            return (.init(projectID: projectID, source: .liDAR, status: .ready, frameID: frame, assets: [asset], createdAt: epoch), data, file)
+            return (.init(projectID: projectID, source: .liDAR, status: .ready, frameID: frame, assets: [asset], createdAt: epoch, revision: revision), data, file)
         }
-        let (firstScan, firstBytes, firstURL) = try fixture(frame: firstFrame, name: "first")
+        let (firstScan, firstBytes, firstURL) = try fixture(frame: firstFrame, name: "first", revision: 1)
         let (secondScan, secondBytes, secondURL) = try fixture(frame: secondFrame, name: "second")
         let store = FragmentAssemblyStore(projectID: projectID, assetDirectory: root)
         let empty = try await store.load(); expect(empty == nil, "Initial journal must be absent")
@@ -34,8 +34,47 @@ import AtlasCore
         expect(initial.sourceBindings.count == 2, "Both exact originals must be bound")
         expect(initial.sourceBindings[1].source.sourceSHA256 == FieldTransferDigest.sha256(secondBytes), "Source digest must refer to actual bytes")
         expect(initial.registry.projectFrameID == firstFrame, "Project frame must be original anchor frame")
+        expect(initial.sourceBindings[0].source.sourceVersion == 1 && initial.sourceBindings[0].catalogRevisionAtRegistration == 1,
+               "First persisted SQL revision must retain sealed geometry version 1 and separate catalog provenance")
+        var geoEdited = firstScan
+        geoEdited.revision = 7
+        geoEdited.geoTag = .init(corrections: [.init(coordinate: .init(longitude: 30, latitude: 60),
+                                                   estimatedAccuracyMeters: 5, note: "Manual map correction", changedAt: epoch)])
+        let sameGeometry = try FragmentAssemblySourceVerifier.bind(scan: geoEdited, projectID: projectID, root: root)
+        expect(sameGeometry.source == initial.sourceBindings[0].source && sameGeometry.source.sourceVersion == 1,
+               "Manual geo/catalog revision 7 must not change the exact SHA, frame or geometry version")
+        expect(sameGeometry.catalogRevisionAtRegistration == 7, "Catalog metadata revision must remain independently recorded")
+        var rewrittenBinding = initial
+        rewrittenBinding.sourceBindings[0] = sameGeometry
+        reject("Registration provenance cannot be silently rewritten after a catalog edit") { try rewrittenBinding.validateTransition(from: initial) }
+        for invalidCatalogRevision in [Int64(-1), Int64.max] {
+            var invalid = initial
+            let binding = initial.sourceBindings[0]
+            invalid.sourceBindings[0] = .init(source: binding.source, relativePath: binding.relativePath,
+                byteCount: binding.byteCount, capturedAt: binding.capturedAt, gravityAlignedYUp: binding.gravityAlignedYUp,
+                catalogRevisionAtRegistration: invalidCatalogRevision)
+            reject("Catalog provenance revision must remain bounded and nonnegative") { try invalid.validate() }
+        }
         let reopened = try await store.load(); expect(reopened == initial, "Protected atomic journal must persist")
         let file = await store.fileURL, initialJournal = try Data(contentsOf: file)
+        var legacy = try requireDictionary(JSONSerialization.jsonObject(with: initialJournal))
+        var legacyBindings = legacy["sourceBindings"] as! [[String: Any]]
+        for index in legacyBindings.indices {
+            legacyBindings[index].removeValue(forKey: "catalogRevisionAtRegistration")
+            var source = legacyBindings[index]["source"] as! [String: Any]
+            source["sourceVersion"] = 3; legacyBindings[index]["source"] = source
+        }
+        legacy["sourceBindings"] = legacyBindings
+        var legacyRegistry = legacy["registry"] as! [String: Any]
+        var legacySources = legacyRegistry["fragments"] as! [[String: Any]]
+        for index in legacySources.indices { legacySources[index]["sourceVersion"] = 3 }
+        var legacyAnchor = legacyRegistry["anchor"] as! [String: Any]; legacyAnchor["sourceVersion"] = 3
+        legacyRegistry["fragments"] = legacySources; legacyRegistry["anchor"] = legacyAnchor; legacy["registry"] = legacyRegistry
+        try JSONSerialization.data(withJSONObject: legacy).write(to: file)
+        let retainedLegacy = try await store.load()
+        expect(retainedLegacy?.sourceBindings.allSatisfy { $0.source.sourceVersion == 3 && $0.catalogRevisionAtRegistration == nil } == true,
+               "Existing local versions remain literal when the optional new provenance field is absent")
+        try initialJournal.write(to: file)
         do { _ = try await store.bootstrap(scans: [firstScan, secondScan], anchorCaptureID: firstScan.id); preconditionFailure("Bootstrap cannot overwrite journal") }
         catch { checks += 1 }
         expect(try Data(contentsOf: file) == initialJournal, "Failed bootstrap must retain previous journal")

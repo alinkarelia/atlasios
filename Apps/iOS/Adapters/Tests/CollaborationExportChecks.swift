@@ -134,6 +134,15 @@ import AtlasCore
         try Data(repeating: 32, count: ProjectJournalExport.maximumAssemblyBytes + 1).write(to: assemblyFile)
         reject("bounded assembly journal") { _ = try collect() }
         try assemblyBytes.write(to: assemblyFile)
+        for invalidRevision in [Int64(-1), Int64.max] {
+            var malformedAssembly = try JSONSerialization.jsonObject(with: assemblyBytes) as! [String: Any]
+            var bindings = malformedAssembly["sourceBindings"] as! [[String: Any]]
+            bindings[0]["catalogRevisionAtRegistration"] = invalidRevision
+            malformedAssembly["sourceBindings"] = bindings
+            try JSONSerialization.data(withJSONObject: malformedAssembly).write(to: assemblyFile)
+            reject("invalid catalog metadata revision \(invalidRevision)") { _ = try collect() }
+        }
+        try assemblyBytes.write(to: assemblyFile)
         let unknown = folder.appendingPathComponent("unknown.json"); try Data("{}".utf8).write(to: unknown)
         reject("unrecognized collaboration document") { _ = try collect() }
         try FileManager.default.removeItem(at: unknown)

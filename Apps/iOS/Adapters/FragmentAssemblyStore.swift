@@ -23,6 +23,15 @@ struct FragmentAssemblySourceBinding: Codable, Hashable, Sendable {
     let byteCount: Int64
     let capturedAt: Date
     let gravityAlignedYUp: Bool
+    /// Mutable catalog/SQLite metadata revision observed at registration.
+    /// This is not the immutable sealed geometry's sourceVersion.
+    let catalogRevisionAtRegistration: Int64?
+    init(source: FragmentSourceReference, relativePath: String, byteCount: Int64, capturedAt: Date,
+         gravityAlignedYUp: Bool, catalogRevisionAtRegistration: Int64? = nil) {
+        self.source = source; self.relativePath = relativePath; self.byteCount = byteCount
+        self.capturedAt = capturedAt; self.gravityAlignedYUp = gravityAlignedYUp
+        self.catalogRevisionAtRegistration = catalogRevisionAtRegistration
+    }
 }
 
 struct FragmentAssemblyDocument: Codable, Hashable, Sendable {
@@ -47,6 +56,7 @@ struct FragmentAssemblyDocument: Codable, Hashable, Sendable {
             guard binding.relativePath.hasPrefix(prefix), binding.relativePath.lowercased().hasSuffix(".obj"),
                   !binding.relativePath.hasPrefix(prefix + "Collaboration/"),
                   binding.byteCount > 0, binding.byteCount <= 64 * 1_024 * 1_024,
+                  binding.catalogRevisionAtRegistration == nil || (binding.catalogRevisionAtRegistration! >= 0 && binding.catalogRevisionAtRegistration! < Int64.max),
                   binding.capturedAt.timeIntervalSinceReferenceDate.isFinite, binding.gravityAlignedYUp else {
                 throw FragmentAssemblyError.invalidDocument
             }
@@ -154,13 +164,23 @@ enum FragmentAssemblySourceVerifier {
         let hash = try hashFile(url)
         guard asset.sha256 == nil || asset.sha256 == hash else { throw FragmentAssemblyError.changedSource }
         try verifyHeader(url, frameID: scan.frameID)
+        // CaptureCatalog currently exposes immutable, sealed original OBJ bytes
+        // without a geometry-version field. Its first and only sealed geometry
+        // version is 1. SQL revisions (including manual geo edits) must never
+        // masquerade as geometry revisions. Changed bytes need a new source
+        // identity/SHA; existing registry references are not migrated or rewritten.
         let binding = FragmentAssemblySourceBinding(source: .init(captureID: scan.id, frameID: scan.frameID,
-            sourceSHA256: hash, sourceVersion: scan.revision + 1), relativePath: asset.relativePath,
-            byteCount: Int64(size), capturedAt: scan.createdAt, gravityAlignedYUp: true)
+            sourceSHA256: hash, sourceVersion: 1), relativePath: asset.relativePath,
+            byteCount: Int64(size), capturedAt: scan.createdAt, gravityAlignedYUp: true,
+            catalogRevisionAtRegistration: scan.revision)
         _ = try verify(binding, projectID: projectID, root: root); return binding
     }
     @discardableResult static func verify(_ binding: FragmentAssemblySourceBinding, projectID: UUID, root: URL) throws -> URL {
         try binding.source.validate()
+        guard binding.catalogRevisionAtRegistration == nil ||
+            (binding.catalogRevisionAtRegistration! >= 0 && binding.catalogRevisionAtRegistration! < Int64.max) else {
+            throw FragmentAssemblyError.invalidDocument
+        }
         let url = try resolve(binding.relativePath, projectID: projectID, root: root)
         let values = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
         guard values.isRegularFile == true, let size = values.fileSize, size > 0, size <= 64 * 1_024 * 1_024,
