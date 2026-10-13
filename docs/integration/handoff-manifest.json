@@ -1,0 +1,559 @@
+{
+  "schemaVersion": 1,
+  "kind": "TerraView family archive integration source handoff",
+  "source_repository": "alinkarelia/atlasios",
+  "source_sha": "531f36191c01fd7b62f7f4da01e54ff3b89aafcd",
+  "source_run_id": 38414711616,
+  "created_at": "2026-10-13T19:01:12.490451+00:00",
+  "server_tests_passed": 84,
+  "deployed": false,
+  "x0_processor_configured": false,
+  "files": [
+    {
+      "path": "API-MAPPING.md",
+      "bytes": 22796,
+      "sha256": "4267f904af453d12f0055d70ccb076c41427d4987873f5144ee1777668c07f72",
+      "origin": "handoff_document"
+    },
+    {
+      "path": "Apps/iOS/Adapters/CollaborativeSurveyStore.swift",
+      "bytes": 18882,
+      "sha256": "be365f41322ef05818824160eb093ae5f65599177cdb501558901a107b014338",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Apps/iOS/Adapters/FieldDeliveryPassport.swift",
+      "bytes": 1087,
+      "sha256": "839f2fc96f5bf0c29243b3dc02756e9dcc9357882e3ee7c4cfdbeb1db5fbb138",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Apps/iOS/Adapters/FieldTransferAssembler.swift",
+      "bytes": 36919,
+      "sha256": "ea0d873a77824d107df4b9b4819e947ee46618a905bfa2cc9082114f9b081782",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Apps/iOS/Adapters/FieldTransferCoordinator.swift",
+      "bytes": 20666,
+      "sha256": "ac4422d08c799b489a07530e07a77db7f08c8b04379e6d980a1de07d43e34f2d",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Apps/iOS/Adapters/FieldTransferTransport.swift",
+      "bytes": 14628,
+      "sha256": "30cdee7ae3807d74d17f3737d50cab3f6a9e27b1b7c55b9ab3fb79fe0a25a206",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Apps/iOS/Adapters/FragmentAssemblyStore.swift",
+      "bytes": 16117,
+      "sha256": "46c8c38e6725c6357afe242174cd869c13a74df68bd5686f674829d32cf9a085",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Apps/iOS/Adapters/FragmentMeshAssemblyExporter.swift",
+      "bytes": 13116,
+      "sha256": "91d9db71e30ce4640367814d9953257d015bee53f32cdb0ec93bef232e49f1ef",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Apps/iOS/Adapters/NamedSourceExport.swift",
+      "bytes": 20804,
+      "sha256": "d58db5d12760e25d02e76a9f6ed54c50a9b11b1896000f0f0e55756a113ee499",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Apps/iOS/Adapters/ProjectJournalExport.swift",
+      "bytes": 26288,
+      "sha256": "eb0a8042cc6b80525d0e4faf04a18d3fcb4c633b426d36362aca222b00af220c",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Apps/iOS/Adapters/TeamService.swift",
+      "bytes": 29042,
+      "sha256": "42052c49405c8dc68015776202272beb93c7d698448ec2117a69c546552142af",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Apps/iOS/Adapters/Tests/CollaborationExportChecks.swift",
+      "bytes": 13104,
+      "sha256": "fc8441fec8fddf61621a8377e179d97b434aa97fb27b010f5fb4253341527365",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Apps/iOS/Adapters/Tests/CollaborativeSurveyStoreChecks.swift",
+      "bytes": 14595,
+      "sha256": "405e720d122f8584955796a73e25086fac698e524d09f61cfb18a2fdfe21693e",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Apps/iOS/Adapters/Tests/FieldAssemblerChecks.swift",
+      "bytes": 10944,
+      "sha256": "3617f4a1d232d38a830886f5bbc065453d16215fbcfa72f22d962a0d27e78ef0",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Apps/iOS/Adapters/Tests/FragmentAssemblyChecks.swift",
+      "bytes": 15282,
+      "sha256": "e81bbac5cc6e85a6b8362286fb510b9c97a0b4e66e2c1f386178391aaa84b05f",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Package.swift",
+      "bytes": 801,
+      "sha256": "3f131a65c37d7486dd4801150a9800dfa3433ef3c14bd705a9c7f810fc11999d",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Sources/AtlasCore/Archive.swift",
+      "bytes": 12633,
+      "sha256": "53a0c0e9744c0d2a9116454561fea23dff08b043aba805f074b4b0ad7eae439e",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Sources/AtlasCore/AtlasStore.swift",
+      "bytes": 27776,
+      "sha256": "886a49a62845caf5743919eb9f5c23c7fc1c1b12e6143c379d0183dbe8042181",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Sources/AtlasCore/BurialRecords.swift",
+      "bytes": 14700,
+      "sha256": "bc3c6f90067fd90e76eedc94ac1e6bad3c452c527f9527906032572b3158f391",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Sources/AtlasCore/CemeterySurvey.swift",
+      "bytes": 36920,
+      "sha256": "08f7fc6328a1df0e1cbdec73a404e1e6bd8b482e4b4ab99d6bf8a8315f28714b",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Sources/AtlasCore/CollaborativeSurvey.swift",
+      "bytes": 49799,
+      "sha256": "3f711e2dc49083ef60849e117c284c2508a5c685fe6d76ee5d62e79b06738294",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Sources/AtlasCore/Commerce.swift",
+      "bytes": 8520,
+      "sha256": "93f4e07ff032d9cb8955dd0a26405280ba652ae9db4ed17447dd3da8faa0377f",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Sources/AtlasCore/Domain.swift",
+      "bytes": 10551,
+      "sha256": "eaa6225d5043e7f532131b78e1cda43bd4e337f1c6001b6f128e081c83a85bf6",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Sources/AtlasCore/Export.swift",
+      "bytes": 13596,
+      "sha256": "c248bbeeefaf90804ce59803410d9a02b5e4ace81e9f65d8b65e6ce2a5dce854",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Sources/AtlasCore/FenceDetection.swift",
+      "bytes": 12994,
+      "sha256": "9175152c8804492cdec03c78f8a4973d13f527f0a9b30ab7d8853b3792d09685",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Sources/AtlasCore/FieldTransfer.swift",
+      "bytes": 16138,
+      "sha256": "9ad67a83d1144b4e497c907abc819d83a41ef7f3935e9174bf86cbd5a4768a59",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Sources/AtlasCore/FieldTransferDigest.swift",
+      "bytes": 6502,
+      "sha256": "8ff717bdd3102fe8409db96cd7b306a64d7898f9ed06a00c092fd04fe5e8f70c",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Sources/AtlasCore/FieldTransferQueue.swift",
+      "bytes": 16833,
+      "sha256": "979eb861b00feb59e84c85d49b0e808c1d83f12040dc8a112a7a786d139d18a1",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Sources/AtlasCore/FragmentRegistration.swift",
+      "bytes": 37506,
+      "sha256": "41c84069e746f4d5178356301293c7c067551ae92f83d8bbd4aaf699f08de5f6",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Sources/AtlasCore/GPXExport.swift",
+      "bytes": 9068,
+      "sha256": "2469cc11e22c2508badf3eccccbb843072d0063461b9159025a5fa84cc6b1936",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Sources/AtlasCore/GeoTag.swift",
+      "bytes": 12351,
+      "sha256": "2f29d8915a7148752ec85c152cd3c1a392e9fe7f4bf40803874b7f2373c3b49e",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Sources/AtlasCore/Geometry.swift",
+      "bytes": 14646,
+      "sha256": "96843dce0bc55fcb8c3b65f034790a2b259bf5ffba0fc85dcb8d5337dac86940",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Sources/AtlasCore/MeasurementProfiles.swift",
+      "bytes": 4108,
+      "sha256": "d939d6f2fcdfcc0eb5d79cf3370bad6e2cfa4d3255b05468c765a1adc13191e4",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Sources/AtlasCore/MeasurementRepository.swift",
+      "bytes": 6387,
+      "sha256": "2d8998712585b0b043e7530914d95ca2c3bcd980a428f4578f7c7e180cf547e0",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Sources/AtlasCore/Measurements.swift",
+      "bytes": 26959,
+      "sha256": "9903c6cdb5ea9802dedfd11185ef9eb06e1df482ec9c2abfca3fb1dbef3dc8ad",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Sources/AtlasCore/PlanQuantities.swift",
+      "bytes": 7491,
+      "sha256": "e3a1157233f13f03908606e6eb171e2683478b4b58d09445ce5ed4391ffa427e",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Sources/AtlasCore/SurveyStations.swift",
+      "bytes": 19266,
+      "sha256": "b62ed66d08fb76a453641871f288a5db0234c312b15afe163881b28f90f12ce4",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Sources/AtlasCore/TerrainSurvey.swift",
+      "bytes": 23719,
+      "sha256": "a07024ebeefce610fa625f1f94aa2afc5756fb3bb6cd0d40f96ec467d092e199",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Sources/AtlasCore/VectorMetadataExport.swift",
+      "bytes": 35506,
+      "sha256": "3aad4575981b7a9503ddc3b81914542244167693550d83f49f9a0687ecc8dcd1",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Sources/AtlasCore/VegetationDetection.swift",
+      "bytes": 14968,
+      "sha256": "acc7ddbe7f610fe1b61fb794daddd49f32c4214759142907be213cfab1665967",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Sources/CSQLite/module.modulemap",
+      "bytes": 80,
+      "sha256": "bbfe59a972a3e8e09e347c04bc22c0eacd2544881af8a4b6068bfc30b38466e8",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Sources/CSQLite/shim.h",
+      "bytes": 21,
+      "sha256": "b052d8e561e942f97b503033ecd2eaa2b35213bdbf374983efe9e68eabdfc024",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Tests/AtlasCoreTests/ArchiveTests.swift",
+      "bytes": 11346,
+      "sha256": "574a6f0cae399faf24dc4aa55ddaa90289ed064665fe6889695f1c72922fa38b",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Tests/AtlasCoreTests/CemeteryRecordsTests.swift",
+      "bytes": 20416,
+      "sha256": "a633cb894b5f7088dc26e27ce8f5eb063ae339a9adfb26d51e225914a5452533",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Tests/AtlasCoreTests/CemeterySurveyTests.swift",
+      "bytes": 15927,
+      "sha256": "7e294440ff3822fae2d542f42ee7eaa01cf7d48d00a47247a5fec236bb5fd020",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Tests/AtlasCoreTests/CollaborativeSurveyIndependentTests.swift",
+      "bytes": 18050,
+      "sha256": "93fb1a423e18c0c1898441434ce29d9ae2a40543e52f03fbb1497b6b3bc1edf9",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Tests/AtlasCoreTests/CollaborativeSurveyTests.swift",
+      "bytes": 19801,
+      "sha256": "2c6b7da480bf3c3858828791ecbe3d921a7e29099701f6f6a63d31005e3dae66",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Tests/AtlasCoreTests/CommerceTests.swift",
+      "bytes": 4472,
+      "sha256": "e7b092b8ca911c0efb43b3e15eb9841359281b8e110e39a969b989e1e903b51e",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Tests/AtlasCoreTests/ExportTests.swift",
+      "bytes": 4891,
+      "sha256": "b050b5c228636bfe9b8e2e21d7a24c1d0f642b33692ce5b00b166f16f6b1de12",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Tests/AtlasCoreTests/FenceDetectionTests.swift",
+      "bytes": 7170,
+      "sha256": "440d81054fcf2147cc4f5c5c48730b9553ffbd52f8da3e94d6425b7be24021e4",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Tests/AtlasCoreTests/FieldTransferTests.swift",
+      "bytes": 21500,
+      "sha256": "231f565e7bef48514474046030204df3ad776a2ae997de92a83d7605965ff8d5",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Tests/AtlasCoreTests/FragmentRegistrationTests.swift",
+      "bytes": 21507,
+      "sha256": "f2595dcdbf3a9518bdacd63abe43e56b168440bd58f81ddb5bebbbb90a7b8741",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Tests/AtlasCoreTests/GPXExportTests.swift",
+      "bytes": 7112,
+      "sha256": "1a2737fea03e31809811a59c26bcd93d481a0533f4ae014ac3045b30b0cb4d87",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Tests/AtlasCoreTests/GeoTagTests.swift",
+      "bytes": 17071,
+      "sha256": "e2251ff655f5ab068380b25a0599425eec2a819483f6142dbaeb36a27744147f",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Tests/AtlasCoreTests/GeometryExportTests.swift",
+      "bytes": 16388,
+      "sha256": "30b8903c07f45a0fc6d14533fea344d04c008b78d757515020f4bd0a54215734",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Tests/AtlasCoreTests/GeometryTests.swift",
+      "bytes": 3886,
+      "sha256": "ae8c7b6e29467d413a23be68d6e5ee061437f536422a767f9e05100ea2026181",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Tests/AtlasCoreTests/MeasurementProfileTests.swift",
+      "bytes": 13639,
+      "sha256": "794e3e037ffcb1e6f995173e9a3a1fe2d669402c27e811d7d2defed2a57b85d0",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Tests/AtlasCoreTests/MeasurementTests.swift",
+      "bytes": 26032,
+      "sha256": "4fd5a0d4e8aa61bc86304f1a6d7f082958c49c5e780646c8c1dc09df57961fd4",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Tests/AtlasCoreTests/PlanQuantitiesTests.swift",
+      "bytes": 7151,
+      "sha256": "fe3f7a7822bd4f8c72b23a5973fcdf6eb217b1cf7c0de05dfdbf70ee80373a19",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Tests/AtlasCoreTests/StoreTests.swift",
+      "bytes": 12252,
+      "sha256": "a772a2504c9285891593cd9042755870b51840921d0ffb0ce1c4daf5652539b8",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Tests/AtlasCoreTests/SurveyStationTests.swift",
+      "bytes": 12377,
+      "sha256": "8a9842630c14cfb11823e270e7a8fa9a74a53c9ffc7e3abe200774649843cb91",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Tests/AtlasCoreTests/TerrainSurveyTests.swift",
+      "bytes": 10795,
+      "sha256": "e828689605e077d564a76959f885d88c85db125f2cd78090aaf7188bf85069c5",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Tests/AtlasCoreTests/VectorMetadataExportTests.swift",
+      "bytes": 25510,
+      "sha256": "e907f7ace5f1cd8f4d2ce481e5c8ea87a2f17b1cfebc79bfe6397e0d15ca43a9",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Tests/AtlasCoreTests/VegetationDetectionTests.swift",
+      "bytes": 11321,
+      "sha256": "cc2ff3860ff0b7fd1ca75f391236661ccf990d15db37ff313d91e342ad8909d8",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Packages/AtlasCore/Tests/AtlasCoreTests/VideoMaterialTests.swift",
+      "bytes": 3788,
+      "sha256": "b3b29bbc7efbcdc5ff559360f92d21a64e2fdd08f76a321d689ec836f482e774",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "SOURCE-INFO.md",
+      "bytes": 1649,
+      "sha256": "d577455e51d60f03cb9e90cfeddc8db1e04a6b8d3d935d12e788af9e31ece6d1",
+      "origin": "handoff_document"
+    },
+    {
+      "path": "START-HERE.md",
+      "bytes": 4931,
+      "sha256": "aff79493cc08b40add3e12d46f3259a80f70c980e7ceb014ba0f546bcd3ff919",
+      "origin": "handoff_document"
+    },
+    {
+      "path": "Server/.env.example",
+      "bytes": 1096,
+      "sha256": "86e94caca560ef822c3bca6dbb056d00119129266d235d2e0b0a27527897e58e",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Server/.gitignore",
+      "bytes": 54,
+      "sha256": "4eda96872306953b81dc8bc8ceee273eaa889d69bdcd4b2e52c22916cbdd3c05",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Server/MATERIAL_TRANSFER.md",
+      "bytes": 9309,
+      "sha256": "337558f89a43f061cb77f3177937249f79d89643d0047de09c1b92c3ff2df2da",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Server/README.md",
+      "bytes": 19014,
+      "sha256": "3bdc2ebf92145a0409fbe2e629bc930b93dc586eb183c470ba4ca3cfad21e4e9",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Server/package-lock.json",
+      "bytes": 60901,
+      "sha256": "0a002b4052cec2deca5ff4cd3f278bfb41de656995aebf9aabdb362161e3e6a6",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Server/package.json",
+      "bytes": 644,
+      "sha256": "629c1c1397c7b3a85d2e0c7e3b15ae14644c7d15a3048e6b6cb88a027d694d2b",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Server/src/app.ts",
+      "bytes": 44368,
+      "sha256": "5832f4e0cc185e73cea32029edac7dbab8fc5a87ec586e6e5e236641afdba0e6",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Server/src/auth.ts",
+      "bytes": 1894,
+      "sha256": "86566879b874b36fb529e331d249367b774ac12c6e0a6e847a0c9307a3bec995",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Server/src/billing.ts",
+      "bytes": 21591,
+      "sha256": "bae9747f6c2232a7ed3e0d5f8eb9b256b12c4ce0366972ad9d7ca3023dc64bd1",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Server/src/collaboration-geometry.ts",
+      "bytes": 14253,
+      "sha256": "3e6f2dea9cfb2c9d9b916956323bb4b8622c44e0709fa23e33ea97218dc2e635",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Server/src/collaboration.ts",
+      "bytes": 69922,
+      "sha256": "8268fa4ea95daec70552c23bb07240aad0afec51b7d9ff38381f32c0fe4dad69",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Server/src/domain.ts",
+      "bytes": 14121,
+      "sha256": "ea95c13c9379705279d96e2797e4089e9b08d2f1118dc4015104bf866a404ca1",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Server/src/index.ts",
+      "bytes": 916,
+      "sha256": "f9f1d7ca69c484996215c60e583a44c5f2aba1e90a0df7068b3f441e44c484fe",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Server/src/materials.ts",
+      "bytes": 25202,
+      "sha256": "46a8057c329094295d5768fe8bf826456c7207f009ada51e1b944914609ba8c1",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Server/src/store.ts",
+      "bytes": 16086,
+      "sha256": "9b35ad5fc02c3c8b4e6a63fed3ac3fe4fca6ab57b95fdcd68b5d1303ae5bd758",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Server/test/api.integration.test.ts",
+      "bytes": 40745,
+      "sha256": "828071ddf93b486bde6160ecb35c6d62dbc6e5a8e7280d54bb8d3de62f55d225",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Server/test/apple-billing.test.ts",
+      "bytes": 20918,
+      "sha256": "5ff3d0b1eece514b6e4c61a713298e6439ca829d803df1b41aaca4f10b5c36d0",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Server/test/cemetery-geometry.test.ts",
+      "bytes": 4360,
+      "sha256": "149d59e067ddc346ca5d455560bc17d035b4d71c5eb02b813d4ed55cb6b138de",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Server/test/collaboration.test.ts",
+      "bytes": 41002,
+      "sha256": "2f670d40e085aafdc3cf2356a80abfabdd2322b60b50d19103a18dc66336509d",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Server/test/fixtures/apple-test-root.pem",
+      "bytes": 717,
+      "sha256": "7a2818721b1d01cb40cabc5309ebc2d8de28258b17283d514dba7de416044eed",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Server/test/fixtures/collaborative-swift.json",
+      "bytes": 73370,
+      "sha256": "0cd55ecb10e98a79d820ca7fc3e0ff87778eb8d131b5973338bf1f4ae1ba6f14",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Server/test/materials.integration.test.ts",
+      "bytes": 25583,
+      "sha256": "f97a946b66932d7f87389e248ec34cafc971103d1aacab968f541b38ed025a7b",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "Server/tsconfig.json",
+      "bytes": 349,
+      "sha256": "a6b2c4c1904bd97a8b4aea845ad414496ebd38975c571e3ae8d4e6bae5afee69",
+      "origin": "exact_git_blob"
+    },
+    {
+      "path": "docs/COLLABORATIVE-MOSAIC.md",
+      "bytes": 68656,
+      "sha256": "f6e3bc9acb4b0994fd8c008bf4be8b92621627a3b450ed908114817d38ce2a4e",
+      "origin": "exact_git_blob"
+    }
+  ]
+}
