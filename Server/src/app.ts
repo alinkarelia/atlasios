@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import { Store } from './store.js';
 import { AppleBilling } from './billing.js';
 import { registerMaterialRoutes } from './materials.js';
+import { registerCollaborationRoutes, type AssemblyProcessor } from './collaboration.js';
 import { hashPassword, verifyPassword, tokenHash, newToken, contentHash, canonical } from './auth.js';
 import { ApiError, type Role, type Entity, roles, object, keys, text, id, enumeration, integer,
   coordinateReference, featureData, taskData, workorderData, bodySchema, stringSchema,
@@ -39,6 +40,7 @@ declare module 'fastify' { interface FastifyRequest { atlasPrincipal?: SessionPr
 export interface AppOptions {
   databasePath?: string; logger?: boolean; rateLimit?: boolean; corsOrigins?: string[]; billingEnvironment?: NodeJS.ProcessEnv;
   assetDirectory?: string; maxOrganizationAssetBytes?: number;
+  assemblyProcessor?: AssemblyProcessor;
 }
 
 const managers: Role[] = ['owner', 'admin', 'manager'];
@@ -171,6 +173,8 @@ export async function buildApp(options: AppOptions = {}): Promise<FastifyInstanc
     maxOrganizationBytes: options.maxOrganizationAssetBytes,
     scope: project, user, audit,
   });
+  await registerCollaborationRoutes(app, store, { scope: project, user, audit, processor: options.assemblyProcessor,
+    assetDirectory: options.assetDirectory ?? join(dirname(options.databasePath ?? './data/atlas.sqlite'), 'assets') });
 
   app.get('/health', async () => ({ status: 'ok', storage: 'sqlite', version: '0.1.0' }));
   const authConfig: FastifyContextConfig = options.rateLimit === false ? {} : { rateLimit: { max: 12, timeWindow: '1 minute' } };

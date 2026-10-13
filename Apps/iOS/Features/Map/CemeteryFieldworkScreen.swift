@@ -19,6 +19,10 @@ struct CemeteryFieldworkScreen: View {
                     GeometryEditorScreen(model: model, project: project)
                 } label: { Label("Карта и обход границы", systemImage: "map") }
                     .accessibilityIdentifier("cemetery.map")
+                NavigationLink {
+                    CollaborativeSurveyScreen(model: model, project: project)
+                } label: { Label("Участки команды и покрытие", systemImage: "person.3.sequence") }
+                    .accessibilityIdentifier("cemetery.collaborativeSurvey")
             } header: { Text("Начать обследование") } footer: {
                 Text("Создайте границу кладбища на карте или обойдите её с GPS. Затем добавляйте захоронения, проходы и объекты в этом же проекте.")
             }.listRowBackground(Color.atlasCard)

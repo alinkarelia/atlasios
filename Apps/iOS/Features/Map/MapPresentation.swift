@@ -316,8 +316,12 @@ struct MetricPlotCanvas: View {
                     }
                     if index < 80, let first = vertices.first {
                         let screen = transform.screen(first)
-                        context.draw(Text(feature.label).font(.caption.weight(.semibold)).foregroundStyle(Color.atlasInk),
-                                     at: CGPoint(x: screen.x, y: screen.y - 15), anchor: .bottom)
+                        let label = context.resolve(Text(feature.label).font(.caption.weight(.semibold)).foregroundStyle(Color.atlasInk))
+                        let measured = label.measure(in: CGSize(width: max(40, size.width - 24), height: 60))
+                        let half = measured.width / 2 + 8
+                        let x = max(half, min(size.width - half, screen.x))
+                        let y = max(measured.height + 8, min(size.height - 8, screen.y - 15))
+                        context.draw(label, at: CGPoint(x: x, y: y), anchor: .bottom)
                     }
                 }
                 context.stroke(path(draft, transform: transform, closed: false), with: .color(.orange), style: StrokeStyle(lineWidth: 3, dash: [6, 4]))

@@ -4,6 +4,30 @@ import ModelIO
 import simd
 #endif
 
+/// Explicit model metadata, not authentication of an acquisition original.
+/// A registered derivative keeps its anchor frame and units without becoming
+/// an original ARKit capture merely because its geometry is measurable.
+struct OBJMetricFrameHeader: Equatable, Sendable {
+    enum Origin: Sendable { case arKitOriginal, alignedDerivative }
+    let origin: Origin
+    let frameID: UUID
+
+    static func parse(_ line: String) -> Self? {
+        let text = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        let declarations: [(String, Origin)] = [
+            ("# Atlas ARKit mesh. metres. Y up. local frame ", .arKitOriginal),
+            ("# TerraView aligned fragment derivative. metres. Y up. local frame ", .alignedDerivative)
+        ]
+        for (prefix, origin) in declarations where text.hasPrefix(prefix) {
+            let raw = String(text.dropFirst(prefix.count))
+            guard raw.count == 36, let frame = UUID(uuidString: raw),
+                  frame.uuidString.caseInsensitiveCompare(raw) == .orderedSame else { return nil }
+            return .init(origin: origin, frameID: frame)
+        }
+        return nil
+    }
+}
+
 struct OBJPreviewPayload: Sendable {
     let positions: Data
     let normals: Data
@@ -13,7 +37,18 @@ struct OBJPreviewPayload: Sendable {
     let triangleCount: Int
     let minimum: SIMD3<Float>
     let maximum: SIMD3<Float>
+    /// Legacy original-header marker; aligned derivatives leave this false.
     let isAtlasCapture: Bool
+    let declaredMetricFrame: OBJMetricFrameHeader?
+
+    init(positions: Data, normals: Data, indices: Data, vertexCount: Int, sourceVertexCount: Int,
+         triangleCount: Int, minimum: SIMD3<Float>, maximum: SIMD3<Float>, isAtlasCapture: Bool,
+         declaredMetricFrame: OBJMetricFrameHeader? = nil) {
+        self.positions = positions; self.normals = normals; self.indices = indices
+        self.vertexCount = vertexCount; self.sourceVertexCount = sourceVertexCount; self.triangleCount = triangleCount
+        self.minimum = minimum; self.maximum = maximum; self.isAtlasCapture = isAtlasCapture
+        self.declaredMetricFrame = declaredMetricFrame
+    }
 }
 
 enum OBJPreviewError: LocalizedError {
@@ -62,16 +97,17 @@ enum OBJPreviewLoader {
         indices.reserveCapacity(64_000 * 3)
         var minimum = SIMD3<Float>(repeating: .infinity)
         var maximum = SIMD3<Float>(repeating: -.infinity)
-        var isAtlasCapture = false
+        var metricFrame: OBJMetricFrameHeader?
 
         func consume(_ data: Data.SubSequence) throws {
             guard data.count <= 16_384 else { throw OBJPreviewError.invalidMesh }
             let text = String(decoding: data, as: UTF8.self)
-            if text.hasPrefix("# Atlas ARKit mesh. metres. Y up. local frame ") {
-                isAtlasCapture = true
-            }
             let parts = text.split(whereSeparator: { $0.isWhitespace })
-            guard let kind = parts.first, !kind.hasPrefix("#") else { return }
+            guard let kind = parts.first else { return }
+            if kind.hasPrefix("#") {
+                if metricFrame == nil, let declaration = OBJMetricFrameHeader.parse(text) { metricFrame = declaration }
+                return
+            }
             if kind == "v" {
                 guard parts.count >= 4,
                       let x = Float(parts[1]), let y = Float(parts[2]), let z = Float(parts[3]),
@@ -127,7 +163,8 @@ enum OBJPreviewLoader {
         guard !positions.isEmpty, !indices.isEmpty else { throw OBJPreviewError.noGeometry }
 
         return try makePayload(positions: positions, indices: indices, minimum: minimum,
-                               maximum: maximum, isAtlasCapture: isAtlasCapture)
+                               maximum: maximum, isAtlasCapture: metricFrame?.origin == .arKitOriginal,
+                               declaredMetricFrame: metricFrame)
     }
 
     /// A shared source vertex can belong to a floor and a perpendicular wall.
@@ -139,7 +176,8 @@ enum OBJPreviewLoader {
     /// 1.8 million display vertices × (12 position + 12 normal + 4 index bytes).
     /// Building them directly in Data avoids another pair of expanded arrays.
     private static func makePayload(positions: [Float], indices: [UInt32], minimum: SIMD3<Float>,
-                                    maximum: SIMD3<Float>, isAtlasCapture: Bool) throws -> OBJPreviewPayload {
+                                    maximum: SIMD3<Float>, isAtlasCapture: Bool,
+                                    declaredMetricFrame: OBJMetricFrameHeader? = nil) throws -> OBJPreviewPayload {
         guard positions.count.isMultiple(of: 3), indices.count.isMultiple(of: 3),
               !positions.isEmpty, !indices.isEmpty else { throw OBJPreviewError.noGeometry }
         guard positions.count / 3 <= maximumVertices,
@@ -163,7 +201,7 @@ enum OBJPreviewLoader {
         return OBJPreviewPayload(positions: displayPositions, normals: displayNormals, indices: displayIndices,
                                  vertexCount: renderVertexCount, sourceVertexCount: positions.count / 3,
                                  triangleCount: indices.count / 3, minimum: minimum, maximum: maximum,
-                                 isAtlasCapture: isAtlasCapture)
+                                 isAtlasCapture: isAtlasCapture, declaredMetricFrame: declaredMetricFrame)
     }
 
     /// Explicit buffer types keep Data's deprecated typed-pointer overloads

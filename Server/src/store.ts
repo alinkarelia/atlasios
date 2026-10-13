@@ -12,7 +12,7 @@ export class Store {
     this.db = new DatabaseSync(path);
     if (path !== ':memory:') chmodSync(path, 0o600);
     const schemaVersion = this.db.prepare('PRAGMA user_version').get() as { user_version: number };
-    if (schemaVersion.user_version > 3) { this.db.close(); throw new Error('Database schema is newer than this server'); }
+    if (schemaVersion.user_version > 4) { this.db.close(); throw new Error('Database schema is newer than this server'); }
     this.db.exec(`
       PRAGMA foreign_keys = ON;
       PRAGMA busy_timeout = 5000;
@@ -145,7 +145,75 @@ export class Store {
         BEGIN SELECT RAISE(ABORT, 'reviews are immutable'); END;
       CREATE TRIGGER IF NOT EXISTS immutable_review_delete BEFORE DELETE ON reviews
         BEGIN SELECT RAISE(ABORT, 'reviews are immutable'); END;
-      PRAGMA user_version = 3;
+      CREATE TABLE IF NOT EXISTS collaboration_plans (
+        project_id TEXT NOT NULL REFERENCES projects(id), revision INTEGER NOT NULL CHECK(revision >= 1),
+        data_json TEXT NOT NULL, content_hash TEXT NOT NULL, author_id TEXT NOT NULL REFERENCES users(id),
+        created_at TEXT NOT NULL, PRIMARY KEY(project_id, revision)
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS collaboration_operations (
+        project_id TEXT NOT NULL REFERENCES projects(id), actor_id TEXT NOT NULL REFERENCES users(id),
+        operation_id TEXT NOT NULL, request_hash TEXT NOT NULL, response_json TEXT NOT NULL,
+        created_at TEXT NOT NULL, PRIMARY KEY(project_id, actor_id, operation_id)
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS collaboration_evidence (
+        id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), plan_revision INTEGER NOT NULL,
+        actor_id TEXT NOT NULL REFERENCES users(id), data_json TEXT NOT NULL, content_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL, FOREIGN KEY(project_id, plan_revision) REFERENCES collaboration_plans(project_id, revision)
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS collaboration_evidence_project ON collaboration_evidence(project_id, plan_revision, created_at);
+      CREATE TABLE IF NOT EXISTS fragment_registrations (
+        id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), source_key TEXT NOT NULL,
+        target_key TEXT NOT NULL, data_json TEXT NOT NULL, content_hash TEXT NOT NULL,
+        author_id TEXT NOT NULL REFERENCES users(id), created_at TEXT NOT NULL
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS fragment_registrations_project ON fragment_registrations(project_id, created_at);
+      CREATE TABLE IF NOT EXISTS fragment_registration_decisions (
+        registration_id TEXT NOT NULL REFERENCES fragment_registrations(id), revision INTEGER NOT NULL CHECK(revision >= 1),
+        verdict TEXT NOT NULL CHECK(verdict IN ('approved','rejected')), note TEXT NOT NULL,
+        actor_id TEXT NOT NULL REFERENCES users(id), created_at TEXT NOT NULL, PRIMARY KEY(registration_id, revision)
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS assembly_jobs (
+        id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), request_json TEXT NOT NULL,
+        request_hash TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision >= 1),
+        state TEXT NOT NULL CHECK(state IN ('queued','running','waitingForRegistration','ready','failed')),
+        outcome_json TEXT NOT NULL, actor_id TEXT NOT NULL REFERENCES users(id),
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      ) STRICT;
+      CREATE INDEX IF NOT EXISTS assembly_jobs_project ON assembly_jobs(project_id, created_at);
+      CREATE TABLE IF NOT EXISTS assembly_job_events (
+        job_id TEXT NOT NULL REFERENCES assembly_jobs(id), revision INTEGER NOT NULL CHECK(revision >= 1),
+        state TEXT NOT NULL, outcome_json TEXT NOT NULL, actor_id TEXT REFERENCES users(id),
+        created_at TEXT NOT NULL, PRIMARY KEY(job_id, revision)
+      ) STRICT;
+      CREATE TRIGGER IF NOT EXISTS immutable_collaboration_plan_update BEFORE UPDATE ON collaboration_plans
+        BEGIN SELECT RAISE(ABORT, 'collaboration plan revisions are immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS immutable_collaboration_plan_delete BEFORE DELETE ON collaboration_plans
+        BEGIN SELECT RAISE(ABORT, 'collaboration plan revisions are immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS immutable_collaboration_evidence_update BEFORE UPDATE ON collaboration_evidence
+        BEGIN SELECT RAISE(ABORT, 'capture evidence is immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS immutable_collaboration_evidence_delete BEFORE DELETE ON collaboration_evidence
+        BEGIN SELECT RAISE(ABORT, 'capture evidence is immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS immutable_registration_update BEFORE UPDATE ON fragment_registrations
+        BEGIN SELECT RAISE(ABORT, 'registration candidates are immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS immutable_registration_delete BEFORE DELETE ON fragment_registrations
+        BEGIN SELECT RAISE(ABORT, 'registration candidates are immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS immutable_registration_decision_update BEFORE UPDATE ON fragment_registration_decisions
+        BEGIN SELECT RAISE(ABORT, 'registration decisions are immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS immutable_registration_decision_delete BEFORE DELETE ON fragment_registration_decisions
+        BEGIN SELECT RAISE(ABORT, 'registration decisions are immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS immutable_assembly_sources BEFORE UPDATE ON assembly_jobs
+        WHEN NEW.id <> OLD.id OR NEW.project_id <> OLD.project_id OR NEW.request_json <> OLD.request_json
+          OR NEW.request_hash <> OLD.request_hash OR NEW.actor_id <> OLD.actor_id OR NEW.created_at <> OLD.created_at
+        BEGIN SELECT RAISE(ABORT, 'assembly source requests are immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS immutable_assembly_event BEFORE UPDATE ON assembly_job_events
+        BEGIN SELECT RAISE(ABORT, 'assembly events are immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS immutable_assembly_event_delete BEFORE DELETE ON assembly_job_events
+        BEGIN SELECT RAISE(ABORT, 'assembly events are immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS immutable_collaboration_operation_update BEFORE UPDATE ON collaboration_operations
+        BEGIN SELECT RAISE(ABORT, 'collaboration operation receipts are immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS immutable_collaboration_operation_delete BEFORE DELETE ON collaboration_operations
+        BEGIN SELECT RAISE(ABORT, 'collaboration operation receipts are immutable'); END;
+      PRAGMA user_version = 4;
     `);
   }
 

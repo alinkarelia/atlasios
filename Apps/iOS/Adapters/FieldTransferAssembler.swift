@@ -116,7 +116,7 @@ actor FieldTransferAssembler {
             }
         }
         var projectJournalAssets: [FieldAsset] = []
-        try ProjectJournalExport.forEachFile(project: original.project, assetDirectory: managed) { journal in
+        try ProjectJournalExport.forEachFile(project: original.project, assetDirectory: managed, availableScans: original.scans) { journal in
             guard paths.insert(journal.managedRelativePath).inserted else {
                 throw FieldTransferError.invalidManifest
             }
@@ -346,7 +346,7 @@ actor FieldTransferAssembler {
             relativePath: "project.json", mediaType: "application/json", byteCount: Int64(projectData.count),
             sha256: FieldTransferDigest.sha256(projectData), kind: .projectSnapshot)]
         var stationJournalDetails: [String: (size: Int64, sha256: String)] = [:]
-        try ProjectJournalExport.forEachFile(project: snapshot.project, assetDirectory: managed) { journal in
+        try ProjectJournalExport.forEachFile(project: snapshot.project, assetDirectory: managed, availableScans: snapshot.scans) { journal in
             let digest = journal.sha256
             if journal.archiveRelativePath.hasPrefix("ModelMeasurements/") {
                 assets.append(FieldAsset(id: stableID("archive:" + journal.managedRelativePath), materialID: projectID,

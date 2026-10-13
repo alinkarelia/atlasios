@@ -20,7 +20,7 @@ import zipfile
 
 REPOSITORY = 'alinkarelia/atlasios'
 IPA_ARTIFACT = 'Atlas-unsigned-device-IPA-candidate'
-MINIMUM_UI_TESTS = 16
+MINIMUM_UI_TESTS = 18
 REQUIRED_VISUAL_STATES = {
     'initial_3D', 'orbit_rotated', 'foreground_return', 'walk_forward',
     'transfer_manual', 'transfer_automatic', 'transfer_restored_manual',
@@ -41,6 +41,7 @@ REQUIRED_SCREENSHOT_LABELS = {
     '23-tour-contours', '24-tour-linked-card', '25-survey-stations',
     '26-survey-boundary', '27-opening-measurement', '28-measurement-journal',
     '29-surface-classification', '30-cabinet-door-review',
+    '33-team-planning', '34-team-coverage', '35-fragment-assembly', '36-team-import',
 }
 EXPECTED_JOBS = {
     'Source project and Server',
@@ -166,7 +167,7 @@ def verify_context():
                 and REQUIRED_SCREENSHOT_LABELS <= set(runtime.get('screenshot_labels', []))
                 and isinstance(runtime.get('screenshots_archive_sha256'), str)
                 and re.fullmatch(r'[0-9a-f]{64}', runtime['screenshots_archive_sha256']) is not None,
-                'All twenty-four actual runtime screenshot labels and their archive digest are required.')
+                'All required actual runtime screenshot labels and their archive digest are required.')
         require(runtime.get('manual_visual_review') == 'passed'
                 and REQUIRED_VISUAL_STATES <= set(runtime.get('reviewed', [])),
                 'Incomplete actual 3D, fieldwork, designer, and project-transfer screenshot review.')

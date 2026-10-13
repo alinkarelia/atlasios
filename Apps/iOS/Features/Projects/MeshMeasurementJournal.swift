@@ -35,13 +35,13 @@ struct MeshDimensionSource: Sendable {
             hash.update(data)
         }
         var frame: UUID?, metres = false, gravity = false
-        if atlasOBJ {
-            let text = String(decoding: prefix, as: UTF8.self)
-            if let line = text.split(separator: "\n").first(where: { $0.hasPrefix("# Atlas ARKit mesh. metres. Y up. local frame ") }) {
-                frame = line.split(separator: " ").last.flatMap { UUID(uuidString: String($0)) }
-                metres = frame != nil; gravity = frame != nil
-            }
-        } else if url.lastPathComponent == "room.usdz" {
+        let declaration = String(decoding: prefix, as: UTF8.self).split(separator: "\n")
+            .compactMap { OBJMetricFrameHeader.parse(String($0)) }.first
+        // The exact derivative header declares its anchor frame independently
+        // of the original-capture flag; never relabel it as a captured original.
+        if let declaration, atlasOBJ || declaration.origin == .alignedDerivative {
+            frame = declaration.frameID; metres = true; gravity = true
+        } else if !atlasOBJ, url.lastPathComponent == "room.usdz" {
             let manifest = url.deletingLastPathComponent().appendingPathComponent("manifest.json")
             if let values = try? manifest.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey, .isSymbolicLinkKey]),
                values.isRegularFile == true, values.isSymbolicLink != true, let size = values.fileSize, size <= 2 * 1_024 * 1_024,

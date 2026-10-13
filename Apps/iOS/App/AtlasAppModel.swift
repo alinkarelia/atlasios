@@ -294,6 +294,38 @@ final class AtlasAppModel: ObservableObject {
             .appendingPathComponent("Captures", isDirectory: true)
     }
 
+    /// A shared plan retains its project and boundary IDs on every phone.
+    /// Local database revisions remain local; original geometry is never replaced.
+    func openCollaborativePlan(_ document: CollaborativeSurveyStoredPlan) async throws -> AtlasProject {
+        guard let store else { throw TeamError.rejected("Хранилище проектов недоступно.") }
+        try document.validate()
+        let existing = try await store.projects().first { $0.id == document.projectID }
+        if let existing, existing.coordinateReference != document.plan.coordinateReference {
+            throw TeamError.rejected("Система координат проекта отличается от плана команды.")
+        }
+        let known = try await store.features(projectID: document.projectID).first { $0.id == document.sourceFeatureID }
+        if let known, known.geometry != document.plan.sourceBoundary {
+            throw TeamError.rejected("Граница этого проекта уже изменена. Исходная граница сохранена; импорт остановлен.")
+        }
+        let project: AtlasProject
+        if let existing { project = existing }
+        else {
+            project = try await store.saveProject(AtlasProject(id: document.projectID,
+                name: document.projectName ?? "Совместная съёмка", kind: document.projectKind ?? .site,
+                coordinateReference: document.plan.coordinateReference))
+        }
+        if known == nil {
+            let boundary = AtlasFeature(id: document.sourceFeatureID, projectID: project.id,
+                label: "Граница совместной съёмки", category: .boundary,
+                geometry: document.plan.sourceBoundary, attributes: [
+                    "collaboration.boundaryOrigin": "plan-import",
+                    "collaboration.sourceFeatureRevision": String(document.sourceFeatureRevision),
+                    "collaboration.sourceBoundarySHA256": document.plan.sourceBoundarySHA256])
+            _ = try await store.saveFeature(boundary)
+        }
+        return project
+    }
+
     func exportArchive(project: AtlasProject) async -> URL? {
         guard let snapshot = await snapshot(of: project) else { return nil }
         do {
@@ -335,7 +367,7 @@ final class AtlasAppModel: ObservableObject {
                 let files = try AssistantProjectPackage.prepare(snapshot: snapshot, passportData: passportData,
                     histories: retainedHistories, staging: staging)
                 return try Self.writeArchive(metadata: metadata, passport: passport, packageFiles: files,
-                                             project: snapshot.project, captureRoot: captureRoot, destination: destination)
+                                             project: snapshot.project, availableScans: snapshot.scans, captureRoot: captureRoot, destination: destination)
             }.value
         } catch { issue = error.localizedDescription; return nil }
     }
@@ -344,7 +376,7 @@ final class AtlasAppModel: ObservableObject {
     /// The detached utility task calls this helper without moving file IO onto
     /// MainActor or allowing the enumerator to cross a suspension point.
     private nonisolated static func writeArchive(metadata: URL, passport: URL, packageFiles: [URL],
-                                               project: AtlasProject, captureRoot: URL, destination: URL) throws -> URL {
+                                               project: AtlasProject, availableScans: [ScanRecord], captureRoot: URL, destination: URL) throws -> URL {
         let delivery = try FieldTransferJSON.decode(FieldDeliveryPassport.self, from: Data(contentsOf: passport))
         guard delivery.projectID == project.id,
               captureRoot.lastPathComponent == "Captures",
@@ -367,7 +399,7 @@ final class AtlasAppModel: ObservableObject {
         }
         let assetDirectory = captureRoot.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let journalEntries = try ProjectJournalExport.archiveEntries(project: project,
-            assetDirectory: assetDirectory, passportAssets: delivery.assets)
+            assetDirectory: assetDirectory, passportAssets: delivery.assets, availableScans: availableScans)
         // StationSurvey is already enumerated as an original Captures member
         // below. Model journals are its sibling at the ZIP root.
         entries.append(contentsOf: journalEntries.filter { $0.relativePath.hasPrefix("ModelMeasurements/") })

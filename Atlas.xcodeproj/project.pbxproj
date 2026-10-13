@@ -74,6 +74,20 @@
 			"path" = "Apps/iOS/Adapters/CemeteryTerrainAnalyzer.swift";
 			"sourceTree" = "SOURCE_ROOT";
 		};
+		"C48326A8BA17E568A3AAC568" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "CollaborativeGuidanceService.swift";
+			"path" = "Apps/iOS/Adapters/CollaborativeGuidanceService.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"96943AD0DA1C64FDCC2F7B60" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "CollaborativeSurveyStore.swift";
+			"path" = "Apps/iOS/Adapters/CollaborativeSurveyStore.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
 		"BD661291F222C46052F35644" = {
 			"isa" = "PBXFileReference";
 			"lastKnownFileType" = "sourcecode.swift";
@@ -135,6 +149,20 @@
 			"lastKnownFileType" = "sourcecode.swift";
 			"name" = "FieldTransferTransport.swift";
 			"path" = "Apps/iOS/Adapters/FieldTransferTransport.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"50F0EC0C46965E4E5D5FA809" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "FragmentAssemblyStore.swift";
+			"path" = "Apps/iOS/Adapters/FragmentAssemblyStore.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"B6BC19764373F2B3FCF83238" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "FragmentMeshAssemblyExporter.swift";
+			"path" = "Apps/iOS/Adapters/FragmentMeshAssemblyExporter.swift";
 			"sourceTree" = "SOURCE_ROOT";
 		};
 		"E91AE07902E418EF38BA72DE" = {
@@ -480,6 +508,13 @@
 			"path" = "Apps/iOS/Features/Map/CemeterySiteScreen.swift";
 			"sourceTree" = "SOURCE_ROOT";
 		};
+		"DA7CF2BFF72A0EC426594B50" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "CollaborativeSurveyScreen.swift";
+			"path" = "Apps/iOS/Features/Map/CollaborativeSurveyScreen.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
 		"FCB68256FBB6E0AA8A7C5550" = {
 			"isa" = "PBXFileReference";
 			"lastKnownFileType" = "sourcecode.swift";
@@ -569,6 +604,20 @@
 			"lastKnownFileType" = "sourcecode.swift";
 			"name" = "MeasurementToolsScreen.swift";
 			"path" = "Apps/iOS/Features/Measurement/MeasurementToolsScreen.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"F32EB0BCC0F32F8D45438B52" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "CollaborativePlanImportScreen.swift";
+			"path" = "Apps/iOS/Features/Projects/CollaborativePlanImportScreen.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"9567DA5AE917E0ECABAFFBF2" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "FragmentAssemblyScreen.swift";
+			"path" = "Apps/iOS/Features/Projects/FragmentAssemblyScreen.swift";
 			"sourceTree" = "SOURCE_ROOT";
 		};
 		"2F0DAA2340AF86BF462C651F" = {
@@ -717,6 +766,8 @@
 				D12AC21D9B1951F65906686D,
 				BF01E5CEC7F4A938CCAEA32E,
 				03D2912DC7305E7DF38EC611,
+				C48326A8BA17E568A3AAC568,
+				96943AD0DA1C64FDCC2F7B60,
 				BD661291F222C46052F35644,
 				98F22A720EEC077BCB91C548,
 				190F61CA43BC1AF4D6F877B7,
@@ -726,6 +777,8 @@
 				B8C0BCA1DAE6B2C1A2D20C01,
 				6EA5A53E9C181970C9EC02DA,
 				AE97DA6F0539F284EB2D8957,
+				50F0EC0C46965E4E5D5FA809,
+				B6BC19764373F2B3FCF83238,
 				E91AE07902E418EF38BA72DE,
 				E714D3460B5BC6E1819E4AF5,
 				64CCE44C4246F42AD38FE123,
@@ -810,6 +863,7 @@
 				607898040A9CB5BFF50BE2C0,
 				76B108475AB408536749E818,
 				CDE9FF14285740C4A14BBBD4,
+				DA7CF2BFF72A0EC426594B50,
 				FCB68256FBB6E0AA8A7C5550,
 				CBC1B91764D0352D5FB011D4,
 				AA12C4121B3938D1F2074C19,
@@ -837,6 +891,8 @@
 		"45E3D377CE2D52343E581309" = {
 			"isa" = "PBXGroup";
 			"children" = (
+				F32EB0BCC0F32F8D45438B52,
+				9567DA5AE917E0ECABAFFBF2,
 				2F0DAA2340AF86BF462C651F,
 				248AA520C94FDF7F9EC8F19F,
 				30C64DD91CE312BC35B264A0,
@@ -999,6 +1055,14 @@
 			"isa" = "PBXBuildFile";
 			"fileRef" = 03D2912DC7305E7DF38EC611;
 		};
+		"69C474132DDBC9EC6027F8EE" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = C48326A8BA17E568A3AAC568;
+		};
+		"5FA4AE1F44C878E9A745940E" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = 96943AD0DA1C64FDCC2F7B60;
+		};
 		"EF4A40BDC343A1D4BC3ECAE4" = {
 			"isa" = "PBXBuildFile";
 			"fileRef" = BD661291F222C46052F35644;
@@ -1034,6 +1098,14 @@
 		"77B52490110FE8EBF1788B6B" = {
 			"isa" = "PBXBuildFile";
 			"fileRef" = AE97DA6F0539F284EB2D8957;
+		};
+		"74BDD1BD8AB4A5E8FD47D3EC" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = 50F0EC0C46965E4E5D5FA809;
+		};
+		"77603789CA3C43009F7FD02A" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = B6BC19764373F2B3FCF83238;
 		};
 		"2A0748C3ECE2F43F60C40519" = {
 			"isa" = "PBXBuildFile";
@@ -1231,6 +1303,10 @@
 			"isa" = "PBXBuildFile";
 			"fileRef" = CDE9FF14285740C4A14BBBD4;
 		};
+		"68682FB887B44AE8A5C28C93" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = DA7CF2BFF72A0EC426594B50;
+		};
 		"AC7EDBCB0D483DA6A0076FBD" = {
 			"isa" = "PBXBuildFile";
 			"fileRef" = FCB68256FBB6E0AA8A7C5550;
@@ -1282,6 +1358,14 @@
 		"E65D105A94173AA7DB7AE426" = {
 			"isa" = "PBXBuildFile";
 			"fileRef" = CA62F2B63C0B6F307F5B5A3E;
+		};
+		"3232F8C63A14E0D7431C995D" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = F32EB0BCC0F32F8D45438B52;
+		};
+		"A4D30E04D49E6CBD7FE5B27E" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = 9567DA5AE917E0ECABAFFBF2;
 		};
 		"B6DF75F0A1FC925310CA8CD9" = {
 			"isa" = "PBXBuildFile";
@@ -1365,6 +1449,8 @@
 				9FBE1D1935FCC917225A8500,
 				0AF35FE151107C787DF59EF9,
 				29ED90B78B2F8A1E3053D0A9,
+				69C474132DDBC9EC6027F8EE,
+				5FA4AE1F44C878E9A745940E,
 				EF4A40BDC343A1D4BC3ECAE4,
 				6473423F9D9B6609A7E7CF34,
 				32A76BC3B9F9F9A54C90F1DF,
@@ -1374,6 +1460,8 @@
 				67AEC07D6CE2F403F29E3F26,
 				F255DE17689B1E92A71343CC,
 				77B52490110FE8EBF1788B6B,
+				74BDD1BD8AB4A5E8FD47D3EC,
+				77603789CA3C43009F7FD02A,
 				2A0748C3ECE2F43F60C40519,
 				81ABF2E66B63609997E286D0,
 				8DCEEC5645B81E8EB4D9429A,
@@ -1423,6 +1511,7 @@
 				A281C318F8D240E12CC0C7B0,
 				FBAB5D799BEA3DB15F4D38CA,
 				ADE00A7D402C7A7D03CB25FF,
+				68682FB887B44AE8A5C28C93,
 				AC7EDBCB0D483DA6A0076FBD,
 				03C6167E6D2591583BF0776A,
 				55524C2E69218A31A30DFD4C,
@@ -1436,6 +1525,8 @@
 				1A3929FDEF12C0EAF6E47134,
 				2EDCB71A43CC86E2AA718EDC,
 				E65D105A94173AA7DB7AE426,
+				3232F8C63A14E0D7431C995D,
+				A4D30E04D49E6CBD7FE5B27E,
 				B6DF75F0A1FC925310CA8CD9,
 				FC4EFA2CB4EB182D148F55A5,
 				813ABA0386970328A95878B2,
@@ -1477,8 +1568,8 @@
 				"SWIFT_VERSION" = "6.0";
 				"SWIFT_STRICT_CONCURRENCY" = "complete";
 				"IPHONEOS_DEPLOYMENT_TARGET" = "17.0";
-				"MARKETING_VERSION" = "0.6.0";
-				"CURRENT_PROJECT_VERSION" = "8";
+				"MARKETING_VERSION" = "0.7.0";
+				"CURRENT_PROJECT_VERSION" = "9";
 				"DEVELOPMENT_TEAM" = "";
 				"SDKROOT" = "iphoneos";
 				"CLANG_ENABLE_MODULES" = "YES";
@@ -1524,8 +1615,8 @@
 				"SWIFT_VERSION" = "6.0";
 				"SWIFT_STRICT_CONCURRENCY" = "complete";
 				"IPHONEOS_DEPLOYMENT_TARGET" = "17.0";
-				"MARKETING_VERSION" = "0.6.0";
-				"CURRENT_PROJECT_VERSION" = "8";
+				"MARKETING_VERSION" = "0.7.0";
+				"CURRENT_PROJECT_VERSION" = "9";
 				"DEVELOPMENT_TEAM" = "";
 				"SDKROOT" = "iphoneos";
 				"CLANG_ENABLE_MODULES" = "YES";

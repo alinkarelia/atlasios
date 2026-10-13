@@ -25,6 +25,7 @@ extension ProjectKind {
 struct ProjectsScreen: View {
     @ObservedObject var model: AtlasAppModel
     @State private var showCreate = false
+    @State private var showPlanImport = false
     @State private var summary: ProjectSummary?
 
     private struct ProjectSummary {
@@ -145,12 +146,17 @@ struct ProjectsScreen: View {
         .toolbarBackground(Color.atlasCanvas, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button("План команды", systemImage: "square.and.arrow.down") { showPlanImport = true }
+                    .accessibilityIdentifier("projects.importTeamPlan")
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Новый проект", systemImage: "plus") { showCreate = true }
                     .accessibilityIdentifier(model.selectedProject == nil ? "projects.createToolbar" : "projects.create")
             }
         }
         .sheet(isPresented: $showCreate) { CreateProjectScreen(model: model) }
+        .sheet(isPresented: $showPlanImport) { CollaborativePlanImportScreen(model: model) }
         .task(id: model.selectedProject?.id) { await refreshSummary() }
     }
 

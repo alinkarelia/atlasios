@@ -953,7 +953,8 @@ final class AtlasUITests: XCTestCase {
         }
         field.typeText(value)
         if app.keyboards.firstMatch.exists {
-            let doneIDs = ["measurement.editor.keyboardDone", "emptyRoom.review.keyboardDone", "stations.manual.keyboardDone"]
+            let doneIDs = ["measurement.editor.keyboardDone", "emptyRoom.review.keyboardDone", "stations.manual.keyboardDone",
+                           "collaboration.setup.keyboardDone", "collaboration.cell.keyboardDone"]
             let done = doneIDs.map { element($0, in: app) }.first { $0.exists && $0.isHittable }
             XCTAssertNotNil(done, "Text entry must provide a visible keyboard completion action")
             done?.tap()
@@ -1167,6 +1168,120 @@ final class AtlasUITests: XCTestCase {
         XCTAssertTrue(element("emptyRoom.surface.C0610000-1234-4000-8000-000000000101", in: app).label.hasPrefix("D ·"),
                       "A manual cabinet door must not overwrite the original room-door classification")
         XCTAssertTrue(door.label.replacingOccurrences(of: ",", with: ".").contains("0.880"), "The attached control journal must persist across restart")
+    }
+
+    @MainActor
+    func testTeamPlanCreatesFiveRealAssignmentsAndPersistsTheExplicitWorkerSelection() {
+        let app = launch(seedCemetery: true)
+        XCTAssertTrue(app.staticTexts["Демо · полевое обследование"].firstMatch.waitForExistence(timeout: 15))
+        tap("projects.openSelected", in: app)
+        revealWholeControl(element("projects.collaborativeSurvey", in: app), in: app)
+        tap("projects.collaborativeSurvey", in: app)
+        XCTAssertTrue(element("collaboration.create", in: app).waitForExistence(timeout: 15))
+        tap("collaboration.create", in: app)
+        let boundary = element("collaboration.setup.boundary", in: app)
+        revealWholeControl(boundary, in: app)
+        boundary.tap()
+        let boundaryChoice = app.buttons["Учебное кладбище"].firstMatch
+        XCTAssertTrue(boundaryChoice.waitForExistence(timeout: 10), "The original geographic polygon must be selectable")
+        boundaryChoice.tap()
+        let count = element("collaboration.setup.count", in: app)
+        XCTAssertTrue(count.label.contains("5"), "The tested plan must actually contain five workers")
+        enter("Специалист QA", identifier: "collaboration.setup.name.0", in: app)
+        enter("20", identifier: "collaboration.setup.cellSize", in: app)
+        revealWholeControl(element("collaboration.setup.preview", in: app), in: app)
+        tap("collaboration.setup.preview", in: app)
+        XCTAssertTrue(app.navigationBars["Проверка участков"].waitForExistence(timeout: 30),
+                      "Planning must finish on the actual boundary and show a review before saving")
+        XCTAssertTrue(element("collaboration.canvas", in: app).exists)
+        screenshot("33-team-planning", app: app)
+        revealWholeControl(element("collaboration.confirmPlan", in: app), in: app)
+        tap("collaboration.confirmPlan", in: app)
+        XCTAssertTrue(element("collaboration.summary", in: app).waitForExistence(timeout: 20))
+        let worker = element("collaboration.worker", in: app)
+        revealWholeControl(worker, in: app)
+        revealWholeControl(element("collaboration.guidance.start", in: app), in: app)
+        XCTAssertTrue(element("collaboration.guidance.start", in: app).exists)
+        XCTAssertFalse(element("collaboration.guidance.start", in: app).isEnabled,
+                       "A new phone must explicitly choose a worker before GPS guidance")
+        revealWholeControl(worker, in: app, towardTopWhenMissing: true)
+        worker.tap()
+        let chosenWorker = app.buttons["Специалист QA"].firstMatch
+        XCTAssertTrue(chosenWorker.waitForExistence(timeout: 10)); chosenWorker.tap()
+        revealWholeControl(element("collaboration.guidance.start", in: app), in: app)
+        XCTAssertTrue(element("collaboration.guidance.start", in: app).isEnabled,
+                      "The chosen worker must affect the real plan, without starting sensors automatically")
+        revealWholeControl(element("collaboration.cells", in: app), in: app, towardTopWhenMissing: true)
+        tap("collaboration.cells", in: app)
+        let firstCell = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "collaboration.cell.r")).firstMatch
+        XCTAssertTrue(firstCell.waitForExistence(timeout: 10), "The selected worker must own actual planned cells")
+        let selectedCellIdentifier = firstCell.identifier
+        firstCell.tap()
+        XCTAssertTrue(element("collaboration.cell.owner", in: app).waitForExistence(timeout: 10))
+        XCTAssertEqual(element("collaboration.cell.owner", in: app).label, "Назначено: Специалист QA")
+        XCTAssertTrue(element("collaboration.cell.coverage", in: app).label.contains("Без материалов"),
+                      "Planning alone must never manufacture observed or verified capture coverage")
+        screenshot("34-team-coverage", app: app)
+        revealWholeControl(element("collaboration.cell.attach", in: app), in: app)
+        XCTAssertFalse(element("collaboration.cell.attach", in: app).isEnabled,
+                       "A cell cannot claim a capture without a real project source file")
+        revealWholeControl(element("collaboration.cell.verify", in: app), in: app)
+        XCTAssertFalse(element("collaboration.cell.verify", in: app).isEnabled,
+                       "A cell cannot be verified without reviewed usable capture evidence")
+        revealWholeControl(element("collaboration.cell.walk", in: app), in: app)
+        XCTAssertFalse(element("collaboration.cell.walk", in: app).isEnabled,
+                       "Opening a cell must not invent a fresh GPS observation")
+        app.terminate(); app.launch()
+        XCTAssertTrue(app.staticTexts["Демо · полевое обследование"].firstMatch.waitForExistence(timeout: 15))
+        tap("projects.openSelected", in: app)
+        revealWholeControl(element("projects.collaborativeSurvey", in: app), in: app)
+        tap("projects.collaborativeSurvey", in: app)
+        XCTAssertTrue(element("collaboration.summary", in: app).waitForExistence(timeout: 20),
+                      "The same durable shared plan must survive process restart")
+        revealWholeControl(element("collaboration.worker", in: app), in: app)
+        let restoredWorker = element("collaboration.worker", in: app)
+        XCTAssertTrue(restoredWorker.label.contains("Специалист QA") || (restoredWorker.value as? String)?.contains("Специалист QA") == true,
+                      "The explicit worker identity must remain device-local and persist")
+        revealWholeControl(element("collaboration.cells", in: app), in: app, towardTopWhenMissing: true)
+        tap("collaboration.cells", in: app)
+        XCTAssertTrue(element(selectedCellIdentifier, in: app).waitForExistence(timeout: 10),
+                      "Planning must restore the same cell identifiers and allocation")
+    }
+
+    @MainActor
+    func testFragmentAssemblyRequiresActualScansAndTeamImportUsesTheNativeChooser() {
+        let app = launch()
+        let name = createProject(in: app)
+        tap("projects.openSelected", in: app)
+        revealWholeControl(element("projects.fragmentAssembly", in: app), in: app)
+        tap("projects.fragmentAssembly", in: app)
+        XCTAssertTrue(element("assembly.emptyState", in: app).waitForExistence(timeout: 15))
+        XCTAssertFalse(element("assembly.exportAligned", in: app).exists,
+                       "An empty project must never offer a made-up assembled mesh")
+        revealWholeControl(element("assembly.guide", in: app), in: app)
+        XCTAssertTrue(element("assembly.guide", in: app).label.contains("не менее трёх"),
+                      "The workflow must explain independent controls and a separate check point")
+        screenshot("35-fragment-assembly", app: app)
+        let back = app.navigationBars["Сборка фрагментов"].buttons.firstMatch
+        XCTAssertTrue(back.isHittable); back.tap()
+        XCTAssertTrue(app.navigationBars[name].firstMatch.waitForExistence(timeout: 10))
+        app.navigationBars[name].buttons.firstMatch.tap()
+        tap("projects.importTeamPlan", in: app)
+        XCTAssertTrue(app.navigationBars["План команды"].waitForExistence(timeout: 10))
+        XCTAssertTrue(element("teamPlan.chooseFile", in: app).isEnabled)
+        XCTAssertFalse(element("teamPlan.acceptImport", in: app).exists,
+                       "Import must not activate a project before a valid file is selected and checked")
+        screenshot("36-team-import", app: app)
+        tap("teamPlan.chooseFile", in: app)
+        let cancel = app.buttons.matching(NSPredicate(format: "label IN %@", ["Cancel", "Отменить", "Отмена"])).firstMatch
+        XCTAssertTrue(cancel.waitForExistence(timeout: 15), "The real native Files chooser must open")
+        XCTAssertTrue(cancel.isHittable); cancel.tap()
+        XCTAssertTrue(element("teamPlan.chooseFile", in: app).waitForExistence(timeout: 10))
+        XCTAssertFalse(element("teamPlan.acceptImport", in: app).exists,
+                       "Cancelling file selection must leave the import uncommitted")
+        app.navigationBars["План команды"].buttons["Закрыть"].tap()
+        XCTAssertTrue(element("projects.openSelected", in: app).waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts[name].firstMatch.exists, "Cancelled import must retain the selected original project")
     }
 
     @MainActor

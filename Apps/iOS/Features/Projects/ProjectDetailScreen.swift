@@ -56,6 +56,14 @@ struct ProjectDetailScreen: View {
             }.listRowBackground(Color.atlasCard)
             Section("Работа с объектом") {
                 NavigationLink {
+                    CollaborativeSurveyScreen(model: model, project: project)
+                } label: { Label("Участки команды и покрытие", systemImage: "person.3.sequence") }
+                    .accessibilityIdentifier("projects.collaborativeSurvey")
+                NavigationLink {
+                    FragmentAssemblyScreen(model: model, project: project)
+                } label: { Label("Совместить фрагменты LiDAR", systemImage: "square.3.layers.3d") }
+                    .accessibilityIdentifier("projects.fragmentAssembly")
+                NavigationLink {
                     TourScreen(model: model, project: project)
                 } label: { Label("Прогулка · фото и карточки", systemImage: "figure.walk") }
                     .accessibilityIdentifier("projects.tour")

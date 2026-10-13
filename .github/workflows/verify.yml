@@ -83,6 +83,9 @@ jobs:
           bash Apps/iOS/Features/Projects/Tests/checks.sh
           bash Apps/iOS/Features/Projects/Tests/measurement-journal-checks.sh
           bash Apps/iOS/Adapters/Tests/checks.sh
+          bash Apps/iOS/Adapters/Tests/fragment-assembly-checks.sh
+          bash Apps/iOS/Adapters/Tests/collaborative-survey-checks.sh
+          bash Apps/iOS/Adapters/Tests/collaboration-export-checks.sh
           python3 Apps/iOS/Adapters/Tests/check-lidar-overlay.py
           bash Apps/iOS/Adapters/Tests/mesh-export-checks.sh
           bash Apps/iOS/Adapters/Tests/check-field-assembler.sh
@@ -212,8 +215,8 @@ jobs:
           root = Path('artifacts/runtime')
           summary = json.loads((root / 'diagnostics/test-summary.json').read_text())
           total = summary.get('totalTestCount', 0)
-          if total < 16 or summary.get('passedTests') != total or summary.get('result') != 'Passed':
-              raise SystemExit('Full UI verification requires all sixteen passing tests, including fieldwork, identity, floor grouping and dimension pixels.')
+          if total < 18 or summary.get('passedTests') != total or summary.get('result') != 'Passed':
+              raise SystemExit('Full UI verification requires all eighteen passing tests, including fieldwork, identity, floor grouping and dimension pixels.')
           if any(summary.get(field, 0) != 0 for field in ('failedTests', 'skippedTests', 'expectedFailures')):
               raise SystemExit('UI verification contains failed, skipped, or expected-failure tests.')
           selection = json.loads((root / 'simulator-selection.json').read_text())
@@ -237,6 +240,8 @@ jobs:
               '25-survey-stations_', '26-survey-boundary_',
               '27-opening-measurement_', '28-measurement-journal_',
               '29-surface-classification_', '30-cabinet-door-review_',
+              '33-team-planning_', '34-team-coverage_',
+              '35-fragment-assembly_', '36-team-import_',
           }
           found = set()
           for entry in manifest:

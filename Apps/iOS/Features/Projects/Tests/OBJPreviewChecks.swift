@@ -24,13 +24,29 @@ import simd
             }
             throw Failure(message: "Expected rejection")
         }
-        try write("# Atlas ARKit mesh. metres. Y up. local frame test\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3")
+        let frame = UUID()
+        let triangle = "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3"
+        try write("# Atlas ARKit mesh. metres. Y up. local frame \(frame.uuidString)\n" + triangle)
         let payload = try OBJPreviewLoader.load(url)
         try check(payload.vertexCount == 3 && payload.triangleCount == 1 && payload.isAtlasCapture, "Capture metadata and actual counts")
+        try check(payload.declaredMetricFrame?.frameID == frame && payload.declaredMetricFrame?.origin == .arKitOriginal,
+                  "An original declaration retains its actual frame")
         try check(payload.positions.count == 36 && payload.normals.count == 36 && payload.indices.count == 12, "Geometry buffer lengths")
         try check(payload.minimum == SIMD3<Float>(0, 0, 0) && payload.maximum == SIMD3<Float>(1, 1, 0), "Actual bounds")
         let zNormal = payload.normals.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: 8, as: Float.self) }
         try check(zNormal == 1, "Computed triangle normal")
+        try write("# TerraView aligned fragment derivative. metres. Y up. local frame \(frame.uuidString)\n" + triangle)
+        let derivative = try OBJPreviewLoader.load(url)
+        try check(!derivative.isAtlasCapture && derivative.declaredMetricFrame?.origin == .alignedDerivative
+                  && derivative.declaredMetricFrame?.frameID == frame, "Derivative has declared metric frame, not original-capture provenance")
+        try check(derivative.positions == payload.positions && derivative.indices == payload.indices && derivative.normals == payload.normals,
+                  "Derivative metadata does not reapply registration or change stored geometry")
+        try write("# TerraView aligned fragment derivative. metres. Y up. local frame invalid\n" + triangle)
+        try check(try OBJPreviewLoader.load(url).declaredMetricFrame == nil, "Malformed derivative frame cannot declare local metres")
+        try write("# Atlas ARKit mesh. metres. Y up. local frame invalid\n" + triangle)
+        try check(try !OBJPreviewLoader.load(url).isAtlasCapture, "Malformed original frame cannot certify capture metadata")
+        try write("# metres. Y up. local frame \(frame.uuidString)\n" + triangle)
+        try check(try OBJPreviewLoader.load(url).declaredMetricFrame == nil, "Unrecognized external OBJ comments retain unknown scale")
         try write("v 0 0 0\nv 1 0 0\nv 0 1 0\nf -3/1/1 -2//1 -1/3/1\n")
         let relative = try OBJPreviewLoader.load(url)
         try check(relative.vertexCount == 3 && relative.triangleCount == 1 && !relative.isAtlasCapture, "Relative/slash OBJ indices")

@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+test_directory="$(cd "$(dirname "$0")" && pwd)"
+repository_directory="$(cd "$test_directory/../../../.." && pwd)"
+checks_directory="$(mktemp -d -t terraview-fragment-assembly.XXXXXX)"
+trap 'rm -rf "$checks_directory"' EXIT
+swift_command="${SWIFT:-swift}"
+python3 - "$checks_directory" "$repository_directory" <<'PY'
+import json, pathlib, shutil, sys
+scratch, repository = map(pathlib.Path, sys.argv[1:])
+sources = scratch / 'Sources' / 'Checks'
+sources.mkdir(parents=True)
+dependency = json.dumps(str(repository / 'Packages' / 'AtlasCore'), ensure_ascii=False)
+(scratch / 'Package.swift').write_text('''// swift-tools-version: 6.0
+import PackageDescription
+let package = Package(name: "FragmentNativeChecks", dependencies: [.package(path: ''' + dependency + ''')], targets: [.executableTarget(name: "Checks", dependencies: [.product(name: "AtlasCore", package: "AtlasCore")])], swiftLanguageModes: [.v6])
+''')
+for relative in [
+    'Apps/iOS/Adapters/FragmentAssemblyStore.swift',
+    'Apps/iOS/Adapters/FragmentMeshAssemblyExporter.swift',
+    'Apps/iOS/Features/Projects/OBJPreviewLoader.swift',
+    'Apps/iOS/Adapters/Tests/FragmentAssemblyChecks.swift',
+]:
+    shutil.copyfile(repository / relative, sources / pathlib.Path(relative).name)
+PY
+"$swift_command" run --package-path "$checks_directory" --scratch-path "$checks_directory/build" Checks
