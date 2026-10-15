@@ -23,7 +23,7 @@ struct TeamCommunicationScreen: View {
                     }
                 }.padding(.vertical, 5)
             }.listRowBackground(Color.atlasCard)
-            destinationSection(title: "Семейный архив", hint: "HTTPS-ссылка на архив «Живая память» или ваше рабочее пространство",
+            destinationSection(title: "Семейный архив: Живая память", hint: "HTTPS-ссылка на платформу «Семейный архив: Живая память» или рабочее пространство",
                 symbol: "books.vertical", address: $archiveAddress, identifier: "communication.archive",
                 openTitle: "Открыть архив")
             destinationSection(title: "Рабочий чат", hint: "HTTPS-ссылка на чат, где команда обсуждает проект",

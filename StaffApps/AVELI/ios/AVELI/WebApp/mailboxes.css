@@ -1,0 +1,64 @@
+.mailbox-switcher { min-height: 58px; }
+.mailbox-switcher .avatar, .mailbox-team-avatar { flex-shrink: 0; }
+.mailbox-switch-copy { min-width: 0; }
+.mailbox-switch-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 137px; }
+.mailbox-team-avatar { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 10px; color: var(--accent-text); background: var(--accent-soft); }
+.mailbox-picker-description { margin: 0 0 18px; color: var(--text-secondary); font-size: 15px; }
+.mailbox-picker-list { display: grid; gap: 10px; }
+.mailbox-choice { display: flex; align-items: center; gap: 13px; width: 100%; text-align: left; border: 1px solid var(--line); border-radius: 13px; padding: 15px; background: var(--surface); }
+.mailbox-choice:hover { background: var(--surface-hover); border-color: var(--line-strong); }
+.mailbox-choice.selected { border-color: var(--accent-text); background: var(--accent-soft); }
+.mailbox-choice .avatar, .mailbox-choice .mailbox-team-avatar { width: 42px; height: 42px; border-radius: 11px; }
+.mailbox-choice-copy { min-width: 0; flex: 1; }
+.mailbox-choice-copy strong { display: block; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+.mailbox-choice-copy > span { display: block; margin-top: 2px; color: var(--text-secondary); font-size: 14px; overflow-wrap: anywhere; }
+.mailbox-choice-copy small { display: block; margin-top: 5px; color: var(--muted); font-size: 12px; }
+.mailbox-choice.selected .mailbox-choice-copy small { color: var(--text-secondary); }
+.mailbox-choice-status { color: var(--muted); }
+.mailbox-choice.selected .mailbox-choice-status { color: var(--accent-text); }
+.mailbox-picker-domain { display: flex; align-items: center; gap: 8px; padding: 15px 0 0; color: var(--text-secondary); font-size: 14px; }
+.mailbox-picker-domain strong { font-weight: 600; color: var(--text); }
+.mailbox-picker-identity { margin: 12px 0 18px; font-size: 14px; line-height: 1.7; color: var(--muted); }
+.mailbox-manage-access { width: 100%; justify-content: center; }
+.mailbox-access-settings > .muted { margin-bottom: 19px; }
+.mailbox-access-members { margin: 0; padding: 0; border: 0; display: grid; gap: 8px; }
+.mailbox-access-member { display: flex; align-items: center; gap: 11px; padding: 11px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-soft); cursor: pointer; }
+.mailbox-access-member:hover { border-color: var(--line-strong); }
+.mailbox-access-member:has(input:checked) { border-color: var(--accent-text); }
+.mailbox-access-member input { flex-shrink: 0; }
+.mailbox-access-member .avatar { width: 30px; height: 30px; border-radius: 8px; font-size: 12px; }
+.mailbox-access-member > span:last-child { min-width: 0; }
+.mailbox-access-member strong { display: block; font-size: 14px; font-weight: 500; }
+.mailbox-access-member small { display: block; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.mailbox-access-description { margin: 15px 0; font-size: 14px; line-height: 1.8; color: var(--muted); }
+.mailbox-access-settings .form-actions { flex-wrap: wrap; gap: 7px; }
+.mailbox-access-settings .settings-note { margin-top: 20px; }
+@media (max-width: 480px) {
+  .mailbox-choice { padding: 12px; gap: 10px; }
+  .mailbox-choice-copy strong { font-size: 14px; }
+  .mailbox-choice-copy > span { font-size: 14px; }
+  .mailbox-choice .avatar, .mailbox-choice .mailbox-team-avatar { width: 36px; height: 36px; }
+  .mailbox-access-settings .form-actions .button { width: 100%; justify-content: center; }
+}
+
+/* Mailbox switching is an identity decision: show address and permissions. */
+.mailbox-switcher { min-height:72px; border-radius:14px; }
+.mailbox-switch-copy small { max-width:none; font-size:12px; }
+.mailbox-choice { padding:18px; gap:14px; border-radius:18px; min-height:86px; touch-action:manipulation; }
+.mailbox-choice:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+.mailbox-choice .avatar,.mailbox-choice .mailbox-team-avatar { width:46px; height:46px; border-radius:14px; }
+.mailbox-choice-copy strong { font-size:16px; line-height:1.5; }
+.mailbox-choice-copy > span { font-size:14px; line-height:1.5; }
+.mailbox-choice-copy small { font-size:12px; line-height:1.6; }
+.mailbox-choice-status { flex-shrink:0; }
+.mailbox-picker-description { font-size:15px; line-height:1.7; }
+.mailbox-picker-domain { font-size:14px; flex-wrap:wrap; }
+.mailbox-picker-identity,.mailbox-access-description { font-size:13px; line-height:1.7; }
+.mailbox-access-member { border-radius:14px; padding:14px; gap:12px; min-height:72px; }
+.mailbox-access-member input { width:20px; height:20px; }
+.mailbox-access-member .avatar { width:36px; height:36px; border-radius:11px; font-size:12px; }
+.mailbox-access-member strong { font-size:15px; }
+.mailbox-access-member small { font-size:13px; line-height:1.5; }
+.mailbox-access-settings .form-actions { gap:10px; }
+.mailbox-access-settings .button,.mailbox-manage-access { min-height:46px; font-size:14px; }
+@media(max-width:480px) { .mailbox-choice { padding:14px; gap:11px; } .mailbox-choice-copy strong { font-size:15px; } .mailbox-choice-copy > span { font-size:13px; } .mailbox-choice .avatar,.mailbox-choice .mailbox-team-avatar { width:40px; height:40px; flex-shrink:0; } }

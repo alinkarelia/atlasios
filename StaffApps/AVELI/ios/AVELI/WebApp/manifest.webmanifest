@@ -1,0 +1,37 @@
+{
+  "id": "/",
+  "name": "AVELI",
+  "short_name": "AVELI",
+  "description": "Workspace by Семейный архив: Живая память. Mail · Chat · Cloud · AI.",
+  "lang": "ru",
+  "dir": "ltr",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#10151c",
+  "theme_color": "#10151c",
+  "categories": [
+    "productivity",
+    "communication"
+  ],
+  "icons": [
+    {
+      "src": "/app-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/app-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/app-icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

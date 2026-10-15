@@ -33,7 +33,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
     @Published private(set) var scanGuidance = "Покажите стену или предмет с расстояния 0,5–3 м"
     @Published private(set) var guidanceNeedsAttention = false
     @Published var showRecordedSurfaces = true {
-        didSet { recordedSurfaceRoot?.isEnabled = showRecordedSurfaces }
+        didSet { refreshRecordedSurfaceVisibility() }
     }
     @Published private(set) var anchorCount = 0
     @Published private(set) var triangleCount = 0
@@ -98,6 +98,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
     private let meshProcessor = MeshCheckpointProcessor()
     private var meshTasks: [UUID: Task<Void, Never>] = [:]
     private var meshGeneration = UUID()
+    private var visualAdmission = CaptureVisualAdmission()
     private var totalTriangles = 0
     private var totalSurfaceArea: Double = 0
     private var lastMetricPublication: TimeInterval = 0
@@ -166,6 +167,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
     /// A visible camera preview has no writer and stores no scan geometry.
     /// Starting a scan resets its own independent, durable coordinate frame.
     func preparePreview() async {
+        guard StaffWorkAccess.allowed() else { cameraStatus = StaffAccessError.needsLocation.localizedDescription; return }
         guard Self.isSupported, state == .ready || state == .saved,
               !isPreviewing, !isPreparingPreview, !Task.isCancelled else { return }
         let ticket = UUID(); startGeneration = ticket
@@ -180,6 +182,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
             let view = arView
             try await Self.waitForCameraPresentation(view)
             guard ticket == startGeneration, !Task.isCancelled else { return }
+            try StaffWorkAccess.require()
             let config = ARWorldTrackingConfiguration()
             config.worldAlignment = .gravity
             config.environmentTexturing = .none
@@ -198,6 +201,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
 
     func suspendPreview() {
         guard isPreviewing || isPreparingPreview else { return }
+        suspendVisualPresentation()
         startGeneration = UUID()
         isPreviewing = false; isPreparingPreview = false
         cameraWatchdog?.cancel(); cameraWatchdog = nil
@@ -282,6 +286,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
     }
 
     func start(projectID: UUID, projectName: String, outputDirectory: URL) async {
+        guard StaffWorkAccess.allowed(projectID:projectID) else { errorMessage = StaffAccessError.needsLocation.localizedDescription; return }
         guard state == .ready || state == .saved else { return }
         guard !Task.isCancelled else { return }
         guard Self.isSupported else { state = .unavailable; return }
@@ -334,6 +339,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
             needsNewFrame = false
             isPreviewing = false
             resetCameraReadiness(clearRecordedSurfaces: true)
+            guard StaffWorkAccess.allowed(projectID:projectID) else { state = .ready; throw StaffAccessError.needsLocation }
             state = .recording
             beginSegmentVideo()
             view.session.run(configuration(), options: [.resetTracking, .removeExistingAnchors])
@@ -371,11 +377,13 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
 
     func pause(reason: String? = nil) {
         guard state == .recording else { return }
+        suspendVisualPresentation()
         cameraView?.session.pause()
         cameraWatchdog?.cancel(); cameraWatchdog = nil
         fragmentClock.pause()
         fragmentElapsedSeconds = fragmentClock.elapsedSeconds
         state = .paused
+        refreshRecordedSurfaceVisibility()
         isCameraReady = false
         cameraStatus = "Камера на паузе"
         isTrackingNormal = false
@@ -393,6 +401,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
     }
 
     func resume() async {
+        guard StaffWorkAccess.allowed(projectID:manifest?.projectID) else { errorMessage = StaffAccessError.needsLocation.localizedDescription; return }
         guard !isResuming, state == .paused || state == .interrupted, var current = manifest, let writer else { return }
         guard Self.isSupported else { errorMessage = CaptureError.lidarUnsupported.localizedDescription; return }
         isResuming = true
@@ -405,6 +414,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
             let view = arView
             try await Self.waitForCameraPresentation(view)
             guard generation == startGeneration, !Task.isCancelled else { return }
+            try StaffWorkAccess.require(projectID:current.projectID)
             if let directory = captureDirectory { availableDiskBytes = try Self.preflight(at: directory).diskBytes }
             if needsNewFrame {
                 for task in Array(meshTasks.values) { await task.value }
@@ -433,6 +443,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
                 anchorCount = 0; triangleCount = 0; observedSurfaceArea = 0
                 segmentCount = current.segments.count
                 resetFragmentClock(id: newSegment.id)
+                try StaffWorkAccess.require(projectID:current.projectID)
                 arView.session.run(configuration(), options: [.resetTracking, .removeExistingAnchors])
                 provisionalSegmentID = nil
                 trackingMessage = "Новый фрагмент. Его координаты требуют отдельного совмещения"
@@ -479,6 +490,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
             throw CaptureError.noCapture
         }
         // A concurrent pending resume must not run its camera after Save.
+        suspendVisualPresentation()
         startGeneration = UUID()
         cameraView?.session.pause()
         cameraWatchdog?.cancel(); cameraWatchdog = nil
@@ -492,6 +504,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
         }
         manifest = current
         state = .exporting
+        refreshRecordedSurfaceVisibility()
         isCameraReady = false
         cameraStatus = "Сохраняем модель"
         isTrackingNormal = false
@@ -528,6 +541,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
     }
 
     func suspendForDismissal() {
+        suspendVisualPresentation(hideExisting: true)
         cancelPendingStart()
         if state == .recording { interrupt(reason: "Приложение свернуто. Сохранён отдельный фрагмент") }
         suspendPreview()
@@ -567,6 +581,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
 
     private func interrupt(reason: String) {
         guard state == .recording || state == .paused else { return }
+        suspendVisualPresentation(hideExisting: true)
         cameraView?.session.pause()
         cameraWatchdog?.cancel(); cameraWatchdog = nil
         fragmentClock.pause()
@@ -584,15 +599,18 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
     }
 
     func session(_ session: ARSession, didAdd anchors: [ARAnchor]) {
+        observeVisualAnchors(anchors)
         updatePlaneBoundaries(anchors)
         consume(anchors)
     }
     func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) {
+        observeVisualAnchors(anchors)
         updatePlaneBoundaries(anchors)
         consume(anchors)
     }
     func session(_ session: ARSession, didRemove anchors: [ARAnchor]) {
         for anchor in anchors {
+            visualAdmission.remove(anchorID: anchor.identifier)
             planeBoundaries[anchor.identifier] = nil
             if let removed = surfaceOverlays.removeValue(forKey: anchor.identifier) {
                 removed.entity.removeFromParent()
@@ -685,6 +703,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
             trackingMessage = "Трекинг стабилен · медленно обойдите объект"
         case .notAvailable:
             isTrackingNormal = false
+            suspendVisualPresentation(hideExisting: true)
             // Initial ARKit startup can report notAvailable before initializing.
             // Pausing here used to prevent the first camera frame altogether.
             if hadStableTracking, state == .recording {
@@ -692,6 +711,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
             } else { trackingMessage = "Запускаем трекинг. Плавно двигайте телефон" }
         case let .limited(reason):
             isTrackingNormal = false
+            suspendVisualPresentation(hideExisting: true)
             switch reason {
             case .initializing: trackingMessage = "Плавно двигайте телефон для начала трекинга"
             case .excessiveMotion: trackingMessage = "Двигайтесь медленнее"
@@ -720,10 +740,21 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
     }
 
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
+        guard StaffWorkAccess.allowed(projectID:manifest?.projectID) else {
+            suspendForDismissal(); cameraStatus = StaffAccessError.needsLocation.localizedDescription; return
+        }
         guard state == .recording || isPreviewing else { return }
         let now = ProcessInfo.processInfo.systemUptime
         // A cached frame must never mark a frozen/black session as ready.
         guard now - frame.timestamp < 1.5 else { return }
+        if state == .recording, isTrackingNormal,
+           case .normal = frame.camera.trackingState,
+           UIApplication.shared.applicationState == .active {
+            visualAdmission.activate()
+            refreshRecordedSurfaceVisibility()
+        } else if state == .recording {
+            suspendVisualPresentation(hideExisting: true)
+        }
         lastFrameAt = now
         receivedFrameCount += 1
         if state == .recording, let fragmentMinimumTimestamp, frame.timestamp >= fragmentMinimumTimestamp {
@@ -777,6 +808,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
     }
 
     private func resetCameraReadiness(clearRecordedSurfaces: Bool = false) {
+        suspendVisualPresentation(hideExisting: true)
         cameraWatchdog?.cancel(); cameraWatchdog = nil
         lastFrameAt = nil; receivedFrameCount = 0; lastFramePublication = 0
         cameraFrameCount = 0; isCameraReady = false; isTrackingNormal = false
@@ -870,6 +902,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
     }
 
     private func clearSurfaceOverlays() {
+        visualAdmission.reset()
         if let root = recordedSurfaceRoot { cameraView?.scene.removeAnchor(root) }
         recordedSurfaceRoot = nil; surfaceOverlays.removeAll()
         lastSurfaceBiasPublication = 0
@@ -880,6 +913,24 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
         let triangles = surfaceOverlays.values.reduce(0) { $0 + $1.triangleCount }
         if overlayTriangleCount != triangles { overlayTriangleCount = triangles }
         if overlayAnchorCount != surfaceOverlays.count { overlayAnchorCount = surfaceOverlays.count }
+    }
+
+    private func observeVisualAnchors(_ anchors: [ARAnchor]) {
+        guard state == .recording else { return }
+        for anchor in anchors where anchor is ARMeshAnchor {
+            visualAdmission.observe(anchorID: anchor.identifier)
+        }
+    }
+
+    private func suspendVisualPresentation(hideExisting: Bool = false) {
+        visualAdmission.suspend()
+        if hideExisting { recordedSurfaceRoot?.isEnabled = false }
+    }
+
+    private func refreshRecordedSurfaceVisibility() {
+        let reviewing = state == .paused || state == .saved || state == .exporting
+        let live = state == .recording && isTrackingNormal && visualAdmission.isActive
+        recordedSurfaceRoot?.isEnabled = showRecordedSurfaces && (reviewing || live)
     }
 
     /// Updating tiny fill translations avoids stale depth bias when the
@@ -898,9 +949,11 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
 
     /// Visualization is deliberately bounded independently of source storage.
     /// It never deletes or decimates the durable OBJ/checkpoint geometry.
-    private func showCommittedSurface(_ overlay: MeshSurfaceOverlay, anchorID: UUID) {
-        guard let view = cameraView, view.window != nil,
+    private func showCommittedSurface(_ overlay: MeshSurfaceOverlay, ticket: CaptureVisualAdmission.Ticket) {
+        guard state == .recording, isTrackingNormal, visualAdmission.admits(ticket),
+              let view = cameraView, view.window != nil,
               UIApplication.shared.applicationState == .active, !overlay.groups.isEmpty else { return }
+        let anchorID = ticket.anchorID
         let position = view.session.currentFrame?.camera.transform.columns.3 ?? SIMD4<Float>(0, 0, 0, 1)
         let camera = SIMD3(position.x, position.y, position.z)
         guard simd_distance(overlay.center, camera) < 6 else { return }
@@ -980,7 +1033,7 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
     }
 
     private func consume(_ anchors: [ARAnchor]) {
-        guard state == .recording, isTrackingNormal,
+        guard StaffWorkAccess.allowed(projectID:manifest?.projectID), state == .recording, isTrackingNormal,
               let segment = manifest?.segments.last, let writer else { return }
         let now = ProcessInfo.processInfo.systemUptime
         let ticket = meshGeneration
@@ -992,11 +1045,14 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
                   let raw = MeshBufferSnapshot.copy(mesh, segmentID: segment.id) else { continue }
             lastSnapshotTimes[mesh.identifier] = now
             let identifier = mesh.identifier
+            let visualTicket = visualAdmission.issue(anchorID: identifier)
             let processor = meshProcessor
             meshTasks[identifier] = Task { @MainActor [weak self] in
                 defer { self?.meshTasks[identifier] = nil }
                 guard let snapshot = await processor.process(raw), let self,
                       self.meshGeneration == ticket else { return }
+                // Visual admission can expire while processing; durable source
+                // processing/persistence still completes independently.
                 let overlay = await processor.surfaceOverlay(snapshot, classifications: snapshot.classifications,
                     floorCode: UInt8(ARMeshClassification.floor.rawValue), ceilingCode: UInt8(ARMeshClassification.ceiling.rawValue))
                 guard self.meshGeneration == ticket else { return }
@@ -1008,10 +1064,17 @@ final class CaptureCoordinator: NSObject, ObservableObject, @preconcurrency ARSe
                 let save = Task { @MainActor [weak self] in
                     if let previous { await previous.value }
                     do {
-                        try await writer.persist(snapshot)
+                        try await CaptureVisualCommit.persist(write: {
+                            try await writer.persist(snapshot)
+                        }, canPresent: { [weak self] in
+                            guard let self, let visualTicket else { return false }
+                            return self.meshGeneration == ticket && self.state == .recording &&
+                                self.isTrackingNormal && self.visualAdmission.admits(visualTicket)
+                        }, present: { [weak self] in
+                            if let visualTicket { self?.showCommittedSurface(overlay, ticket: visualTicket) }
+                        })
                         if let self, self.meshGeneration == ticket {
                             self.lastGeometryAt = ProcessInfo.processInfo.systemUptime
-                            self.showCommittedSurface(overlay, anchorID: identifier)
                         }
                         if let self, self.lastCheckpoint.map({ snapshot.updatedAt.timeIntervalSince($0) >= 1 }) ?? true {
                             self.lastCheckpoint = snapshot.updatedAt

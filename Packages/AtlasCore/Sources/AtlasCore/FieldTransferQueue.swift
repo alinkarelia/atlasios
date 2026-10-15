@@ -122,13 +122,15 @@ public actor FieldTransferQueue {
         }
     }
 
-    public func pending(scope: FieldTransferScope, network: TransferNetwork, now: Date = Date(), limit: Int = 20) throws -> [FieldTransferRecord] {
+    public func pending(scope: FieldTransferScope, network: TransferNetwork, now: Date = Date(), limit: Int = 20,
+                        allowedProjectIDs: Set<UUID>? = nil) throws -> [FieldTransferRecord] {
         try scope.validate()
         guard network != .offline, now.timeIntervalSince1970.isFinite, limit > 0 else { return [] }
         let rows = try database.query("SELECT payload FROM field_transfers WHERE scope_key = ? AND state IN ('queued', 'waiting') ORDER BY sequence", [.text(scope.key)])
         var result: [FieldTransferRecord] = []
         for row in rows {
             let record = try Self.decodeRecord(row[0].data)
+            if let allowedProjectIDs, !allowedProjectIDs.contains(record.manifest.projectID) { continue }
             let preferences = try settings(projectID: record.manifest.projectID, scope: scope)
             guard record.explicitlyRequested || preferences.policy == .automatic,
                   !preferences.wifiOnly || network == .wifi,
@@ -141,9 +143,10 @@ public actor FieldTransferQueue {
 
     /// Claims one package atomically; multiple callers cannot start the same
     /// package concurrently. Network and preference eligibility is checked here.
-    public func claimNext(scope: FieldTransferScope, network: TransferNetwork, now: Date = Date()) throws -> FieldTransferRecord? {
+    public func claimNext(scope: FieldTransferScope, network: TransferNetwork, now: Date = Date(),
+                          allowedProjectIDs: Set<UUID>? = nil) throws -> FieldTransferRecord? {
         try database.transaction {
-            guard var record = try pending(scope: scope, network: network, now: now, limit: 1).first else { return nil }
+            guard var record = try pending(scope: scope, network: network, now: now, limit: 1, allowedProjectIDs: allowedProjectIDs).first else { return nil }
             record.state = .uploading; record.attemptCount = min(1_000_000, record.attemptCount + 1)
             record.nextRetryAt = nil; record.lastError = nil
             try Self.write(record, database: database)

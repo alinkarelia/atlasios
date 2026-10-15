@@ -37,12 +37,12 @@ struct TeamProjectTransferScreen: View {
         } else if team.connected, team.selectedOrganization != nil {
             behavior = "Сохранённые материалы ставятся в очередь этого проекта. Без подходящей сети очередь сохраняется и продолжится при открытом приложении."
         } else {
-            behavior = "Автоматическая отправка применяется к дополнительному рабочему серверу \(AppBrand.displayName). Для неё войдите в рабочий аккаунт и выберите организацию. Комплект ZIP можно передать в архив или чат вручную."
+            behavior = "Для автоматической отправки войдите через сайт, разрешите рабочую геолокацию и выберите задание. Комплект ZIP можно передать в архив или чат вручную."
         }
         return behavior + " Настройка сохраняется отдельно для каждого рабочего аккаунта и организации."
     }
     private var canSend: Bool {
-        team.connected && team.selectedOrganization != nil &&
+        model.staff.canWork(projectID:project.id) && team.connected && team.selectedOrganization != nil &&
         ["owner", "admin", "manager", "surveyor"].contains(team.selectedOrganization?.role ?? "") &&
         !team.busy && !coordinator.isPreparing && !coordinator.isSending && !changingSettings
     }
@@ -122,7 +122,7 @@ struct TeamProjectTransferScreen: View {
                     .background(Color.atlasCanvas, in: RoundedRectangle(cornerRadius: 14))
                 VStack(alignment: .leading, spacing: 6) {
                     Text(project.name).font(.headline)
-                    Text("Исходники и паспорт проекта остаются на iPhone. Подготовьте ZIP для передачи или выберите дополнительный рабочий сервер.")
+                    Text("Исходники и паспорт проекта остаются на iPhone. Подготовьте ZIP для передачи или выберите рабочее задание на платформе «Семейный архив: Живая память».")
                         .font(.subheadline).foregroundStyle(Color.atlasMuted)
                 }
             }.padding(.vertical, 4)
@@ -155,7 +155,7 @@ struct TeamProjectTransferScreen: View {
             ))
             .disabled(!settingsLoaded || changingSettings)
             .accessibilityIdentifier("transfer.wifiOnly")
-        } header: { Text("Рабочий сервер \(AppBrand.displayName) · дополнительно") } footer: {
+        } header: { Text("Отправка материалов") } footer: {
             Text(deliveryExplanation)
         }.listRowBackground(Color.atlasCard)
     }
@@ -173,13 +173,13 @@ struct TeamProjectTransferScreen: View {
             } else {
                 Label("Отправка на рабочий сервер", systemImage: "externaldrive.badge.person.crop")
                     .font(.subheadline.weight(.semibold))
-                Text("Если ваша команда использует сервер \(AppBrand.displayName), подключите рабочий аккаунт. Комплект ZIP выше доступен без входа и передаётся через меню «Поделиться».")
+                Text("Войдите в платформу «Семейный архив: Живая память», подтвердите рабочее положение и выберите задание. Сохранённый ZIP доступен без входа через меню «Поделиться».")
                     .font(.footnote).foregroundStyle(Color.atlasMuted)
                     .accessibilityIdentifier("transfer.connectionHint")
                 NavigationLink {
                     TeamConnectionScreen(model: model)
                 } label: {
-                    Label("Подключить команду", systemImage: "person.badge.key")
+                    Label("Рабочий аккаунт", systemImage: "person.badge.key")
                 }.accessibilityIdentifier("transfer.connectTeam")
             }
             if team.connected {

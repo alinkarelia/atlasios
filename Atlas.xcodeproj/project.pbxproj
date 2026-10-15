@@ -67,6 +67,13 @@
 			"path" = "Apps/iOS/Adapters/CaptureVideoRecorder.swift";
 			"sourceTree" = "SOURCE_ROOT";
 		};
+		"A80DA508CABF290507FAB308" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "CaptureVisualAdmission.swift";
+			"path" = "Apps/iOS/Adapters/CaptureVisualAdmission.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
 		"03D2912DC7305E7DF38EC611" = {
 			"isa" = "PBXFileReference";
 			"lastKnownFileType" = "sourcecode.swift";
@@ -254,6 +261,48 @@
 			"lastKnownFileType" = "sourcecode.swift";
 			"name" = "RoomCaptureAdapter.swift";
 			"path" = "Apps/iOS/Adapters/RoomCaptureAdapter.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"8E709C9FB1F0DFEF1778287C" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "StaffAccountAPI.swift";
+			"path" = "Apps/iOS/Adapters/StaffAccountAPI.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"80191D39786FD95547E03D1D" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "StaffAccountSession.swift";
+			"path" = "Apps/iOS/Adapters/StaffAccountSession.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"9FFFA47BD9EC09357A6726A0" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "StaffBrowserCompletion.swift";
+			"path" = "Apps/iOS/Adapters/StaffBrowserCompletion.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"6153838D9D4FE6B0EDCC3AD6" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "StaffIdentityPolicy.swift";
+			"path" = "Apps/iOS/Adapters/StaffIdentityPolicy.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"A81259F5C333E32D7D37A24F" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "StaffWorkLease.swift";
+			"path" = "Apps/iOS/Adapters/StaffWorkLease.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"DB3FB99A99516CA1FDF6D57F" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "StaffWorkLocation.swift";
+			"path" = "Apps/iOS/Adapters/StaffWorkLocation.swift";
 			"sourceTree" = "SOURCE_ROOT";
 		};
 		"AC5E94FBE8BA5AF79458ED06" = {
@@ -697,6 +746,20 @@
 			"path" = "Apps/iOS/Features/Settings/SettingsScreen.swift";
 			"sourceTree" = "SOURCE_ROOT";
 		};
+		"7C90D876234E26099269ADE1" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "StaffAccountScreen.swift";
+			"path" = "Apps/iOS/Features/Staff/StaffAccountScreen.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"A92EEA59B7F9EA0CD817FAC0" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "StaffRuntimeWorkspaceScreen.swift";
+			"path" = "Apps/iOS/Features/Staff/StaffRuntimeWorkspaceScreen.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
 		"42B03916889A3B84C248116B" = {
 			"isa" = "PBXFileReference";
 			"lastKnownFileType" = "sourcecode.swift";
@@ -765,6 +828,7 @@
 				249819A371A4F96D4D76858B,
 				D12AC21D9B1951F65906686D,
 				BF01E5CEC7F4A938CCAEA32E,
+				A80DA508CABF290507FAB308,
 				03D2912DC7305E7DF38EC611,
 				C48326A8BA17E568A3AAC568,
 				96943AD0DA1C64FDCC2F7B60,
@@ -792,6 +856,12 @@
 				0B6D8091408D6CB7C3191A27,
 				048AF99A3378B851A673C93F,
 				6E5F0AB3195C1CD45AD5EC46,
+				8E709C9FB1F0DFEF1778287C,
+				80191D39786FD95547E03D1D,
+				9FFFA47BD9EC09357A6726A0,
+				6153838D9D4FE6B0EDCC3AD6,
+				A81259F5C333E32D7D37A24F,
+				DB3FB99A99516CA1FDF6D57F,
 				AC5E94FBE8BA5AF79458ED06,
 				BAFDDABD632BD67F677C4328,
 				C835C7BD1BECD47976E90687,
@@ -915,6 +985,15 @@
 			"name" = "Settings";
 			"sourceTree" = "<group>";
 		};
+		"DE5CCA333737F96AE4A24362" = {
+			"isa" = "PBXGroup";
+			"children" = (
+				7C90D876234E26099269ADE1,
+				A92EEA59B7F9EA0CD817FAC0,
+			);
+			"name" = "Staff";
+			"sourceTree" = "<group>";
+		};
 		"B38E61C482FBE0EF078DDCF5" = {
 			"isa" = "PBXGroup";
 			"children" = (
@@ -935,6 +1014,7 @@
 				1779450407248433C88D7B1D,
 				45E3D377CE2D52343E581309,
 				8CBBEC37B650FEBA0217BDD0,
+				DE5CCA333737F96AE4A24362,
 				B38E61C482FBE0EF078DDCF5,
 			);
 			"name" = "Features";
@@ -1051,6 +1131,10 @@
 			"isa" = "PBXBuildFile";
 			"fileRef" = BF01E5CEC7F4A938CCAEA32E;
 		};
+		"9F7C6B8D7C04A0AB49F42D12" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = A80DA508CABF290507FAB308;
+		};
 		"29ED90B78B2F8A1E3053D0A9" = {
 			"isa" = "PBXBuildFile";
 			"fileRef" = 03D2912DC7305E7DF38EC611;
@@ -1158,6 +1242,30 @@
 		"C9480A6326A3AEB4CDFF0AD0" = {
 			"isa" = "PBXBuildFile";
 			"fileRef" = 6E5F0AB3195C1CD45AD5EC46;
+		};
+		"04C82A0AD5858FE6532D0E30" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = 8E709C9FB1F0DFEF1778287C;
+		};
+		"815A16BA924D74A071639F02" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = 80191D39786FD95547E03D1D;
+		};
+		"ED1BEA03C88052508BBF2278" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = 9FFFA47BD9EC09357A6726A0;
+		};
+		"B3C244498FA7E3221BF05ACA" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = 6153838D9D4FE6B0EDCC3AD6;
+		};
+		"3017666442B654F90DDCD98E" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = A81259F5C333E32D7D37A24F;
+		};
+		"BD7FE34BA8FDE42E7386F7C9" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = DB3FB99A99516CA1FDF6D57F;
 		};
 		"816217B421A6F4472BB402F2" = {
 			"isa" = "PBXBuildFile";
@@ -1411,6 +1519,14 @@
 			"isa" = "PBXBuildFile";
 			"fileRef" = 63FCEA81289D0206D46FA5AC;
 		};
+		"3D76C78F37185FC649CF8F7B" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = 7C90D876234E26099269ADE1;
+		};
+		"FDBA1090DF0D751864358DD8" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = A92EEA59B7F9EA0CD817FAC0;
+		};
 		"D8FC894ABB95583025BBD35F" = {
 			"isa" = "PBXBuildFile";
 			"fileRef" = 42B03916889A3B84C248116B;
@@ -1448,6 +1564,7 @@
 				669BA939F124FBBDDC8200F3,
 				9FBE1D1935FCC917225A8500,
 				0AF35FE151107C787DF59EF9,
+				9F7C6B8D7C04A0AB49F42D12,
 				29ED90B78B2F8A1E3053D0A9,
 				69C474132DDBC9EC6027F8EE,
 				5FA4AE1F44C878E9A745940E,
@@ -1475,6 +1592,12 @@
 				89F780514FCFE843D5143C5F,
 				D59928379F010B40A263FF11,
 				C9480A6326A3AEB4CDFF0AD0,
+				04C82A0AD5858FE6532D0E30,
+				815A16BA924D74A071639F02,
+				ED1BEA03C88052508BBF2278,
+				B3C244498FA7E3221BF05ACA,
+				3017666442B654F90DDCD98E,
+				BD7FE34BA8FDE42E7386F7C9,
 				816217B421A6F4472BB402F2,
 				93B5DF519FD7DFB5D0EEB180,
 				FFA91AF9EFC2D9570A72E1D8,
@@ -1538,6 +1661,8 @@
 				FE0EBFB14FD7945892E4F9D2,
 				29F7E7DCE7DCC17E1D76037A,
 				389C19D8B2F53E096A90C5A3,
+				3D76C78F37185FC649CF8F7B,
+				FDBA1090DF0D751864358DD8,
 				D8FC894ABB95583025BBD35F,
 				0E1DD8ADF551D84F7DFE9E6D,
 				0EE9DCF2C6D56DF1384278A9,
@@ -1568,8 +1693,8 @@
 				"SWIFT_VERSION" = "6.0";
 				"SWIFT_STRICT_CONCURRENCY" = "complete";
 				"IPHONEOS_DEPLOYMENT_TARGET" = "17.0";
-				"MARKETING_VERSION" = "0.7.0";
-				"CURRENT_PROJECT_VERSION" = "9";
+				"MARKETING_VERSION" = "0.7.1";
+				"CURRENT_PROJECT_VERSION" = "10";
 				"DEVELOPMENT_TEAM" = "";
 				"SDKROOT" = "iphoneos";
 				"CLANG_ENABLE_MODULES" = "YES";
@@ -1615,8 +1740,8 @@
 				"SWIFT_VERSION" = "6.0";
 				"SWIFT_STRICT_CONCURRENCY" = "complete";
 				"IPHONEOS_DEPLOYMENT_TARGET" = "17.0";
-				"MARKETING_VERSION" = "0.7.0";
-				"CURRENT_PROJECT_VERSION" = "9";
+				"MARKETING_VERSION" = "0.7.1";
+				"CURRENT_PROJECT_VERSION" = "10";
 				"DEVELOPMENT_TEAM" = "";
 				"SDKROOT" = "iphoneos";
 				"CLANG_ENABLE_MODULES" = "YES";

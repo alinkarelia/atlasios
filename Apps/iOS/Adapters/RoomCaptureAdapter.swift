@@ -91,6 +91,7 @@ final class RoomCaptureAdapter: NSObject, ObservableObject, RoomCaptureViewDeleg
     /// Preview runs the shared AR camera only. RoomPlan semantic capture and
     /// durable files start exclusively when the operator presses Start.
     func preparePreview() async {
+        guard StaffWorkAccess.allowed() else { cameraStatus = StaffAccessError.needsLocation.localizedDescription; return }
         guard Self.isSupported, state == .ready || state == .saved,
               !isPreviewing, !isPreparingPreview, !Task.isCancelled else { return }
         let ticket = UUID(); startGeneration = ticket
@@ -104,6 +105,7 @@ final class RoomCaptureAdapter: NSObject, ObservableObject, RoomCaptureViewDeleg
             let view = captureView
             try await CaptureCoordinator.waitForCameraPresentation(view)
             guard ticket == startGeneration, !Task.isCancelled else { return }
+            try StaffWorkAccess.require()
             let configuration = ARWorldTrackingConfiguration()
             configuration.worldAlignment = .gravity
             configuration.environmentTexturing = .none
@@ -132,6 +134,7 @@ final class RoomCaptureAdapter: NSObject, ObservableObject, RoomCaptureViewDeleg
     /// This scan has its own local origin. Reusing a project's UUID would not
     /// establish physical registration, even when both coordinate units are m.
     func start(projectID: UUID, projectName: String, outputDirectory: URL) async {
+        guard StaffWorkAccess.allowed(projectID:projectID) else { errorMessage = StaffAccessError.needsLocation.localizedDescription; return }
         guard state == .ready || state == .saved else { return }
         guard !Task.isCancelled else { return }
         guard Self.isSupported else { state = .unavailable; return }
@@ -149,6 +152,7 @@ final class RoomCaptureAdapter: NSObject, ObservableObject, RoomCaptureViewDeleg
             let view = captureView
             try await CaptureCoordinator.waitForCameraPresentation(view)
             guard startGeneration == generation, !Task.isCancelled else { return }
+            try StaffWorkAccess.require(projectID:projectID)
             _ = try CaptureCoordinator.preflight(at: outputDirectory)
             let id = UUID()
             let directory = outputDirectory.appendingPathComponent("room-\(id.uuidString)", isDirectory: true)
@@ -165,6 +169,7 @@ final class RoomCaptureAdapter: NSObject, ObservableObject, RoomCaptureViewDeleg
                 if startGeneration == generation { state = .ready }
                 return
             }
+            try StaffWorkAccess.require(projectID:projectID)
             writer = newWriter; manifest = metadata; captureDirectory = directory; frameID = newFrame
             capturedRoom = nil; roomJSON = nil; wallCount = 0; openingCount = 0
             hasCheckpoint = false; planNotice = nil; pendingWrite = nil

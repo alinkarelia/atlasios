@@ -121,6 +121,7 @@ final class EvidenceService: ObservableObject {
     /// ARFrame nor CVPixelBuffer is passed to the asynchronous evidence actor.
     func captureCameraPhoto(from view: ARView, projectID: UUID, frameID: UUID?,
                             outputDirectory: URL, geoFix: GeoLocationFix? = nil) async throws -> PhotoEvidence {
+        try StaffWorkAccess.require(projectID:projectID)
         guard let frame = view.session.currentFrame else { throw EvidenceError.cameraNotReady }
         let orientation = view.window?.windowScene?.interfaceOrientation ?? .portrait
         let imageOrientation: CGImagePropertyOrientation

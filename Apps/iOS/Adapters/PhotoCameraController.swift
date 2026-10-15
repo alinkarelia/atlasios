@@ -32,6 +32,7 @@ final class PhotoCameraController: NSObject, ObservableObject {
     }
 
     func prepare() async {
+        guard StaffWorkAccess.allowed() else { errorMessage = StaffAccessError.needsLocation.localizedDescription; return }
         guard state != .preparing, state != .ready, state != .capturing, !Task.isCancelled else { return }
         let ticket = UUID(); generation = ticket
         state = .preparing; errorMessage = nil; isReady = false
@@ -51,6 +52,7 @@ final class PhotoCameraController: NSObject, ObservableObject {
                 guard let self, self.generation == ticket, !self.isReady else { return }
                 self.fail(PhotoCameraError.previewTimeout.localizedDescription)
             }
+            try StaffWorkAccess.require()
             try await worker.start(onFirstFrame: { [weak self] in
                 Task { @MainActor [weak self] in
                     guard let self, self.generation == ticket, self.state == .preparing else { return }
@@ -77,6 +79,7 @@ final class PhotoCameraController: NSObject, ObservableObject {
     }
 
     func takePhoto() async throws -> Data {
+        try StaffWorkAccess.require()
         guard state == .ready, isReady, UIApplication.shared.applicationState == .active else {
             throw PhotoCameraError.notReady
         }

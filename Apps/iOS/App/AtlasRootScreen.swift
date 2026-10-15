@@ -3,6 +3,12 @@ import AtlasCore
 
 struct AtlasRootScreen: View {
     @ObservedObject var model: AtlasAppModel
+    var body: some View { AtlasStaffRoot(model: model, staff: model.staff) }
+}
+
+private struct AtlasStaffRoot: View {
+    @ObservedObject var model: AtlasAppModel
+    @ObservedObject var staff: StaffAccountSession
     var body: some View {
         Group {
             if !model.ready {
@@ -13,7 +19,19 @@ struct AtlasRootScreen: View {
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if !model.storeAvailable {
                 AtlasEmptyState(title: "Данные недоступны", message: model.issue ?? "Проверьте свободное место на устройстве.", symbol: "externaldrive.badge.exclamationmark")
+            } else if !StaffWorkAccess.diagnosticFixtures &&
+                (!staff.workAllowed || model.selectedProject.map({ !staff.projectIsBound($0.id) }) != false) {
+                NavigationStack { StaffAccountScreen(model:model,staff:staff) }
             } else {
+                VStack(spacing:0) {
+                    if !StaffWorkAccess.diagnosticFixtures {
+                        HStack {
+                            Image(systemName:"location.fill")
+                            Text(staff.location.message).font(.caption).lineLimit(1)
+                            Spacer()
+                            Button("Пауза") { staff.pauseWorkSession() }.font(.caption.weight(.semibold))
+                        }.foregroundStyle(Color.atlasInk).padding(10).background(Color.atlasCard)
+                    }
                 TabView {
                     NavigationStack { ProjectsScreen(model: model) }
                         .tabItem { Label("Проекты", systemImage: "folder.fill") }
@@ -28,6 +46,7 @@ struct AtlasRootScreen: View {
                 }
                 .toolbarBackground(Color.atlasCanvas, for: .tabBar)
                 .toolbarBackground(.visible, for: .tabBar)
+                }
             }
         }
         .foregroundStyle(Color.atlasInk)

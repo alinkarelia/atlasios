@@ -11,7 +11,7 @@ struct RemoteUser: Codable, Identifiable, Sendable {
 struct RemoteOrganization: Codable, Identifiable, Sendable {
     var id: UUID
     var name: String
-    var plan: String
+    var plan: String?
     var role: String?
 }
 struct RemoteProject: Codable, Identifiable, Sendable {
@@ -127,37 +127,42 @@ final class TeamService: ObservableObject {
     init() {
         publicationURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Atlas/team-publication-v1.json")
-        if let data = Self.keychainRead(key: keychainKey), let value = try? JSONDecoder().decode(StoredTeamSession.self, from: data) {
-            stored = value; user = value.session.user
-        }
+        // Legacy pairing is never restored into the staff application's identity.
+        Self.keychainDelete(key: keychainKey)
     }
 
     var connected: Bool { stored != nil }
     var serverAddress: String { stored?.baseURL.absoluteString ?? "" }
     var selectedOrganization: RemoteOrganization? { organizations.first { $0.id == selectedOrganizationID } }
 
-    func authenticate(server: String, email: String, password: String, displayName: String?, organizationName: String?) async {
-        guard !busy else { return }
-        sessionGeneration &+= 1
-        let generation = sessionGeneration
-        busy = true; issue = nil
-        defer { if sessionGeneration == generation { busy = false } }
-        do {
-            let baseURL = try Self.validatedURL(server)
-            var body = ["email": email.trimmingCharacters(in: .whitespacesAndNewlines), "password": password]
-            let registering = displayName != nil
-            if let displayName { body["displayName"] = displayName }
-            if let organizationName { body["organizationName"] = organizationName }
-            let response: SessionResponse = try await request(base: baseURL,
-                path: registering ? "v1/auth/register" : "v1/auth/login", method: "POST",
-                body: JSONEncoder().encode(body), token: nil, generation: generation)
-            let value = StoredTeamSession(baseURL: baseURL, session: response)
-            try Self.keychainSave(JSONEncoder().encode(value), key: keychainKey)
-            stored = value; user = response.user
-            organizations = []; projects = []; members = []; selectedOrganizationID = nil
-            publicationMessage = nil
-            try await fetchOrganizations(context())
-        } catch { if sessionGeneration == generation { issue = error.localizedDescription } }
+    var workAuthorization: () -> Bool = { false }
+    var projectAuthorization: (UUID) -> Bool = { _ in false }
+    var allowedProjectIDs: () -> Set<UUID> = { [] }
+    var onAccessDenied: (() -> Void)?
+    private(set) var runtimeTaskID: String?
+
+    func installRuntime(_ runtime: StaffRuntimeSession) throws {
+        guard runtime.clientID == "atlas", runtime.baseURL == StaffIdentityPolicy.runtimeOrigin,
+              runtime.tokenType == "Bearer", StaffIdentityPolicy.validRuntimeToken(runtime.accessToken),
+              (Self.serverDate(runtime.expiresAt) ?? .distantPast) > Date() else { throw StaffAccessError.invalidResponse }
+        clearRuntime()
+        stored = StoredTeamSession(baseURL: runtime.baseURL,
+            session: SessionResponse(token: runtime.accessToken, expiresAt: runtime.expiresAt, user: runtime.context.user))
+        runtimeTaskID = runtime.taskID; user = runtime.context.user
+        organizations = [RemoteOrganization(id:runtime.context.organization.id, name:runtime.context.organization.name,
+            plan:nil, role:runtime.context.organization.role)]
+        selectedOrganizationID = runtime.context.organization.id
+        projects = []; members = runtime.context.members
+    }
+    func clearRuntime() {
+        sessionGeneration &+= 1; stored = nil; runtimeTaskID = nil; user = nil
+        organizations = []; projects = []; members = []; selectedOrganizationID = nil
+        busy = false; issue = nil; publicationMessage = nil
+    }
+    func accessDenied() { clearRuntime(); onAccessDenied?() }
+    func requireProject(_ projectID: UUID) throws {
+        guard workAuthorization() else { throw StaffAccessError.needsLocation }
+        guard projectAuthorization(projectID) else { throw StaffAccessError.wrongProject }
     }
 
     func refresh() async {
@@ -212,6 +217,7 @@ final class TeamService: ObservableObject {
         busy = true; issue = nil; publicationMessage = nil
         defer { if sessionGeneration == generation { busy = false } }
         do {
+            try requireProject(snapshot.project.id)
             let context = try context()
             try requireCurrent(context, organizationID: organization.id)
             let list: ProjectsResponse = try await request(context: context, path: "v1/projects")
@@ -364,13 +370,16 @@ final class TeamService: ObservableObject {
     /// A fixed destination binds every queued package to its original workspace.
     /// The bearer stays private to the request context and never becomes UI text.
     func transferContext() throws -> TeamTransferContext {
-        guard let stored, let organizationID = selectedOrganizationID else { throw TeamError.notConnected }
+        guard workAuthorization() else { throw StaffAccessError.needsLocation }
+        guard let stored, let organizationID = selectedOrganizationID, let taskID = runtimeTaskID,
+              (Self.serverDate(stored.session.expiresAt) ?? .distantPast) > Date() else { throw TeamError.notConnected }
         return TeamTransferContext(baseURL: stored.baseURL, token: stored.session.token,
-            userID: stored.session.user.id, organizationID: organizationID, generation: sessionGeneration)
+            userID: stored.session.user.id, organizationID: organizationID, generation: sessionGeneration, taskID: taskID)
     }
 
     func requireCurrentTransfer(_ context: TeamTransferContext) throws {
-        guard context.generation == sessionGeneration, context.baseURL == stored?.baseURL,
+        guard workAuthorization() else { throw StaffAccessError.needsLocation }
+        guard context.taskID == runtimeTaskID, context.generation == sessionGeneration, context.baseURL == stored?.baseURL,
               context.userID == stored?.session.user.id, context.organizationID == selectedOrganizationID,
               context.matchesToken(stored?.session.token) else { throw CancellationError() }
     }
@@ -379,6 +388,7 @@ final class TeamService: ObservableObject {
     /// different organization cannot receive this local project's materials.
     func ensureTransferProject(_ snapshot: AtlasProjectSnapshot, context: TeamTransferContext) async throws {
         try requireCurrentTransfer(context)
+        try requireProject(snapshot.project.id)
         let current = try self.context()
         let list: ProjectsResponse = try await request(context: current, path: "v1/projects")
         try requireCurrentTransfer(context)
@@ -417,7 +427,9 @@ final class TeamService: ObservableObject {
     }
 
     private func context() throws -> TeamRequestContext {
-        guard let stored else { throw TeamError.notConnected }
+        guard workAuthorization() else { throw StaffAccessError.needsLocation }
+        guard let stored, runtimeTaskID != nil,
+              (Self.serverDate(stored.session.expiresAt) ?? .distantPast) > Date() else { throw TeamError.notConnected }
         return TeamRequestContext(baseURL: stored.baseURL, token: stored.session.token,
             userID: stored.session.user.id, generation: sessionGeneration)
     }
@@ -447,6 +459,7 @@ final class TeamService: ObservableObject {
 
     private func request<Response: Decodable>(base: URL, path: String, method: String = "GET", body: Data? = nil, token: String?, generation: UInt64) async throws -> Response {
         guard generation == sessionGeneration else { throw CancellationError() }
+        guard workAuthorization(), base == StaffIdentityPolicy.runtimeOrigin else { throw StaffAccessError.needsLocation }
         let split = path.split(separator: "?", maxSplits: 1).map(String.init)
         guard var components = URLComponents(url: base.appendingPathComponent(split[0]), resolvingAgainstBaseURL: false) else { throw TeamError.invalidURL }
         if split.count == 2 { components.percentEncodedQuery = split[1] }
@@ -456,8 +469,15 @@ final class TeamService: ObservableObject {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
         if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        if split[0].hasPrefix("v1/projects/"), let project = UUID(uuidString: String(split[0].dropFirst("v1/projects/".count).split(separator:"/").first ?? "")) {
+            try requireProject(project)
+        }
         let (data, response) = try await TeamHTTP.session.data(for: request)
         guard generation == sessionGeneration else { throw CancellationError() }
+        guard data.count <= 4 * 1_024 * 1_024 else { throw StaffAccessError.invalidResponse }
+        if let http = response as? HTTPURLResponse, [401, 403].contains(http.statusCode) {
+            accessDenied(); throw StaffAccessError.denied
+        }
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             if let error = try? JSONDecoder().decode(APIErrorResponse.self, from: data) {
                 let descriptions = ["invalid_credentials": "Почта или пароль не совпали.",

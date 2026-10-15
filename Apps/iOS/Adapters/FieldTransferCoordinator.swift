@@ -103,8 +103,8 @@ final class FieldTransferCoordinator: ObservableObject {
     func prepare(snapshot: AtlasProjectSnapshot, assetDirectory: URL,
                  expectedContext: TeamTransferContext? = nil) async -> Bool {
         guard let queue, let context = expectedContext ?? (try? team.transferContext()) else { return false }
-        do { try Task.checkCancellation(); try team.requireCurrentTransfer(context) }
-        catch { return false }
+        do { try Task.checkCancellation(); try team.requireCurrentTransfer(context); try team.requireProject(snapshot.project.id) }
+        catch { issue = error.localizedDescription; return false }
         guard preparingProjects.insert(snapshot.project.id).inserted else {
             pendingPreparations[snapshot.project.id] = (snapshot, assetDirectory, context)
             return false
@@ -146,7 +146,7 @@ final class FieldTransferCoordinator: ObservableObject {
         guard let queue else { return }
         do {
             let context = try expectedContext ?? team.transferContext()
-            try Task.checkCancellation(); try team.requireCurrentTransfer(context)
+            try Task.checkCancellation(); try team.requireCurrentTransfer(context); try team.requireProject(projectID)
             try await queue.requestSend(projectID: projectID, scope: context.scope)
             try team.requireCurrentTransfer(context)
             issue = nil; await refresh(); resume()
@@ -162,6 +162,7 @@ final class FieldTransferCoordinator: ObservableObject {
         do {
             let context = try team.transferContext()
             guard let record = try await queue.record(id: id), record.scope == context.scope else { throw FieldTransferError.invalidScope }
+            try team.requireCurrentTransfer(context); try team.requireProject(record.manifest.projectID)
             try await queue.requestSend(projectID: record.manifest.projectID, scope: context.scope, transferIDs: [id])
             try team.requireCurrentTransfer(context)
             await refresh(); resume()
@@ -243,7 +244,7 @@ final class FieldTransferCoordinator: ObservableObject {
             if self.active, self.network != .offline, self.worker == nil,
                let current = try? self.team.transferContext(),
                let pending = try? await queue.pending(scope: current.scope, network: self.network,
-                   now: Date().addingTimeInterval(301), limit: 1), !pending.isEmpty,
+                   now: Date().addingTimeInterval(301), limit: 1, allowedProjectIDs: self.team.allowedProjectIDs()), !pending.isEmpty,
                (try? self.team.requireCurrentTransfer(current)) != nil,
                self.active, self.network != .offline, self.worker == nil {
                 self.scheduleRetry()
@@ -265,12 +266,13 @@ final class FieldTransferCoordinator: ObservableObject {
             let record: FieldTransferRecord
             do {
                 try team.requireCurrentTransfer(context)
-                guard let next = try await queue.claimNext(scope: context.scope, network: network) else { return }
+                guard let next = try await queue.claimNext(scope: context.scope, network: network, allowedProjectIDs: team.allowedProjectIDs()) else { return }
                 record = next
             } catch { if !(error is CancellationError) { issue = error.localizedDescription }; return }
             isSending = true; activePackageID = record.id; await refresh()
             do {
                 try checkRun(context, generation: runGeneration)
+                try team.requireProject(record.manifest.projectID)
                 let snapshot = try await assembler.snapshot(for: record.manifest)
                 try await team.ensureTransferProject(snapshot, context: context)
                 try checkRun(context, generation: runGeneration)

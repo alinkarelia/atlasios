@@ -227,7 +227,7 @@ struct CaptureScreen: View {
         HStack(spacing: 4) {
             ForEach(lidarOnly ? [.lidar] : Mode.allCases, id: \.self) { value in
                 Button {
-                    guard !hasOpenCapture, !isStarting, !isSaving else { return }
+                    guard !hasOpenCapture, !isStarting, !isSaving, value != mode else { return }
                     shareGeneration = UUID(); shareTask?.cancel(); shareTask = nil; preparingShares = false
                     mode = value; savedManifest = nil; shareableAssets = []; sharedManifest = nil
                 } label: {
@@ -553,6 +553,7 @@ struct CaptureScreen: View {
     }
 
     private func resumeLiDAR() async {
+        guard StaffWorkAccess.allowed(projectID:project.id) else { failure = StaffAccessError.needsLocation.localizedDescription; return }
         guard !isStarting, !isSaving else { return }
         let generation = UUID(); startGeneration = generation
         isStarting = true
@@ -841,6 +842,7 @@ struct CaptureScreen: View {
     }
 
     private func beginCapture() {
+        guard StaffWorkAccess.allowed(projectID:project.id) else { failure = StaffAccessError.needsLocation.localizedDescription; return }
         guard !isStarting, !hasOpenCapture else { return }
         let generation = UUID()
         let selectedMode = mode
@@ -862,6 +864,7 @@ struct CaptureScreen: View {
     }
 
     private func takePhoto() {
+        guard StaffWorkAccess.allowed(projectID:project.id) else { failure = StaffAccessError.needsLocation.localizedDescription; return }
         guard photoCamera.isReady, !evidence.isProcessing else { return }
         let fix = location.currentFix
         let capturedAt = Date()

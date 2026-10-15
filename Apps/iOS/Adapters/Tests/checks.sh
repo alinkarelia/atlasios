@@ -10,3 +10,13 @@ swift_compiler="${SWIFTC:-swiftc}"
 "$test_workspace/photo-geo-checks"
 ATLAS_SWIFTC="$swift_compiler" python3 "$test_directory/check-mesh-processor.py"
 bash "$test_directory/video-capture-checks.sh"
+"$swift_compiler" -swift-version 6 \
+  "$test_directory/../CaptureVisualAdmission.swift" "$test_directory/CaptureVisualAdmissionChecks.swift" \
+  -o "$test_workspace/capture-visual-checks"
+"$test_workspace/capture-visual-checks"
+"$swift_compiler" -swift-version 6 \
+  "$test_directory/../StaffIdentityPolicy.swift" "$test_directory/../StaffBrowserCompletion.swift" \
+  "$test_directory/../StaffWorkLease.swift" "$test_directory/StaffIdentityChecks.swift" \
+  -o "$test_workspace/staff-identity-checks"
+"$test_workspace/staff-identity-checks"
+ATLAS_SWIFTC="$swift_compiler" python3 "$test_directory/check-staff-location-session.py"

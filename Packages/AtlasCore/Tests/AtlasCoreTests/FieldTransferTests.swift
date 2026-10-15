@@ -173,6 +173,30 @@ private func transferDirectory() throws -> URL {
     #expect(abs(record.fractionCompleted - 0.6) < 0.001)
 }
 
+@Test func taskSelectionSkipsAnotherProjectsOlderPackageWithoutRebindingOrLosingIt() async throws {
+    let directory = try transferDirectory(); defer { try? FileManager.default.removeItem(at:directory) }
+    let path = directory.appendingPathComponent("queue.sqlite").path
+    let scope = transferScope(), oldTask = transferManifest(), currentTask = transferManifest()
+    let queue = try FieldTransferQueue(path:path)
+    _ = try await queue.register(manifest:oldTask, scope:scope)
+    try await queue.requestSend(projectID:oldTask.projectID, scope:scope)
+    let preserved = try #require(try await queue.record(id:oldTask.id))
+    let originalBytes = try FieldTransferJSON.encode(preserved.manifest)
+    _ = try await queue.register(manifest:currentTask, scope:scope)
+    try await queue.requestSend(projectID:currentTask.projectID, scope:scope)
+    #expect(try await queue.claimNext(scope:scope, network:.wifi, allowedProjectIDs:[]) == nil)
+    let selected = try #require(try await queue.claimNext(scope:scope, network:.wifi,
+        allowedProjectIDs:[currentTask.projectID]))
+    #expect(selected.id == currentTask.id)
+    #expect(try await queue.record(id:oldTask.id) == preserved)
+    let reopened = try FieldTransferQueue(path:path)
+    let old = try #require(try await reopened.record(id:oldTask.id))
+    #expect(old == preserved)
+    #expect(try FieldTransferJSON.encode(old.manifest) == originalBytes)
+    // Optional filtering preserves existing queue callers and persisted schema.
+    #expect(try await reopened.claimNext(scope:scope, network:.wifi)?.id == oldTask.id)
+}
+
 @Test func invalidOffsetsAndPrematureCompletionCannotProduceDeliveredStatus() async throws {
     let queue = try FieldTransferQueue(path: ":memory:"), scope = transferScope(), manifest = transferManifest()
     _ = try await queue.register(manifest: manifest, scope: scope)

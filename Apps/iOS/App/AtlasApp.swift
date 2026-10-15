@@ -10,6 +10,7 @@ struct AtlasApp: App {
                 .tint(.atlasAccent)
                 .task { await model.start() }
                 .onChange(of: scenePhase) { _, phase in
+                    if !StaffWorkAccess.diagnosticFixtures { model.staff.setForeground(phase == .active) }
                     if phase == .active { model.transfers.sceneBecameActive() }
                     else if phase == .background { model.transfers.sceneBecameInactive() }
                 }

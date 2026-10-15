@@ -7,11 +7,33 @@ import XCTest
 /// persisted projects, explicit hardware fallback, and the real SceneKit viewer.
 /// Simulator cannot validate camera frames, LiDAR geometry, or measurement accuracy.
 final class AtlasUITests: XCTestCase {
+    /// Production entry, deliberately without the local-fixture bypass. No
+    /// real account, email code, server token or simulated GPS is manufactured.
+    @MainActor
+    func testStaffEntryKeepsNewWorkClosedAndLocalExportAvailableBeforeLogin() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-AppleLanguages", "(ru)", "-AppleLocale", "ru_RU"]
+        app.launch()
+        XCTAssertTrue(element("staff.signIn",in:app).waitForExistence(timeout:20))
+        XCTAssertFalse(element("projects.startCapture",in:app).exists)
+        XCTAssertFalse(element("staff.task.open",in:app).exists)
+        XCTAssertFalse(element("staff.work.start",in:app).exists)
+        tap("staff.localRecords",in:app)
+        XCTAssertTrue(app.navigationBars["Локальные записи"].waitForExistence(timeout:10))
+        XCTAssertFalse(element("projects.startCapture",in:app).exists)
+        screenshot("staff-before-login-local-originals",app:app)
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(element("staff.signIn",in:app).waitForExistence(timeout:20))
+        XCTAssertFalse(element("projects.startCapture",in:app).exists)
+    }
+
     @MainActor
     private func launch(seedMesh: Bool = false, seedCemetery: Bool = false, seedBuilding: Bool = false, seedTour: Bool = false, seedReview: Bool = false) -> XCUIApplication {
         continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = ["-AppleLanguages", "(ru)", "-AppleLocale", "ru_RU"]
+        app.launchArguments = ["-AppleLanguages", "(ru)", "-AppleLocale", "ru_RU", "--uitest-local-fixtures"]
         if seedMesh { app.launchArguments.append("--uitest-seed-mesh") }
         if seedCemetery { app.launchArguments.append("--uitest-seed-cemetery") }
         if seedBuilding { app.launchArguments.append("--uitest-seed-building") }
@@ -1299,7 +1321,7 @@ final class AtlasUITests: XCTestCase {
     @MainActor
     func testLaunchResponsivenessMetric() {
         let app = XCUIApplication()
-        app.launchArguments = ["-AppleLanguages", "(ru)", "-AppleLocale", "ru_RU"]
+        app.launchArguments = ["-AppleLanguages", "(ru)", "-AppleLocale", "ru_RU", "--uitest-local-fixtures"]
         let options = XCTMeasureOptions()
         options.iterationCount = 3
         measure(metrics: [XCTApplicationLaunchMetric(waitUntilResponsive: true)], options: options) {

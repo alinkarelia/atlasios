@@ -1,0 +1,41 @@
+.pwa-install-action{display:flex;align-items:center;justify-content:center;gap:9px;padding:11px 14px;border:1px solid rgba(143,203,145,.24);border-radius:12px;background:rgba(128,202,111,.08);color:var(--text,#e8eee8);font:inherit;font-size:15px;font-weight:600;cursor:pointer;min-height:44px;transition:background .15s,border-color .15s}
+.pwa-install-action:hover{background:rgba(128,202,111,.15);border-color:rgba(143,203,145,.45)}
+.pwa-install-action:focus-visible{outline:2px solid #a3e98d;outline-offset:3px}
+.pwa-install-action:disabled{opacity:.6;cursor:wait}
+.sidebar .pwa-install-action{width:100%;margin-top:10px}
+.pwa-install-card{display:flex;flex-direction:column;gap:16px}
+.pwa-install-card p{line-height:1.6;margin:0;color:var(--muted,#b1bcb2);font-size:15px}
+.pwa-install-card small{font-size:14px;color:var(--muted,#b1bcb2)}
+.pwa-install-card-title{display:flex;align-items:center;gap:12px}
+.pwa-install-card-title h3{margin:0 0 4px;font-size:15px}
+.pwa-install-card .pwa-install-action{align-self:flex-start}
+.pwa-install-dialog{line-height:1.65;font-size:14px}
+.pwa-install-logo{float:left;object-fit:contain;margin:0 16px 12px 0;border-radius:18px}
+.pwa-install-intro{min-height:84px;display:flex;flex-direction:column;justify-content:center;gap:4px}
+.pwa-install-intro strong{font-size:25px;letter-spacing:2px}
+.pwa-install-intro span{font-size:14px;color:var(--muted,#b1bcb2);letter-spacing:1px}
+.pwa-install-steps{padding-left:24px;margin:16px 0}
+.pwa-install-steps li{padding-left:4px;margin-bottom:10px}
+.pwa-install-warning{padding:12px 14px;border:1px solid rgba(255,184,82,.25);border-radius:10px;color:#e9bf83;font-size:14px}
+.pwa-offline{margin:0;min-height:100vh;display:grid;place-items:center;background:#111813;color:#edf4eb;font:16px/1.6 system-ui,sans-serif;color-scheme:dark}
+.pwa-offline main{max-width:420px;padding:32px;text-align:center}.pwa-offline-mark{width:76px;height:76px;display:grid;place-items:center;margin:0 auto 22px;border:1px solid #548447;border-radius:23px;background:#254826;color:#adf491;font-size:38px;font-weight:600}.pwa-offline h1{font-size:30px;letter-spacing:4px;margin:0 0 24px}.pwa-offline p{color:#b4c1b2}.pwa-offline a{display:inline-block;margin:14px 0 28px;padding:12px 20px;border-radius:12px;background:#a4e78c;color:#163014;font-weight:650;text-decoration:none}.pwa-offline small{display:block;color:#7c907e;font-size:14px}
+@media(display-mode:standalone){html{overscroll-behavior:none}.sidebar{padding-top:max(18px,env(safe-area-inset-top))}.main{padding-top:env(safe-area-inset-top)}}
+@media(max-width:640px){.pwa-install-card .pwa-install-action{align-self:stretch}.pwa-install-dialog{font-size:14px}}
+
+/* Install and offline states keep the workspace visual language. */
+.pwa-install-action { min-height:46px; border-radius:13px; padding:12px 16px; font-size:14px; background:var(--accent-soft); border-color:var(--line-strong); color:var(--accent-text); }
+.pwa-install-action:hover { background:var(--surface-hover); border-color:var(--accent); }
+.pwa-install-action:focus-visible { outline:2px solid var(--accent); }
+.pwa-install-card p { font-size:14px; line-height:1.7; }
+.pwa-install-card small { font-size:13px; line-height:1.6; }
+.pwa-install-card-title h3 { font-size:18px; }
+.pwa-install-dialog { font-size:15px; line-height:1.7; }
+.pwa-install-intro span { font-size:13px; letter-spacing:.7px; }
+.pwa-install-warning { border-radius:14px; padding:14px 16px; font-size:13px; line-height:1.6; }
+.pwa-offline { background:#10151c; color:#f2f6fb; }
+.pwa-offline main { width:100%; max-width:460px; padding:32px 24px; }
+.pwa-offline-mark { border-color:#3c5c43; background:#233826; color:#b7f279; }
+.pwa-offline p { color:#b4c0cd; }
+.pwa-offline a { min-height:46px; border-radius:14px; background:#b7f279; color:#182512; }
+.pwa-offline small { color:#9baabd; font-size:13px; }
+@media(max-width:640px) { .pwa-install-dialog { font-size:15px; } }

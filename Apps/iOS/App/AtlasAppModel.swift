@@ -12,6 +12,7 @@ final class AtlasAppModel: ObservableObject {
     @Published private(set) var storeAvailable = false
     let team = TeamService()
     let directory: URL
+    lazy var staff = StaffAccountSession(team: team, directory: directory)
     lazy var transfers = FieldTransferCoordinator(team: team, directory: directory)
     private var measurementRepository: MeasurementRepository?
     private var store: AtlasStore?
@@ -47,6 +48,13 @@ final class AtlasAppModel: ObservableObject {
         await seedCemeteryIfRequested()
         await seedBuildingIfRequested()
         await seedTourIfRequested()
+        if !StaffWorkAccess.diagnosticFixtures {
+            staff.workChanged = { [weak self] in
+                Task { @MainActor [weak self] in await self?.transfers.authenticationChanged() }
+            }
+            staff.setForeground(UIApplication.shared.applicationState == .active)
+            await staff.restore()
+        }
         ready = true
         if team.connected { await team.refresh() }
         await transfers.refresh()
@@ -436,7 +444,7 @@ final class AtlasAppModel: ObservableObject {
     /// normal project repository. This is opt-in fixture data, never a mock
     /// camera session or a replacement renderer in production.
     private func seedPreviewMeshIfRequested() async {
-        guard ProcessInfo.processInfo.arguments.contains("--uitest-seed-mesh"), let store else { return }
+        guard StaffWorkAccess.diagnosticFixtures, ProcessInfo.processInfo.arguments.contains("--uitest-seed-mesh"), let store else { return }
         let projectID = UUID(uuid: (0xA7, 0x1A, 0x50, 0x00, 0x12, 0x34, 0x40, 0x00,
                                    0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01))
         let frameID = UUID(uuid: (0xA7, 0x1A, 0x50, 0x00, 0x12, 0x34, 0x40, 0x00,
@@ -468,7 +476,7 @@ final class AtlasAppModel: ObservableObject {
     /// Explicit runtime fixtures exercise normal SQLite/card/map flows. These
     /// records are labelled synthetic; they do not impersonate a sensor survey.
     private func seedCemeteryIfRequested() async {
-        guard ProcessInfo.processInfo.arguments.contains("--uitest-seed-cemetery"), let store else { return }
+        guard StaffWorkAccess.diagnosticFixtures, ProcessInfo.processInfo.arguments.contains("--uitest-seed-cemetery"), let store else { return }
         let projectID = UUID(uuidString: "A71A5000-1234-4000-8000-000000000101")!
         let cemeteryID = UUID(uuidString: "A71A5000-1234-4000-8000-000000000102")!
         do {
@@ -511,7 +519,7 @@ final class AtlasAppModel: ObservableObject {
     }
 
     private func seedTourIfRequested() async {
-        guard ProcessInfo.processInfo.arguments.contains("--uitest-seed-tour"), let store else { return }
+        guard StaffWorkAccess.diagnosticFixtures, ProcessInfo.processInfo.arguments.contains("--uitest-seed-tour"), let store else { return }
         let projectID = UUID(uuidString: "A71A5000-1234-4000-8000-000000000101")!
         guard let project = try? await store.project(id: projectID) else { return }
         let captures = captureDirectory(for: project)
@@ -553,7 +561,7 @@ final class AtlasAppModel: ObservableObject {
     }
 
     private func seedBuildingIfRequested() async {
-        guard ProcessInfo.processInfo.arguments.contains("--uitest-seed-building"), let store else { return }
+        guard StaffWorkAccess.diagnosticFixtures, ProcessInfo.processInfo.arguments.contains("--uitest-seed-building"), let store else { return }
         let projectID = UUID(uuidString: "A71A5000-1234-4000-8000-000000000201")!
         let frameID = UUID(uuidString: "A71A5000-1234-4000-8000-000000000202")!
         do {

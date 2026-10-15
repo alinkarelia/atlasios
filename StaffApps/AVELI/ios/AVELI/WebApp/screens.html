@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#111512">
+  <meta name="description" content="AVELI — Workspace by Семейный архив: Живая память. Рабочие экраны Mail, Chat, Cloud, AI и управления командой.">
+  <title>Обзор экранов · AVELI</title>
+  <link rel="icon" type="image/png" href="app-icon-192.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+  <link rel="stylesheet" href="screens.css">
+  <script src="screens.js" defer></script>
+</head>
+<body>
+  <div class="gallery-shell">
+    <aside class="gallery-sidebar" aria-label="Обзор приложения">
+      <a class="gallery-brand" href="/" aria-label="AVELI — открыть приложение">
+        <span class="gallery-brand-mark" aria-hidden="true"><img src="logo.png" alt="" width="44" height="44"></span>
+        <span>AVELI<small>MAIL · CHAT · CLOUD · AI</small></span>
+      </a>
+      <div class="gallery-sidebar-intro"><span class="gallery-eyebrow">Обзор приложения</span><p class="gallery-workspace">Workspace by<br>Семейный архив: Живая память</p><p>Письма, команда и файлы<br>в одном пространстве.</p></div>
+      <nav id="screen-navigation" class="gallery-navigation" aria-label="Рабочие экраны"></nav>
+      <div class="gallery-sidebar-footer"><span class="gallery-status-dot" aria-hidden="true"></span><span>Интерактивный обзор<small>Те же экраны и данные приложения</small></span></div>
+    </aside>
+
+    <main class="gallery-main">
+      <header class="gallery-header">
+        <div class="gallery-heading"><span class="gallery-eyebrow">AVELI · обзор экранов</span><h1 id="screen-title">Входящие и письмо</h1></div>
+        <div class="gallery-header-actions">
+          <div class="gallery-view-switch" role="group" aria-label="Размер экрана">
+            <button type="button" id="desktop-view" data-view="desktop" aria-pressed="true"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><rect x="3" y="4" width="18" height="13" rx="2" stroke="currentColor" stroke-width="1.7"/><path d="M9 21h6M12 17v4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg><span>Компьютер</span></button>
+            <button type="button" id="iphone-view" data-view="iphone" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><rect x="7" y="2.5" width="10" height="19" rx="2.4" stroke="currentColor" stroke-width="1.7"/><path d="M10 5h4M11 19h2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>iPhone 12</span></button>
+          </div>
+          <a id="open-application" class="gallery-open-link" href="/?screen=inbox" target="_blank" rel="noopener">Открыть AVELI<svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M8 5H5v14h14v-3M13 5h6v6M19 5l-9 9" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="gallery-sr-only"> в новой вкладке</span></a>
+        </div>
+      </header>
+
+      <div class="gallery-mobile-navigation"><label for="screen-select">Рабочий экран</label><select id="screen-select" aria-label="Выбрать рабочий экран"></select></div>
+
+      <div class="gallery-screen-intro">
+        <p id="screen-description">Откройте письмо, переключите папку или подготовьте ответ. Все действия выполняются в самом приложении.</p>
+        <span class="gallery-demo-badge"><span class="gallery-status-dot" aria-hidden="true"></span>Демоданные</span>
+      </div>
+
+      <section class="gallery-stage" id="preview-stage" data-view="desktop" aria-label="Интерактивный экран приложения">
+        <div class="gallery-preview-window" id="preview-window">
+          <div class="gallery-preview-bar"><span class="gallery-preview-caption"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M3 7h18v11H3zM7 4h10" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></svg><span id="preview-caption">Почта · Входящие</span></span><span id="viewport-label">Адаптивный веб-интерфейс</span></div>
+          <div class="gallery-frame-wrap">
+            <iframe id="application-preview" title="AVELI: входящие и письмо" allow="camera 'self'; microphone 'self'; fullscreen"></iframe>
+            <div class="gallery-loading" id="preview-loading" role="status"><span class="gallery-loading-ring" aria-hidden="true"></span>Открываем приложение…</div>
+          </div>
+        </div>
+      </section>
+
+      <footer class="gallery-footer"><p id="screen-note">Почта работает на демоданных. Доставка внешних писем потребует подключения почтового сервиса.</p><span id="gallery-live-status" class="gallery-sr-only" aria-live="polite"></span></footer>
+      <noscript><p class="gallery-no-script">Для интерактивного обзора включите JavaScript или <a href="/">откройте приложение</a>.</p></noscript>
+    </main>
+  </div>
+</body>
+</html>

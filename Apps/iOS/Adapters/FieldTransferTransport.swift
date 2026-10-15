@@ -19,6 +19,7 @@ enum TeamHTTP {
         configuration.timeoutIntervalForRequest = 45
         configuration.timeoutIntervalForResource = 180
         configuration.httpMaximumConnectionsPerHost = 2
+        configuration.httpCookieStorage = nil; configuration.httpShouldSetCookies = false
         configuration.urlCache = nil
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         return URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
@@ -30,11 +31,12 @@ struct TeamTransferContext: Sendable {
     let userID: UUID
     let organizationID: UUID
     let generation: UInt64
+    let taskID: String?
     private let token: String
 
-    init(baseURL: URL, token: String, userID: UUID, organizationID: UUID, generation: UInt64) {
+    init(baseURL: URL, token: String, userID: UUID, organizationID: UUID, generation: UInt64, taskID: String? = nil) {
         self.baseURL = baseURL; self.token = token; self.userID = userID
-        self.organizationID = organizationID; self.generation = generation
+        self.organizationID = organizationID; self.generation = generation; self.taskID = taskID
     }
     var scope: FieldTransferScope {
         FieldTransferScope(serverOrigin: baseURL.absoluteString, userID: userID, organizationID: organizationID)
@@ -212,10 +214,14 @@ actor FieldTransferTransport {
     private func execute(_ request: URLRequest, context: TeamTransferContext) async throws -> (Data, HTTPURLResponse) {
         try Task.checkCancellation()
         try await team.requireCurrentTransfer(context)
+        let parts = request.url?.pathComponents ?? []
+        if let index = parts.firstIndex(of: "projects"), parts.count > index + 1,
+           let project = UUID(uuidString: parts[index + 1]) { try await team.requireProject(project) }
         let (data, response) = try await TeamHTTP.session.data(for: request)
         try Task.checkCancellation()
         try await team.requireCurrentTransfer(context)
         guard let http = response as? HTTPURLResponse else { throw FieldTransportError.invalidResponse }
+        if [401, 403].contains(http.statusCode) { await team.accessDenied(); throw StaffAccessError.denied }
         guard (200..<300).contains(http.statusCode) else {
             struct APIError: Decodable { struct Detail: Decodable { let code: String; let message: String }; let error: Detail }
             let detail = try? JSONDecoder().decode(APIError.self, from: data).error

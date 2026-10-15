@@ -56,6 +56,7 @@ final class ObjectCaptureAdapter: ObservableObject {
     init() { state = Self.isSupported ? .idle : .unavailable }
 
     func start(project: AtlasProject, directory: URL, captureOperator: FieldCaptureOperator? = nil) async {
+        guard StaffWorkAccess.allowed(projectID:project.id) else { errorMessage = StaffAccessError.needsLocation.localizedDescription; return }
         guard [.idle, .datasetReady, .modelReady, .failed].contains(state), Self.isSupported,
               !Task.isCancelled else { return }
         stopObserving()
@@ -85,6 +86,7 @@ final class ObjectCaptureAdapter: ObservableObject {
             try await datasetWriter.create(metadata)
             guard generation == ticket, !Task.isCancelled else { state = .idle; return }
             writer = datasetWriter; captureRoot = root; manifest = metadata
+            guard StaffWorkAccess.allowed(projectID:project.id) else { throw StaffAccessError.needsLocation }
             let capture = ObjectCaptureSession()
             session = capture
             maximumShots = capture.maximumNumberOfInputImages
@@ -107,20 +109,26 @@ final class ObjectCaptureAdapter: ObservableObject {
     }
     func resetDetection() { _ = session?.resetDetection(); errorMessage = nil }
     func beginCapture() {
+        guard StaffWorkAccess.allowed(projectID:manifest?.projectID) else { errorMessage = StaffAccessError.needsLocation.localizedDescription; return }
         guard state == .detecting, let session else { return }
         errorMessage = nil; session.startCapturing()
     }
     func togglePause() {
         guard state == .capturing, let session else { return }
-        if session.isPaused { session.resume() } else { session.pause() }
+        if session.isPaused {
+            guard StaffWorkAccess.allowed(projectID:manifest?.projectID) else { errorMessage = StaffAccessError.needsLocation.localizedDescription; return }
+            session.resume()
+        } else { session.pause() }
     }
     func nextPass() {
+        guard StaffWorkAccess.allowed(projectID:manifest?.projectID) else { return }
         guard state == .capturing, let session else { return }
         if session.isPaused { session.resume() }
         session.beginNewScanPass()
         passCompleted = false
     }
     func takeExtraShot() {
+        guard StaffWorkAccess.allowed(projectID:manifest?.projectID) else { return }
         guard state == .capturing, !isPaused, session?.canRequestImageCapture == true else { return }
         session?.requestImageCapture()
     }

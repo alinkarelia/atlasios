@@ -1,4 +1,4 @@
-name: Verify TerraView and build iPhone candidate
+name: 'Семейный архив: Живая память — Atlas и AVELI iOS'
 
 on:
   push:
@@ -280,10 +280,17 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  aveli:
+    name: AVELI staff app
+    needs: preflight
+    uses: ./.github/workflows/aveli-ios.yml
+    permissions:
+      contents: read
+
   verification:
     name: All checks passed; visual review required
     if: always()
-    needs: [preflight, native, device, runtime]
+    needs: [preflight, native, device, runtime, aveli]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -296,7 +303,7 @@ jobs:
           python3 - <<'PY'
           import json, os
           results = json.loads(os.environ['ATLAS_CHECK_RESULTS'])
-          required = {'preflight', 'native', 'device', 'runtime'}
+          required = {'preflight', 'native', 'device', 'runtime', 'aveli'}
           failed = sorted(name for name in required if results.get(name, {}).get('result') != 'success')
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
               summary.write('# Atlas verification\n\n')

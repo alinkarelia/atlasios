@@ -1,0 +1,71 @@
+name: 'Семейный архив: Живая память — AVELI iOS'
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aveli-ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: 'Unsigned arm64 · Xcode ${{ matrix.xcode }}'
+    runs-on: macos-15
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        xcode: ['16.4', '26']
+    defaults:
+      run:
+        working-directory: StaffApps/AVELI
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Select installed stable Apple toolchain
+        env:
+          AVELI_XCODE: ${{ matrix.xcode }}
+        run: |
+          python3 - <<'PY_TOOLCHAIN' > /tmp/aveli-xcode-path.txt
+          import os, pathlib, re
+          requested = os.environ['AVELI_XCODE']
+          if requested == '26':
+              candidates = []
+              for app in pathlib.Path('/Applications').glob('Xcode_26*.app'):
+                  match = re.fullmatch(r'Xcode_(26(?:\.[0-9]+){0,2})\.app', app.name)
+                  if match:
+                      candidates.append((tuple(map(int, match[1].split('.'))), app))
+              if not candidates:
+                  raise SystemExit('Stable Xcode 26 is not installed on this runner.')
+              app = max(candidates)[1]
+          else:
+              app = pathlib.Path('/Applications/Xcode_16.4.app')
+          developer = app / 'Contents/Developer'
+          if not developer.is_dir():
+              raise SystemExit('Required Xcode installation is unavailable.')
+          print(developer)
+          PY_TOOLCHAIN
+          sudo xcode-select -s "$(cat /tmp/aveli-xcode-path.txt)"
+          xcodebuild -version
+          xcrun swift --version
+      - name: Compile and package production remote app
+        run: bash ios/scripts/build-unsigned.sh
+      - name: Preserve unsigned app and exact build metadata
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: semeynyy-arkhiv-zhivaya-pamyat-aveli-1.0.3-b4-xcode${{ matrix.xcode }}-${{ github.sha }}
+          path: |
+            StaffApps/AVELI/ios/build/artifacts/semeynyy-arkhiv-zhivaya-pamyat-aveli-1.0.3-b4-unsigned.ipa
+            StaffApps/AVELI/ios/build/artifacts/semeynyy-arkhiv-zhivaya-pamyat-aveli-SHA256SUMS.txt
+            StaffApps/AVELI/ios/build/artifacts/semeynyy-arkhiv-zhivaya-pamyat-aveli-build-info.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14

@@ -75,6 +75,7 @@ final class MeasurementCoordinator: NSObject, ObservableObject, @preconcurrency 
     }
 
     func start() async {
+        guard StaffWorkAccess.allowed() else { issue = StaffAccessError.needsLocation.localizedDescription; return }
         guard Self.isSupported else { state = .unavailable; return }
         guard state != .preparing, state != .running, !Task.isCancelled else { return }
         let ticket = UUID(); generation = ticket
@@ -99,6 +100,7 @@ final class MeasurementCoordinator: NSObject, ObservableObject, @preconcurrency 
             configuration.planeDetection = [.horizontal, .vertical]
             if Self.usesLiDAR { configuration.sceneReconstruction = .mesh }
             if Self.usesSceneDepth { configuration.frameSemantics.insert(.sceneDepth) }
+            try StaffWorkAccess.require()
             state = .running
             view.session.run(configuration, options: [.resetTracking, .removeExistingAnchors])
             message = "Медленно двигайте телефон, чтобы обнаружить поверхности"
@@ -133,6 +135,7 @@ final class MeasurementCoordinator: NSObject, ObservableObject, @preconcurrency 
     }
 
     func capturePoint() {
+        guard StaffWorkAccess.allowed() else { stop(); return }
         guard state == .running, trackingNormal, second == nil,
               let received = lastFrameReceived, Date().timeIntervalSince(received) < 0.75,
               let frame = arView.session.currentFrame, Self.isFresh(frame), case .normal = frame.camera.trackingState,
