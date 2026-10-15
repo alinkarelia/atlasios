@@ -155,7 +155,7 @@ final class WebSession: NSObject, ObservableObject, WKNavigationDelegate, WKUIDe
     private func openWork() async {
         guard !clearingWebData, workAllowed, !bootstrapping, let credential else { return }
         if hasLoadedPage && configuration.policy.isApplicationURL(webView.url) {
-            webView.setAllMediaPlaybackSuspended(false)
+            webView.setAllMediaPlaybackSuspended(false, completionHandler: nil)
             webView.evaluateJavaScript("window.dispatchEvent(new Event('aveli:native-resume'))", completionHandler: nil)
             return
         }
