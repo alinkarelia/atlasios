@@ -36,18 +36,28 @@ final class StaffAccountSession: NSObject, ObservableObject, ASWebAuthentication
             else { bindingsReadable = false; issue = "Не удалось прочитать связи заданий. Исходники сохранены; обратитесь к руководителю." }
         }
         location.changed = { [weak self] in self?.updateWorkGate() }
-        team.workAuthorization = { [weak self] in self?.canWork() == true }
-        team.projectAuthorization = { [weak self] project in self?.canWork(projectID:project) == true }
+        team.workAuthorization = { [weak self] in self?.canTransfer() == true }
+        team.projectAuthorization = { [weak self] project in self?.canTransfer(projectID:project) == true }
         team.onAccessDenied = { [weak self] in self?.revoke() }
         StaffWorkAccess.permission = { [weak self] project in self?.canWork(projectID:project) == true }
     }
     var hasAccount: Bool { account != nil }
     var authenticated: Bool { account?.valid == true && contextVerified && context != nil }
+    // An assignment authorizes a server transfer, not entry into the app.
+    // Existing local projects and exports remain reachable without one.
+    var canOpenApplication: Bool { authenticated }
     var selectedTask: StaffAccountContext.Assignment? { context?.tasks.first { $0.id == selectedTaskID } }
     var allowedProjectIDs: Set<UUID> {
         Set(bindings.compactMap { id, binding in bindingMatches(binding) ? UUID(uuidString:id) : nil })
     }
     func canWork(projectID: UUID? = nil) -> Bool {
+        guard authenticated, location.canWork else { return false }
+        // The chief may create and capture a local project before assigning it.
+        // This does not mint a runtime credential or change an existing binding.
+        if context?.user.isChief == true { return true }
+        return canTransfer(projectID:projectID)
+    }
+    func canTransfer(projectID: UUID? = nil) -> Bool {
         guard authenticated, let task = selectedTask, task.projectID == runtimeWorkspaceID, team.connected, runtimeExpiresAt > Date(), location.canWork else { return false }
         if let projectID { return bindings[projectID.uuidString].map(bindingMatches) == true }
         return true
@@ -70,6 +80,18 @@ final class StaffAccountSession: NSObject, ObservableObject, ASWebAuthentication
         binding.accountID == context?.user.id && binding.taskID == selectedTaskID && binding.workspaceID == runtimeWorkspaceID
     }
     func restore() async {
+        #if DEBUG && targetEnvironment(simulator)
+        // This fixture exercises the production root gate, without the broad
+        // local-tools bypass, real credentials, HTTP, or a fake GPS grant.
+        if StaffWorkAccess.diagnosticChiefWithoutTasks {
+            account = StaffAccountToken(accessToken:"nsa_" + String(repeating:"f",count:43), tokenType:"Bearer",
+                expiresAt:"2100-01-01T00:00:00Z",expiresIn:86_400,clientID:"atlas")
+            context = StaffAccountContext(clientID:"atlas",sessionID:"simulator-chief-without-tasks",
+                expiresAt:"2100-01-01T00:00:00Z",user:.init(id:"simulator-chief",name:"Главный · UI-проверка",isChief:true),
+                projects:[],tasks:[],permissions:.init(locationRequired:true))
+            contextVerified = true; updateWorkGate(); return
+        }
+        #endif
         guard let data = StaffKeychain.read(), let token = try? JSONDecoder().decode(StaffAccountToken.self, from:data), token.valid else {
             StaffKeychain.remove(); return
         }
@@ -162,9 +184,9 @@ final class StaffAccountSession: NSObject, ObservableObject, ASWebAuthentication
     func startWorkSession() { workingSessionActive = true; location.start(); updateWorkGate() }
     func pauseWorkSession() { workingSessionActive = false; location.stop(reason:"off_duty"); updateWorkGate() }
     func setForeground(_ foreground: Bool) {
-        if foreground { contextVerified = false }
+        if foreground && !StaffWorkAccess.diagnosticChiefWithoutTasks { contextVerified = false }
         location.setForeground(foreground)
-        if foreground, account?.valid == true { Task { await refresh() } }
+        if foreground, account?.valid == true, !StaffWorkAccess.diagnosticChiefWithoutTasks { Task { await refresh() } }
         updateWorkGate()
     }
     func signOut() {

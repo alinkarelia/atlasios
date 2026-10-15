@@ -82,7 +82,7 @@ struct ContentView: View {
                     if session.isSignedIn { Button("Завершить работу") { session.stopWork(); settingsOpen = false } }
                 }
                 Section("Приложение") {
-                    Text("AVELI 1.0.3 (4)")
+                    Text("AVELI 1.0.4 (5)")
                     Text(AppConfiguration.projectName)
                     Link("Помощь", destination: session.configuration.helpURL)
                 }

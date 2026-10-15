@@ -49,7 +49,7 @@ final class WebSession: NSObject, ObservableObject, WKNavigationDelegate, WKUIDe
         location = WorkLocationService(api: api)
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
-        config.applicationNameForUserAgent = "AVELI-iOS/1.0.3"
+        config.applicationNameForUserAgent = "AVELI-iOS/1.0.4"
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = [.audio, .video]
         webView = WKWebView(frame: .zero, configuration: config)
@@ -167,13 +167,13 @@ final class WebSession: NSObject, ObservableObject, WKNavigationDelegate, WKUIDe
         do {
             let ticket = try await api.webTicket(credential.accessToken)
             guard current == epoch, currentAuth == authEpoch, self.credential?.accessToken == credential.accessToken, bootstrapID == requestID, workAllowed else { return }
-            var request = URLRequest(url: URL(string: ticket.bootstrapURL)!)
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try JSONSerialization.data(withJSONObject: ["ticket": ticket.ticket])
+            let cookies = try await api.webSessionCookies(ticket)
+            guard current == epoch, currentAuth == authEpoch, self.credential?.accessToken == credential.accessToken, bootstrapID == requestID, workAllowed else { return }
+            await NativeWebBootstrap.install(cookies, into: webView.configuration.websiteDataStore.httpCookieStore)
+            guard current == epoch, currentAuth == authEpoch, self.credential?.accessToken == credential.accessToken, bootstrapID == requestID, workAllowed else { return }
             isLoading = true
             issue = nil
-            webView.load(request)
+            webView.load(URLRequest(url: NativeWebBootstrap.startURL, cachePolicy: .reloadIgnoringLocalCacheData))
         } catch { if current == epoch, currentAuth == authEpoch, self.credential?.accessToken == credential.accessToken, bootstrapID == requestID { authorityFailed(error) } }
     }
     private func pauseWebContent() {
@@ -278,10 +278,20 @@ final class WebSession: NSObject, ObservableObject, WKNavigationDelegate, WKUIDe
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
         if navigationResponse.response.url?.absoluteString == "about:blank" { decisionHandler(.allow); return }
         guard workAllowed, configuration.policy.isApplicationURL(navigationResponse.response.url) || configuration.policy.isApplicationBlobURL(navigationResponse.response.url ?? URL(string: "about:blank")!, sourceURL: webView.url) else { decisionHandler(.cancel); return }
+        let workingDocument = ["/aveli/connect", "/aveli/mail"].contains(navigationResponse.response.url?.path ?? "")
+        if navigationResponse.isForMainFrame, let http = navigationResponse.response as? HTTPURLResponse,
+           (workingDocument || http.statusCode >= 400 || http.mimeType?.lowercased() == "application/json"),
+           let message = NativeWebBootstrap.documentError(status: http.statusCode, mimeType: http.mimeType) {
+            hasLoadedPage = false
+            isLoading = false
+            issue = message
+            decisionHandler(.cancel)
+            return
+        }
         decisionHandler(navigationResponse.canShowMIMEType ? .allow : .download)
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        guard workAllowed, configuration.policy.isApplicationURL(webView.url) else { return }
+        guard workAllowed, ["/aveli/connect", "/aveli/mail"].contains(webView.url?.path ?? ""), configuration.policy.isApplicationURL(webView.url) else { return }
         isLoading = false
         hasLoadedPage = true
         issue = nil

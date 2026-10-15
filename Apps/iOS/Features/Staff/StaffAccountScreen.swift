@@ -48,7 +48,7 @@ struct StaffAccountScreen: View {
                 Section("Задание") {
                     if let context = staff.context, context.tasks.isEmpty {
                         Text("Предоставленных заданий пока нет").font(.headline)
-                        Text(context.user.isChief ? "Вход главного выполнен. Для съёмки выберите настоящее задание на сайте." : "Руководитель назначает задания и доступ на сайте.")
+                        Text(context.user.isChief ? "Создавайте проекты и снимайте на устройстве. Задание можно выбрать перед отправкой на сайт." : "Проекты на устройстве доступны. Для рабочей съёмки и отправки руководитель назначает задание на сайте.")
                             .font(.subheadline).foregroundStyle(Color.atlasMuted)
                     } else {
                         Picker("Задание",selection:$taskID) {
@@ -86,7 +86,7 @@ struct StaffAccountScreen: View {
                             .font(.caption).foregroundStyle(Color.atlasMuted)
                     }.listRowBackground(Color.atlasCard)
                 }
-                if staff.workAllowed {
+                if staff.canTransfer() {
                     Section { NavigationLink("Материалы команды") { StaffRuntimeWorkspaceScreen(model:model) } }
                         .listRowBackground(Color.atlasCard)
                 }

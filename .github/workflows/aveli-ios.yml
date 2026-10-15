@@ -61,9 +61,9 @@ jobs:
       - name: Preserve unsigned app and exact build metadata
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: semeynyy-arkhiv-zhivaya-pamyat-aveli-1.0.3-b4-xcode${{ matrix.xcode }}-${{ github.sha }}
+          name: semeynyy-arkhiv-zhivaya-pamyat-aveli-1.0.4-b5-xcode${{ matrix.xcode }}-${{ github.sha }}
           path: |
-            StaffApps/AVELI/ios/build/artifacts/semeynyy-arkhiv-zhivaya-pamyat-aveli-1.0.3-b4-unsigned.ipa
+            StaffApps/AVELI/ios/build/artifacts/semeynyy-arkhiv-zhivaya-pamyat-aveli-1.0.4-b5-unsigned.ipa
             StaffApps/AVELI/ios/build/artifacts/semeynyy-arkhiv-zhivaya-pamyat-aveli-SHA256SUMS.txt
             StaffApps/AVELI/ios/build/artifacts/semeynyy-arkhiv-zhivaya-pamyat-aveli-build-info.txt
           if-no-files-found: error

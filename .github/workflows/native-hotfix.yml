@@ -1,0 +1,84 @@
+name: 'Семейный архив: Живая память — исправление входа приложений'
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['semeynyy-arkhiv-zhivaya-pamyat-native-hotfix-v1.71']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-entry-hotfix-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  atlas:
+    name: Atlas chief entry and iPhone IPA
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Select Xcode 16.4
+        run: sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
+      - name: Install project generator dependency
+        run: python3 -m pip install 'PyYAML==6.0.3'
+      - name: Test actual staff entry and transfer policies
+        run: python3 Apps/iOS/Adapters/Tests/check-staff-entry-policy.py
+      - name: Build and validate unsigned iPhone IPA
+        run: bash Scripts/build-device-ipa.sh
+      - name: Test chief without assignments and signed-out local access
+        env:
+          ATLAS_RUNTIME_IOS_MAJOR: '18'
+        run: bash Scripts/check-runtime.sh --staff-entry-only
+      - name: Retain exact IPA and targeted diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: semeynyy-arkhiv-zhivaya-pamyat-atlas-0.7.2-b11-hotfix-${{ github.sha }}
+          path: |
+            artifacts/device-preview/Atlas-unsigned.ipa
+            artifacts/focused-staff-entry-runtime/diagnostics/test-summary.json
+            artifacts/focused-staff-entry-runtime/screenshots/test-attachments/**
+            artifacts/focused-staff-entry-runtime/simulator-selection.json
+          if-no-files-found: error
+          retention-days: 14
+
+  aveli:
+    name: AVELI WebKit first load and iPhone IPA
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Select Xcode 16.4
+        run: sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
+      - name: Build and validate unsigned iPhone IPA
+        working-directory: StaffApps/AVELI
+        run: bash ios/scripts/build-unsigned.sh
+      - name: Check actual WebKit cookie bootstrap
+        run: python3 StaffApps/AVELI/ios/scripts/check-web-bootstrap.py
+      - name: Retain exact IPA and bootstrap proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: semeynyy-arkhiv-zhivaya-pamyat-aveli-1.0.4-b5-hotfix-${{ github.sha }}
+          path: |
+            StaffApps/AVELI/ios/build/artifacts/semeynyy-arkhiv-zhivaya-pamyat-aveli-1.0.4-b5-unsigned.ipa
+            StaffApps/AVELI/ios/build/artifacts/semeynyy-arkhiv-zhivaya-pamyat-aveli-build-info.txt
+            StaffApps/AVELI/ios/build/artifacts/semeynyy-arkhiv-zhivaya-pamyat-aveli-SHA256SUMS.txt
+            StaffApps/AVELI/ios/build/artifacts/*bootstrap*.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14

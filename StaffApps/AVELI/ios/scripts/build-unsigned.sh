@@ -5,7 +5,7 @@ set -euo pipefail
 if [[ "${1:-}" == "--help" ]]; then
   printf '%s\n' 'Usage: ./ios/scripts/build-unsigned.sh' '' \
     'Requires macOS and a full Xcode installation. No Apple Developer membership is needed.' \
-    'Output: ios/build/artifacts/semeynyy-arkhiv-zhivaya-pamyat-aveli-1.0.3-b4-unsigned.ipa (not signed for direct installation).'
+    'Output: ios/build/artifacts/semeynyy-arkhiv-zhivaya-pamyat-aveli-1.0.4-b5-unsigned.ipa (not signed for direct installation).'
   exit 0
 fi
 if [[ "$#" -ne 0 ]]; then
@@ -29,7 +29,7 @@ DERIVED_DIR="$BUILD_DIR/DerivedData"
 ARTIFACT_DIR="$BUILD_DIR/artifacts"
 STAGING_DIR="$BUILD_DIR/ipa-staging"
 PAYLOAD_DIR="$STAGING_DIR/Payload"
-IPA_NAME="semeynyy-arkhiv-zhivaya-pamyat-aveli-1.0.3-b4-unsigned.ipa"
+IPA_NAME="semeynyy-arkhiv-zhivaya-pamyat-aveli-1.0.4-b5-unsigned.ipa"
 IPA_PATH="$ARTIFACT_DIR/$IPA_NAME"
 
 # Remove only generated packaging output. Never package a stale IPA after a failed build.
@@ -86,7 +86,7 @@ fi
 python3 - "$APP_PLIST" <<'PLIST_CHECK'
 import plistlib, sys
 p = plistlib.load(open(sys.argv[1], 'rb'))
-assert p['CFBundleShortVersionString'] == '1.0.3' and p['CFBundleVersion'] == '4'
+assert p['CFBundleShortVersionString'] == '1.0.4' and p['CFBundleVersion'] == '5'
 assert p['NSAppTransportSecurity'] == {'NSAllowsArbitraryLoads': False}
 assert p['CFBundleURLTypes'][0]['CFBundleURLSchemes'] == ['archiverf-aveli']
 assert p['NSLocationWhenInUseUsageDescription']

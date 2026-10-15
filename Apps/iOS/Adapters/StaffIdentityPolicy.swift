@@ -74,6 +74,13 @@ enum StaffAccessError: LocalizedError, Sendable {
 @MainActor
 enum StaffWorkAccess {
     static var permission: (UUID?) -> Bool = { _ in false }
+    static var diagnosticChiefWithoutTasks: Bool {
+        #if DEBUG && targetEnvironment(simulator)
+        ProcessInfo.processInfo.arguments.contains("--uitest-staff-chief-no-tasks")
+        #else
+        false
+        #endif
+    }
     static var diagnosticFixtures: Bool {
         #if DEBUG && targetEnvironment(simulator)
         ProcessInfo.processInfo.arguments.contains("--uitest-local-fixtures")

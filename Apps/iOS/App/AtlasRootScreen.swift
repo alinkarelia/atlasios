@@ -19,8 +19,7 @@ private struct AtlasStaffRoot: View {
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if !model.storeAvailable {
                 AtlasEmptyState(title: "Данные недоступны", message: model.issue ?? "Проверьте свободное место на устройстве.", symbol: "externaldrive.badge.exclamationmark")
-            } else if !StaffWorkAccess.diagnosticFixtures &&
-                (!staff.workAllowed || model.selectedProject.map({ !staff.projectIsBound($0.id) }) != false) {
+            } else if !StaffWorkAccess.diagnosticFixtures && !staff.canOpenApplication {
                 NavigationStack { StaffAccountScreen(model:model,staff:staff) }
             } else {
                 VStack(spacing:0) {
@@ -29,7 +28,12 @@ private struct AtlasStaffRoot: View {
                             Image(systemName:"location.fill")
                             Text(staff.location.message).font(.caption).lineLimit(1)
                             Spacer()
-                            Button("Пауза") { staff.pauseWorkSession() }.font(.caption.weight(.semibold))
+                            if staff.workingSessionActive {
+                                Button("Пауза") { staff.pauseWorkSession() }.font(.caption.weight(.semibold))
+                            } else {
+                                Button("Начать работу") { staff.startWorkSession() }.font(.caption.weight(.semibold))
+                                    .accessibilityIdentifier("staff.work.start")
+                            }
                         }.foregroundStyle(Color.atlasInk).padding(10).background(Color.atlasCard)
                     }
                 TabView {

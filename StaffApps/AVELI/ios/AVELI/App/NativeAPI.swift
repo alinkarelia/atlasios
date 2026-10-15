@@ -38,7 +38,7 @@ struct NativeWebTicket: Decodable {
     enum CodingKeys: String, CodingKey { case ticket; case expiresAt = "expires_at"; case expiresIn = "expires_in"; case bootstrapURL = "bootstrap_url" }
 }
 struct NativeOK: Decodable { let ok: Bool }
-private final class NativeRedirectGuard: NSObject, URLSessionTaskDelegate {
+final class NativeRedirectGuard: NSObject, URLSessionTaskDelegate {
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) { completionHandler(nil) }
 }
@@ -90,4 +90,15 @@ final class NativeAPI {
               NativeAuthContract.valid(value.ticket, prefix: "nswt_") else { throw NativeAPIError.local("Одноразовое подключение истекло. Повторите вход.") }
         return value
     }
+    func webSessionCookies(_ ticket: NativeWebTicket) async throws -> [HTTPCookie] {
+        // URLSession has no document Origin/Sec-Fetch-Site. The existing redirect
+        // guard keeps the 303 and its cookies here; the ticket never enters WebKit.
+        let request = try NativeWebBootstrap.request(ticket: ticket.ticket)
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, data.count <= 64 * 1024 else {
+            throw NativeWebBootstrapError.invalidResponse
+        }
+        return try NativeWebBootstrap.cookies(from: http)
+    }
+
 }

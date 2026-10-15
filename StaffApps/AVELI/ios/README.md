@@ -1,6 +1,6 @@
 # Семейный архив: Живая память — AVELI для iOS
 
-Рабочее приложение AVELI, версия 1.0.3 (4), `ru.archiverf.aveli`, iOS 17 и новее. Приложение открывает только действующий рабочий интерфейс `https://archiverf.ru/aveli/connect`. Исходные изображения поставщика сохранены.
+Рабочее приложение AVELI, версия 1.0.4 (5), `ru.archiverf.aveli`, iOS 17 и новее. Приложение открывает только действующий рабочий интерфейс `https://archiverf.ru/aveli/connect`. Исходные изображения поставщика сохранены.
 
 Вход проходит через сайт в системном окне `ASWebAuthenticationSession`: общий аккаунт, PKCE S256, зарегистрированный callback `archiverf-aveli://oauth/callback`. Токен аккаунта хранится в Keychain с `WhenUnlockedThisDeviceOnly`. В WebKit передаётся только одноразовый билет в теле POST; сервер создаёт защищённую cookie-сессию. Токены аккаунта и рабочего runtime не передаются в JavaScript, URL или localStorage.
 

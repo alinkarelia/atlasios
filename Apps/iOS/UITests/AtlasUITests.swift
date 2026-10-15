@@ -7,6 +7,36 @@ import XCTest
 /// persisted projects, explicit hardware fallback, and the real SceneKit viewer.
 /// Simulator cannot validate camera frames, LiDAR geometry, or measurement accuracy.
 final class AtlasUITests: XCTestCase {
+    /// An authenticated chief with zero assignments must reach the real tabs,
+    /// create a local project, reopen it and find export without a task binding.
+    /// The fixture is compiled out on physical devices and never grants GPS.
+    @MainActor
+    func testChiefWithoutAssignmentsOpensProjectsAndLocalExport() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-AppleLanguages", "(ru)", "-AppleLocale", "ru_RU", "--uitest-staff-chief-no-tasks"]
+        app.launch()
+        XCTAssertTrue(app.tabBars.buttons["Проекты"].waitForExistence(timeout:20))
+        XCTAssertFalse(element("staff.task.open",in:app).exists)
+        let createID = element("projects.create",in:app).waitForExistence(timeout:5) ? "projects.create" : "projects.createToolbar"
+        tap(createID,in:app)
+        let field = element("project.name",in:app)
+        XCTAssertTrue(field.waitForExistence(timeout:10))
+        let name = "Без задания \(UUID().uuidString.prefix(8))"
+        field.tap(); field.typeText(name)
+        tap("project.save",in:app)
+        XCTAssertTrue(element("projects.startCapture",in:app).waitForExistence(timeout:15))
+        XCTAssertTrue(app.staticTexts[name].firstMatch.exists)
+        screenshot("staff-chief-no-assignment-project",app:app)
+        app.terminate(); app.launch()
+        XCTAssertTrue(app.staticTexts[name].firstMatch.waitForExistence(timeout:20))
+        app.tabBars.buttons["Профиль"].tap()
+        let export = element("settings.exportProject",in:app)
+        scrollToControl(export,in:app)
+        XCTAssertTrue(export.exists && export.isEnabled)
+        screenshot("staff-chief-no-assignment-local-export",app:app)
+    }
+
     /// Production entry, deliberately without the local-fixture bypass. No
     /// real account, email code, server token or simulated GPS is manufactured.
     @MainActor

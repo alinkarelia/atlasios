@@ -3,7 +3,7 @@
 from pathlib import Path
 import subprocess, tempfile
 root = Path(__file__).resolve().parents[1]
-source = "\n".join((root / 'AVELI/App' / name).read_text() for name in ['NativeAuthContract.swift', 'URLPolicy.swift'])
+source = "\n".join((root / 'AVELI/App' / name).read_text() for name in ['NativeAuthContract.swift', 'URLPolicy.swift', 'NativeWebBootstrap.swift'])
 tests = r'''
 var count = 0
 func check(_ value: Bool, _ label: String) { precondition(value, label); count += 1 }
@@ -31,6 +31,26 @@ check(!policy.isApplicationBlobURL(URL(string: "blob:https://evil.invalid/123")!
 check(!policy.isApplicationBlobURL(URL(string: "blob:https://archiverf.ru/123")!, sourceURL: URL(string: "https://archiverf.ru/aveli/")!), "prototype blob blocked")
 check(policy.permitsMediaOrigin(scheme: "https", host: "archiverf.ru", port: 443), "media origin")
 check(!policy.permitsMediaOrigin(scheme: "http", host: "archiverf.ru", port: 80), "insecure media blocked")
+
+let ticket = "nswt_" + String(repeating: "A", count: 43)
+let bootstrap = try NativeWebBootstrap.request(ticket: ticket)
+check(bootstrap.url == NativeWebBootstrap.endpoint && bootstrap.httpMethod == "POST", "ticket is POST to exact origin")
+check(bootstrap.url?.query == nil && bootstrap.value(forHTTPHeaderField: "Authorization") == nil, "no credential in URL or WebKit bearer")
+check(bootstrap.value(forHTTPHeaderField: "Origin") == nil && bootstrap.value(forHTTPHeaderField: "Sec-Fetch-Site") == nil, "native request has no document origin")
+check((try JSONSerialization.jsonObject(with: bootstrap.httpBody!)) as? [String: String] == ["ticket": ticket], "only ticket in POST body")
+check((try? NativeWebBootstrap.request(ticket: "nsa_" + String(repeating: "A", count: 43))) == nil, "account bearer cannot redeem")
+let cookieHeaders = ["Location": "/aveli/connect", "Set-Cookie": "__Secure-aveli-session=; Path=/aveli/; HttpOnly; SameSite=Strict; Max-Age=0; Secure, __Host-aveli_native=" + String(repeating: "N", count: 43) + "; Path=/; HttpOnly; SameSite=Lax; Max-Age=3600; Secure, __Host-aveli_csrf=" + String(repeating: "C", count: 43) + "; Path=/; SameSite=Lax; Max-Age=3600; Secure"]
+let bootstrapResponse = HTTPURLResponse(url: NativeWebBootstrap.endpoint, statusCode: 303, httpVersion: nil, headerFields: cookieHeaders)!
+let bootstrapCookies = try NativeWebBootstrap.cookies(from: bootstrapResponse)
+check(bootstrapCookies.first { $0.name == "__Host-aveli_native" }?.isHTTPOnly == true, "server HTTP-only native cookie preserved")
+check(bootstrapCookies.first { $0.name == "__Host-aveli_csrf" }?.isHTTPOnly == false, "CSRF cookie remains readable")
+check((try? NativeWebBootstrap.cookies(from: HTTPURLResponse(url: NativeWebBootstrap.endpoint, statusCode: 403, httpVersion: nil, headerFields: cookieHeaders)!)) == nil, "cross_site JSON response cannot become session")
+var foreignHeaders = cookieHeaders; foreignHeaders["Location"] = "https://evil.invalid/"
+check((try? NativeWebBootstrap.cookies(from: HTTPURLResponse(url: NativeWebBootstrap.endpoint, statusCode: 303, httpVersion: nil, headerFields: foreignHeaders)!)) == nil, "no redirect outside exact application start")
+check((try? NativeWebBootstrap.cookies(from: HTTPURLResponse(url: URL(string: "https://evil.invalid/")!, statusCode: 303, httpVersion: nil, headerFields: cookieHeaders)!)) == nil, "no cookies from foreign endpoint")
+check(NativeWebBootstrap.documentError(status: 403, mimeType: "application/json") != nil, "HTTP error is native retry UI")
+check(NativeWebBootstrap.documentError(status: 200, mimeType: "application/json") != nil, "raw API JSON is never a main document")
+check(NativeWebBootstrap.documentError(status: 200, mimeType: "text/html") == nil, "HTML working screen allowed")
 print("Семейный архив: Живая память — AVELI native contract: \(count) passed")
 '''
 with tempfile.TemporaryDirectory(prefix='aveli-swift-contract-') as directory:

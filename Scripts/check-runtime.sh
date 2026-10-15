@@ -9,10 +9,13 @@ fi
 
 launch_only=false
 field_interactions_only=false
+staff_entry_only=false
 if [[ "${1:-}" == "--launch-only" ]]; then
   launch_only=true
 elif [[ "${1:-}" == "--field-interactions-only" ]]; then
   field_interactions_only=true
+elif [[ "${1:-}" == "--staff-entry-only" ]]; then
+  staff_entry_only=true
 elif [[ -n "${1:-}" ]]; then
   printf 'Unknown argument: %s\n' "$1" >&2
   exit 2
@@ -22,6 +25,9 @@ artifacts="$repo_root/artifacts/runtime"
 if "$field_interactions_only"; then
   # Keep a focused diagnostic separate from the complete release evidence.
   artifacts="$repo_root/artifacts/focused-fieldwork-runtime"
+fi
+if "$staff_entry_only"; then
+  artifacts="$repo_root/artifacts/focused-staff-entry-runtime"
 fi
 derived_data="$artifacts/DerivedData"
 screenshots="$artifacts/screenshots"
@@ -136,12 +142,21 @@ if "$field_interactions_only"; then
     test
   )
 fi
+if "$staff_entry_only"; then
+  focused_arguments=(
+    -only-testing:AtlasUITests/AtlasUITests/testStaffEntryKeepsNewWorkClosedAndLocalExportAvailableBeforeLogin
+    -only-testing:AtlasUITests/AtlasUITests/testChiefWithoutAssignmentsOpensProjectsAndLocalExport
+    test
+  )
+fi
 xcodebuild -project "$repo_root/Atlas.xcodeproj" -scheme AtlasUITests -configuration Debug \
   -destination "platform=iOS Simulator,id=$device_id" -derivedDataPath "$derived_data" \
   -resultBundlePath "$result_bundle" -parallel-testing-enabled NO \
   CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO ONLY_ACTIVE_ARCH=YES "${focused_arguments[@]}"
 
-if "$field_interactions_only"; then
+if "$staff_entry_only"; then
+  printf 'Focused staff entry tests passed. This is not a complete release UI check. Results: %s\n' "$artifacts"
+elif "$field_interactions_only"; then
   printf 'Focused fieldwork interactions passed. This is not a complete release UI check. Results: %s\n' "$artifacts"
 else
   printf 'Native UI tests passed in Simulator. Results and screenshots: %s\n' "$artifacts"
