@@ -587,6 +587,9 @@ final class AtlasUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Демо · этажи здания"].firstMatch.waitForExistence(timeout: 15))
         tap("projects.openSelected", in: app)
         scrollAndTap("projects.buildingPlans", in: app)
+        XCTAssertTrue(element("building.catalog", in: app).waitForExistence(timeout: 15))
+        XCTAssertTrue(secondPlan.waitForExistence(timeout: 10),
+                      "The saved second-floor plan must finish loading again before scrolling the catalog")
         let reopenedPlan = app.buttons["building.plan.A71A5000-1234-4000-8000-000000000203"].firstMatch
         scrollToControl(reopenedPlan, in: app)
         XCTAssertTrue(element("building.floor.1", in: app).exists,
