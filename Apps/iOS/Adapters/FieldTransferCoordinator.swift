@@ -63,11 +63,25 @@ final class FieldTransferCoordinator: ObservableObject {
             guard !busy else { return }
             Task { @MainActor [weak self] in self?.resume() }
         }.store(in: &subscriptions)
+        team.$cloudLocationAllowed.removeDuplicates().sink { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if !self.team.cloudLocationAllowed {
+                    // The local destination and durable send intent remain
+                    // intact while a required foreground location is paused.
+                    self.generation &+= 1
+                    self.worker?.cancel(); self.retryTimer?.cancel(); self.renewalTask?.cancel()
+                } else { self.resume() }
+            }
+        }.store(in: &subscriptions)
     }
 
     var connectionHint: String {
         guard team.transferScope != nil else {
             return "Исходники доступны на устройстве. Выберите подключение для серверной передачи; локальные инструменты работают без него."
+        }
+        if !team.cloudLocationAllowed {
+            return "Серверная передача ожидает подтверждения рабочей геолокации. Очередь сохранена; локальные инструменты доступны полностью."
         }
         if renewalTask != nil { return "Обновляем защищённое подключение. Очередь и подтверждённые фрагменты сохранены." }
         if renewalBlockedScope == team.transferScope {
@@ -122,6 +136,7 @@ final class FieldTransferCoordinator: ObservableObject {
     func renewConnection(expectedScope scope: FieldTransferScope) async throws -> TeamTransferContext {
         try Task.checkCancellation(); try team.requireCurrentScope(scope)
         guard active else { throw CancellationError() }
+        try team.requireCloudWorkLocation()
         // Automatic renewal has its own task, never the upload worker. An
         // explicit action can wait for it without cancelling its own login.
         if let renewalTask { await renewalTask.value }
@@ -294,7 +309,7 @@ final class FieldTransferCoordinator: ObservableObject {
     }
     private func resume() {
         guard active, worker == nil, renewalTask == nil, network != .offline, let queue,
-              let scope = team.transferScope else { return }
+              let scope = team.transferScope, team.cloudLocationAllowed else { return }
         if renewalBlockedScope == scope {
             if let current = try? team.transferContext(), current.generation != blockedRuntimeGeneration {
                 // The operator established a new runtime after the rejection.
@@ -348,6 +363,11 @@ final class FieldTransferCoordinator: ObservableObject {
                 guard context.scope == scope, self.active, self.network != .offline else { throw CancellationError() }
                 self.renewalFailures = 0; self.renewalRetryAt = nil; self.issue = nil
                 succeeded = true
+            } catch StaffAccountError.workLocationRequired {
+                // A policy first learned from a fresh account context may
+                // pause renewal. The location-ready publisher wakes this
+                // same durable scope; it is not an authorization rejection.
+                self.issue = "Подтвердите рабочую геолокацию для серверной передачи. Очередь и исходники сохранены."
             } catch is CancellationError {
                 // A rapid return to the foreground must wake work after the
                 // cancelled network call actually unwinds, not before it.
@@ -444,7 +464,10 @@ final class FieldTransferCoordinator: ObservableObject {
                 if case TeamError.runtimeExpired = error {
                     renewalBlockedScope = context.scope; blockedRuntimeGeneration = context.generation
                 }
-                if error is CancellationError || Task.isCancelled {
+                if case StaffAccountError.workLocationRequired = error {
+                    _ = try? await queue.markFailed(id: record.id,
+                        message: "Передача ожидает рабочую геолокацию. Подтверждённые данные и исходники сохранены.", retryable: true)
+                } else if error is CancellationError || Task.isCancelled {
                     _ = try? await queue.markFailed(id: record.id,
                         message: "Передача приостановлена. Подтверждённые данные сохранены; продолжим при подходящих условиях.", retryable: true)
                 } else if let failure = error as? FieldTransportError {

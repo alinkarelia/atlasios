@@ -80,6 +80,7 @@ struct TeamConnectionScreen: View {
                         Task { await service.signOut(); await model.transfers.authenticationChanged() }
                     }.accessibilityIdentifier("team.archiveSignOut")
                 }.listRowBackground(Color.atlasCard)
+                StaffWorkLocationSection(team: service, identifierPrefix: "team.workLocation")
                 Section {
                     if service.availableTasks.isEmpty {
                         Text("Доступных заданий пока нет").font(.headline)
@@ -235,6 +236,64 @@ struct TeamConnectionScreen: View {
         case "surveyor": "Полевой специалист"
         case "reviewer": "Проверяющий"
         default: "Наблюдатель"
+        }
+    }
+}
+
+/// Working-location sharing is separate from the project's own geotags. This
+/// section never requests location on appearance or for a signed-out account.
+struct StaffWorkLocationSection: View {
+    @ObservedObject var team: TeamService
+    @ObservedObject private var location: StaffWorkLocation
+    let identifierPrefix: String
+
+    init(team: TeamService, identifierPrefix: String) {
+        self.team = team
+        self.identifierPrefix = identifierPrefix
+        _location = ObservedObject(wrappedValue: team.workLocation)
+    }
+
+    var body: some View {
+        if team.accountSignedIn {
+            Section {
+                if team.cloudLocationRequired {
+                    Text("По правилам организации для работы с сервером нужна рабочая геолокация. После включения сайт получает координаты, время и точность; руководитель видит рабочее положение по правам сайта.")
+                        .font(.footnote).foregroundStyle(Color.atlasMuted)
+                        .accessibilityIdentifier(identifierPrefix + ".notice")
+                    Label(location.message, systemImage: location.acknowledged ? "location.fill" : "location")
+                        .font(.subheadline)
+                        .accessibilityIdentifier(identifierPrefix + ".status")
+                    if location.reducedAccuracy {
+                        Text("iPhone предоставляет приблизительную геопозицию. Доступная точность передаётся вместе с рабочей отметкой.")
+                            .font(.footnote).foregroundStyle(Color.atlasMuted)
+                    }
+                    if location.acknowledged, let expiry = location.leaseExpiresAt {
+                        LabeledContent("Подтверждено до", value: expiry.formatted(.dateTime.hour().minute().second()))
+                            .font(.caption).foregroundStyle(Color.atlasMuted)
+                            .accessibilityIdentifier(identifierPrefix + ".lease")
+                    }
+                    if location.active {
+                        Button("Остановить рабочую геолокацию", systemImage: "location.slash", role: .destructive) {
+                            team.pauseCloudWorkLocation()
+                        }.accessibilityIdentifier(identifierPrefix + ".stop")
+                    } else {
+                        Button("Включить рабочую геолокацию", systemImage: "location") {
+                            team.startCloudWorkLocation()
+                        }.disabled(team.busy)
+                            .accessibilityIdentifier(identifierPrefix + ".start")
+                    }
+                    Text("Передача работает при открытом TerraView, в том числе на других вкладках. В фоне она приостанавливается и продолжается при возврате, пока режим включён. Кнопка остановки или выход из аккаунта выключает режим на iPhone; без сети сервер может ещё показывать последнюю отметку.")
+                        .font(.footnote).foregroundStyle(Color.atlasMuted)
+                } else {
+                    Label("Рабочая геолокация не запрошена", systemImage: "location.slash")
+                        .font(.subheadline)
+                        .accessibilityIdentifier(identifierPrefix + ".notRequested")
+                    Text("Сайт не сообщил требование передавать рабочее положение. Автоматическая передача координат руководителю не включается.")
+                        .font(.footnote).foregroundStyle(Color.atlasMuted)
+                }
+            } header: { Text("Рабочая геолокация") } footer: {
+                Text("Геометки съёмки управляются отдельно. Локальные инструменты, сохранение и экспорт доступны без рабочей геолокации.")
+            }.listRowBackground(Color.atlasCard)
         }
     }
 }

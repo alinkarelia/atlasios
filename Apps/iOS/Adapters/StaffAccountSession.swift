@@ -32,9 +32,18 @@ struct StaffAccountTask: Codable, Identifiable, Sendable {
     let title: String
     let workspaceID: String?
     let workspaceTitle: String?
+    let projectID: String?
+    let assignmentEpoch: Int?
+    var expectedWorkspaceID: String? { projectID ?? workspaceID }
     private enum CodingKeys: String, CodingKey {
         case id, title, workspaceID = "workspace_id", workspaceTitle = "workspace_title"
+        case projectID = "project_id", assignmentEpoch = "assignment_epoch"
     }
+}
+
+struct StaffAccountPermissions: Codable, Sendable {
+    let locationRequired: Bool?
+    private enum CodingKeys: String, CodingKey { case locationRequired = "location_required" }
 }
 
 struct StaffAccountContext: Codable, Sendable {
@@ -42,15 +51,18 @@ struct StaffAccountContext: Codable, Sendable {
     let user: StaffAccountUser
     let tasks: [StaffAccountTask]
     let expiresAt: String
+    let permissions: StaffAccountPermissions?
     private enum CodingKeys: String, CodingKey {
-        case clientID = "client_id", user, tasks, expiresAt = "expires_at"
+        case clientID = "client_id", user, tasks, expiresAt = "expires_at", permissions
     }
 
     func validated(accountExpiresAt: Date, now: Date = Date()) throws {
         guard clientID == StaffIdentityPolicy.clientID,
               !user.id.isEmpty, tasks.count <= 2_000,
               Set(tasks.map(\.id)).count == tasks.count,
-              tasks.allSatisfy({ !$0.id.isEmpty && $0.id.utf8.count <= 512 && !$0.title.isEmpty }),
+              tasks.allSatisfy({ !$0.id.isEmpty && $0.id.utf8.count <= 512 && !$0.title.isEmpty
+                  && ($0.assignmentEpoch.map { $0 >= 0 && $0 <= 9_007_199_254_740_991 } ?? true)
+                  && ($0.projectID == nil || $0.workspaceID == nil || $0.projectID == $0.workspaceID) }),
               try StaffIdentityPolicy.parseUTCDate(expiresAt) > now else {
             throw StaffAccountError.invalidResponse
         }
@@ -108,7 +120,7 @@ struct StaffAccountSession: Codable, Sendable {
 }
 
 enum StaffAccountError: LocalizedError, Sendable {
-    case invalidResponse, cancelled, browserUnavailable, accountExpired
+    case invalidResponse, cancelled, browserUnavailable, accountExpired, workLocationRequired
     case http(Int)
     var errorDescription: String? {
         switch self {
@@ -116,6 +128,7 @@ enum StaffAccountError: LocalizedError, Sendable {
         case .cancelled: "Вход отменён. Локальная съёмка доступна без входа."
         case .browserUnavailable: "Не удалось открыть защищённое окно входа. Вернитесь в приложение и повторите."
         case .accountExpired: "Сессия сайта истекла. Войдите в «Семейный архив» снова."
+        case .workLocationRequired: "Сайт требует подтверждённое рабочее положение для серверной передачи. Включите рабочую геопередачу или дождитесь её подтверждения. Локальные инструменты доступны полностью."
         case .http(401): "Сессия сайта истекла или отозвана. Войдите снова."
         case .http(403): "Сайт не разрешил это действие. Проверьте доступ к выбранному проекту или заданию; локальные инструменты доступны полностью."
         case .http(429): "Слишком много запросов. Повторите вход немного позже."
@@ -144,6 +157,16 @@ struct StaffAccountAPI: Sendable {
         try await json(path: "account/runtime", method: "POST", token: accountToken,
             body: JSONEncoder().encode(StaffRuntimeRequest(taskID: taskID,
                 shareWithTask: shareWithTask, shareOriginals: shareOriginals)))
+    }
+    func location(accountToken: String, payload: StaffLocationRequest) async throws -> StaffLocationResponse {
+        try payload.validate()
+        return try await json(path: "account/location", method: "POST", token: accountToken,
+            body: JSONEncoder().encode(payload))
+    }
+    func stopLocation(accountToken: String, payload: StaffLocationStopRequest) async throws -> StaffLocationResponse {
+        try payload.validate()
+        return try await json(path: "account/location/stop", method: "POST", token: accountToken,
+            body: JSONEncoder().encode(payload))
     }
     func logout(accountToken: String) async throws {
         _ = try await execute(path: "account/logout", method: "POST", token: accountToken,
@@ -175,3 +198,72 @@ struct StaffAccountAPI: Sendable {
     }
 }
 
+
+/// Exact location payload documented by the existing website integration branch.
+/// These observations authorize cloud access only; capture geotags stay separate.
+struct StaffLocationRequest: Encodable, Sendable {
+    let clientID = StaffIdentityPolicy.clientID
+    let deviceID: String
+    let sequence: Int
+    let permission = "authorized"
+    let accuracyAuthorization: String
+    let foreground = true
+    let workActive = true
+    let observedAt: String
+    let latitude: Double
+    let longitude: Double
+    let accuracyMeters: Double
+    let simulatedBySoftware: Bool
+    private enum CodingKeys: String, CodingKey {
+        case clientID = "client_id", deviceID = "device_id", sequence, permission
+        case accuracyAuthorization = "accuracy_authorization", foreground, workActive = "work_active"
+        case observedAt = "observed_at", latitude, longitude, accuracyMeters = "accuracy_m"
+        case simulatedBySoftware = "is_simulated_by_software"
+    }
+    func validate(at now: Date = Date()) throws {
+        let observed = try StaffIdentityPolicy.parseUTCDate(observedAt)
+        guard UUID(uuidString: deviceID) != nil, (1...9_007_199_254_740_991).contains(sequence),
+              ["full", "reduced"].contains(accuracyAuthorization), !simulatedBySoftware,
+              latitude.isFinite, longitude.isFinite, (-90...90).contains(latitude), (-180...180).contains(longitude),
+              accuracyMeters.isFinite, (0...100_000).contains(accuracyMeters),
+              now.timeIntervalSince(observed) < StaffWorkLocationPolicy.maximumFixAge,
+              now.timeIntervalSince(observed) >= -StaffWorkLocationPolicy.maximumFutureSkew else {
+            throw StaffAccountError.invalidResponse
+        }
+    }
+}
+
+struct StaffLocationStopRequest: Encodable, Sendable {
+    let clientID = StaffIdentityPolicy.clientID
+    let deviceID: String
+    let sequence: Int
+    let reason: String
+    private enum CodingKeys: String, CodingKey { case clientID = "client_id", deviceID = "device_id", sequence, reason }
+    func validate() throws {
+        guard UUID(uuidString: deviceID) != nil, (1...9_007_199_254_740_991).contains(sequence),
+              ["off_duty", "background", "permission_denied", "user_stop", "logout"].contains(reason) else {
+            throw StaffAccountError.invalidResponse
+        }
+    }
+}
+
+struct StaffLocationResponse: Decodable, Sendable {
+    struct Location: Decodable, Sendable {
+        let deviceID: String
+        let sequence: Int
+        let expiresAt: String?
+        let fresh: Bool
+        let workAllowed: Bool
+        private enum CodingKeys: String, CodingKey {
+            case deviceID = "device_id", sequence, expiresAt = "expires_at", fresh, workAllowed = "work_allowed"
+        }
+    }
+    let ok: Bool
+    let locationRequired: Bool
+    let workAllowed: Bool
+    let reasonCode: String
+    let location: Location
+    private enum CodingKeys: String, CodingKey {
+        case ok, locationRequired = "location_required", workAllowed = "work_allowed", reasonCode = "reason_code", location
+    }
+}

@@ -44,6 +44,7 @@ private struct StoredTeamSession: Codable, Sendable {
     var shareWithTask: Bool
     var shareOriginals: Bool
     var organizationID: UUID? = nil
+    var assignmentEpoch: Int? = nil
 }
 private struct StoredStaffConnection: Codable, Sendable {
     var account: StaffAccountSession
@@ -131,6 +132,9 @@ final class TeamService: ObservableObject {
     @Published private(set) var accountExpiresAt: Date?
     @Published private(set) var selectedTaskID: String?
     @Published private(set) var runtimeExpiresAt: Date?
+    @Published private(set) var cloudLocationRequired = false
+    @Published private(set) var cloudLocationAllowed = false
+    let workLocation = StaffWorkLocation()
     @Published private(set) var organizations: [RemoteOrganization] = []
     @Published private(set) var projects: [RemoteProject] = []
     @Published private(set) var members: [RemoteMember] = []
@@ -151,6 +155,7 @@ final class TeamService: ObservableObject {
     private var stored: StoredTeamSession?
     private var accountSession: StaffAccountSession?
     private var sessionGeneration: UInt64 = 0
+    private var accountGeneration: UInt64 = 0
     private var runtimeWasRejected = false
     private let keychainKey = "family-archive-account-v1"
     private let api = StaffAccountAPI()
@@ -160,6 +165,7 @@ final class TeamService: ObservableObject {
     init() {
         publicationURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Atlas/team-publication-v1.json")
+        workLocation.changed = { [weak self] in self?.updateCloudWorkGate() }
         // Prototype passwords/tokens cannot be migrated into website accounts.
         Self.keychainDelete(key: "atlas-team-session-v1")
         if let data = Self.keychainRead(key: keychainKey),
@@ -169,7 +175,10 @@ final class TeamService: ObservableObject {
            (try? saved.account.context.validated(accountExpiresAt: expiry)) != nil {
             installAccount(saved.account)
             if let runtime = saved.runtime,
-               saved.account.context.tasks.contains(where: { $0.id == runtime.runtime.taskID }),
+               saved.account.context.tasks.contains(where: {
+                   $0.id == runtime.runtime.taskID && $0.assignmentEpoch == runtime.assignmentEpoch
+                   && ($0.expectedWorkspaceID == nil || $0.expectedWorkspaceID == runtime.runtime.workspaceID)
+               }),
                runtime.baseURL.absoluteString == StaffIdentityPolicy.dataBaseURL.absoluteString,
                runtime.runtime.clientID == StaffIdentityPolicy.clientID,
                runtime.runtime.tokenType.lowercased() == "bearer",
@@ -192,7 +201,7 @@ final class TeamService: ObservableObject {
     var accountSignedIn: Bool { accountSession != nil && (accountExpiresAt ?? .distantPast) > Date() }
     var connected: Bool { accountSignedIn }
     var runtimeReady: Bool {
-        guard runtimeTokenValid, selectedOrganizationID != nil else { return false }
+        guard runtimeTokenValid, selectedOrganizationID != nil, allowsCloudWorkNow else { return false }
         return true
     }
     private var runtimeTokenValid: Bool {
@@ -208,6 +217,8 @@ final class TeamService: ObservableObject {
 
     func signInToFamilyArchive() async {
         guard !busy else { return }
+        accountGeneration &+= 1
+        workLocation.reset(reason: "logout")
         sessionGeneration &+= 1
         let generation = sessionGeneration
         busy = true; issue = nil
@@ -246,7 +257,7 @@ final class TeamService: ObservableObject {
         defer { if sessionGeneration == generation { busy = false } }
         do {
             try await refreshAccountContext(generation: generation)
-            if runtimeTokenValid { try await fetchOrganizations(context()) }
+            if runtimeTokenValid, allowsCloudWorkNow { try await fetchOrganizations(context()) }
         } catch {
             if generation == sessionGeneration { handleAccountError(error); issue = error.localizedDescription }
         }
@@ -277,10 +288,11 @@ final class TeamService: ObservableObject {
             guard let task = availableTasks.first(where: { $0.id == taskID }) else {
                 throw TeamError.rejected("Задание больше недоступно. Обновите список или обратитесь к руководителю.")
             }
+            try requireCloudWorkLocation()
             let credentials = try await api.runtime(accountToken: account.credentials.accessToken,
                 taskID: taskID, shareWithTask: shareWithTask, shareOriginals: shareOriginals)
             let baseURL = try credentials.validated(accountExpiresAt: min(expiry, accountExpiresAt ?? expiry), taskID: taskID)
-            if let expectedWorkspace = task.workspaceID, expectedWorkspace != credentials.workspaceID {
+            if let expectedWorkspace = task.expectedWorkspaceID, expectedWorkspace != credentials.workspaceID {
                 throw StaffAccountError.invalidResponse
             }
             guard generation == sessionGeneration else { throw CancellationError() }
@@ -291,7 +303,7 @@ final class TeamService: ObservableObject {
             let value = StoredTeamSession(baseURL: baseURL,
                 session: SessionResponse(token: credentials.accessToken, expiresAt: credentials.expiresAt, user: me.user),
                 runtime: credentials, shareWithTask: shareWithTask, shareOriginals: shareOriginals,
-                organizationID: selectedOrganizationID)
+                organizationID: selectedOrganizationID, assignmentEpoch: task.assignmentEpoch)
             stored = value; runtimeWasRejected = false; user = me.user
             selectedTaskID = taskID; runtimeExpiresAt = credentials.expiry
             try persistConnection()
@@ -312,6 +324,7 @@ final class TeamService: ObservableObject {
     /// still-valid account session, retaining the operator's explicit choices.
     func renewRuntimeIfNeeded() async throws {
         guard accountSignedIn else { throw StaffAccountError.accountExpired }
+        try requireCloudWorkLocation()
         guard let stored else { throw TeamError.rejected("Выберите задание и подключите отправку материалов.") }
         if !runtimeWasRejected, let expiry = stored.runtime.expiry, expiry.timeIntervalSinceNow > 60,
            let accountExpiry = accountExpiresAt,
@@ -331,8 +344,13 @@ final class TeamService: ObservableObject {
         guard generation == sessionGeneration else { throw CancellationError() }
         try value.validated(accountExpiresAt: expiry)
         guard value.user.id == account.context.user.id else { throw StaffAccountError.invalidResponse }
+        let selectedEpoch = stored?.assignmentEpoch
+        let selectedWorkspace = stored?.runtime.workspaceID
         installAccount(StaffAccountSession(credentials: account.credentials, context: value))
-        if let selectedTaskID, !value.tasks.contains(where: { $0.id == selectedTaskID }) { clearRuntime() }
+        if let selectedTaskID, !value.tasks.contains(where: {
+            $0.id == selectedTaskID && $0.assignmentEpoch == selectedEpoch
+                && ($0.expectedWorkspaceID == nil || $0.expectedWorkspaceID == selectedWorkspace)
+        }) { clearRuntime() }
         try persistConnection()
     }
 
@@ -341,6 +359,74 @@ final class TeamService: ObservableObject {
         let contextExpiry = try? StaffIdentityPolicy.parseUTCDate(value.context.expiresAt)
         accountExpiresAt = [value.credentials.expiry, contextExpiry].compactMap { $0 }.min()
         availableTasks = value.context.tasks
+        cloudLocationRequired = value.context.permissions?.locationRequired == true
+        configureWorkLocation(value)
+        if !cloudLocationRequired, workLocation.active { workLocation.stop(reason: "off_duty") }
+        updateCloudWorkGate()
+    }
+
+    private var allowsCloudWorkNow: Bool {
+        StaffWorkLocationPolicy.allowsCloud(
+            requirement: StaffWorkLocationRequirement(locationRequired: accountSession?.context.permissions?.locationRequired),
+            accountAuthorized: accountSignedIn, accountExpiresAt: accountExpiresAt ?? .distantPast,
+            lease: workLocation.lease)
+    }
+    private func updateCloudWorkGate() {
+        let allowed = allowsCloudWorkNow
+        if cloudLocationAllowed != allowed { cloudLocationAllowed = allowed }
+    }
+    /// Applies only to server runtime/data requests. Never call this from local
+    /// capture, tools, editing, export, staging or durable queue-consent paths.
+    func requireCloudWorkLocation() throws {
+        updateCloudWorkGate()
+        guard accountSignedIn else { throw StaffAccountError.accountExpired }
+        guard allowsCloudWorkNow else { throw StaffAccountError.workLocationRequired }
+    }
+    func startCloudWorkLocation() {
+        guard accountSignedIn, cloudLocationRequired else { return }
+        workLocation.start()
+        updateCloudWorkGate()
+    }
+    func pauseCloudWorkLocation() {
+        workLocation.stop(reason: "off_duty")
+        updateCloudWorkGate()
+    }
+    func setCloudWorkForeground(_ foreground: Bool) {
+        workLocation.setForeground(foreground)
+        updateCloudWorkGate()
+    }
+    private func configureWorkLocation(_ value: StaffAccountSession) {
+        let identity = value.context.user.id, account = value.credentials, generation = accountGeneration
+        workLocation.configure(accountID: identity, generation: generation,
+            expiresAt: accountExpiresAt ?? .distantPast) { [weak self] payload, stop in
+                guard let self else { throw StaffAccountError.accountExpired }
+                if stop == nil {
+                    guard self.accountGeneration == generation, self.accountSignedIn,
+                          self.accountSession?.credentials.accessToken == account.accessToken,
+                          self.cloudLocationRequired else { throw CancellationError() }
+                }
+                try account.validated()
+                do {
+                    let response: StaffLocationResponse
+                    if let stop, payload == nil {
+                        response = try await self.api.stopLocation(accountToken: account.accessToken, payload: stop)
+                    } else if let payload, stop == nil {
+                        response = try await self.api.location(accountToken: account.accessToken, payload: payload)
+                    } else { throw StaffAccountError.invalidResponse }
+                    if stop == nil {
+                        guard self.accountGeneration == generation,
+                              self.accountSession?.credentials.accessToken == account.accessToken,
+                              self.accountSignedIn, self.cloudLocationRequired else { throw CancellationError() }
+                    }
+                    return response
+                } catch {
+                    if self.accountGeneration == generation,
+                       self.accountSession?.credentials.accessToken == account.accessToken {
+                        self.handleAccountError(error)
+                    }
+                    throw error
+                }
+            }
     }
     private func clearRuntime() {
         stored = nil; runtimeWasRejected = false; user = nil; organizations = []; projects = []; members = []
@@ -353,10 +439,18 @@ final class TeamService: ObservableObject {
     }
     private func handleAccountError(_ error: Error) {
         if case StaffAccountError.http(401) = error {
-            sessionGeneration &+= 1
+            workLocation.reset(reason: "logout")
+            accountGeneration &+= 1; sessionGeneration &+= 1
             clearRuntime(); accountSession = nil; accountUser = nil; availableTasks = []; accountExpiresAt = nil
+            cloudLocationRequired = false
             Self.keychainDelete(key: keychainKey)
-            busy = false
+            busy = false; updateCloudWorkGate()
+        } else if case StaffAccountError.http(403) = error {
+            // Revoke only this cloud operation, keeping the website account and
+            // every local tool usable. A server denial never starts new GPS.
+            workLocation.stop(reason: "off_duty")
+            runtimeWasRejected = true; try? persistConnection()
+            updateCloudWorkGate()
         }
     }
 
@@ -517,11 +611,14 @@ final class TeamService: ObservableObject {
 
     func signOut() async {
         let token = accountSession?.credentials.accessToken
-        sessionGeneration &+= 1
+        workLocation.reset(reason: "logout")
+        accountGeneration &+= 1; sessionGeneration &+= 1
         webAuthenticator.cancel()
         Self.keychainDelete(key: keychainKey)
         clearRuntime(); accountSession = nil; accountUser = nil; availableTasks = []; accountExpiresAt = nil
+        cloudLocationRequired = false
         busy = false; issue = nil; publicationMessage = nil
+        updateCloudWorkGate()
         if let token {
             // Local logout is immediate. Revoke the captured website session;
             // a late response cannot mutate a newly signed-in account.
@@ -551,6 +648,7 @@ final class TeamService: ObservableObject {
         guard !runtimeWasRejected, let stored, let organizationID = selectedOrganizationID,
               accountSignedIn, let expiry = accountExpiresAt else { throw TeamError.notConnected }
         _ = try stored.runtime.validated(accountExpiresAt: expiry, taskID: stored.runtime.taskID)
+        try requireCloudWorkLocation()
         return TeamTransferContext(baseURL: stored.baseURL, token: stored.session.token,
             userID: stored.session.user.id, organizationID: organizationID, generation: sessionGeneration,
             destination: FieldTransferDestination(workspaceID: stored.runtime.workspaceID,
@@ -564,6 +662,7 @@ final class TeamService: ObservableObject {
               context.matchesToken(stored?.session.token),
               context.destination == stored.map({ FieldTransferDestination(workspaceID: $0.runtime.workspaceID,
                 taskID: $0.runtime.taskID, shareWithTask: $0.shareWithTask, shareOriginals: $0.shareOriginals) }) else { throw CancellationError() }
+        try requireCloudWorkLocation()
     }
 
     /// A data bearer may be revoked while its nominal expiry is still future.
@@ -620,6 +719,7 @@ final class TeamService: ObservableObject {
     private func context() throws -> TeamRequestContext {
         guard !runtimeWasRejected, accountSignedIn, let stored, let expiry = accountExpiresAt else { throw TeamError.notConnected }
         _ = try stored.runtime.validated(accountExpiresAt: expiry, taskID: stored.runtime.taskID)
+        try requireCloudWorkLocation()
         return TeamRequestContext(baseURL: stored.baseURL, token: stored.session.token,
             userID: stored.session.user.id, generation: sessionGeneration)
     }
@@ -629,6 +729,7 @@ final class TeamService: ObservableObject {
               context.generation == sessionGeneration,
               stored?.session.token == context.token, stored?.session.user.id == context.userID,
               organizationID == nil || selectedOrganizationID == organizationID else { throw CancellationError() }
+        try requireCloudWorkLocation()
     }
 
     private func push(_ operation: CloudFeatureOperation, projectID: UUID, context: TeamRequestContext) async throws -> PushResponse.Result {
@@ -650,6 +751,7 @@ final class TeamService: ObservableObject {
 
     private func request<Response: Decodable>(base: URL, path: String, method: String = "GET", body: Data? = nil, token: String?, generation: UInt64) async throws -> Response {
         guard generation == sessionGeneration else { throw CancellationError() }
+        try requireCloudWorkLocation()
         let split = path.split(separator: "?", maxSplits: 1).map(String.init)
         var query: [URLQueryItem] = []
         if split.count == 2 {
@@ -664,6 +766,7 @@ final class TeamService: ObservableObject {
         if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         let (data, response) = try await TeamHTTP.session.data(for: request)
         guard generation == sessionGeneration else { throw CancellationError() }
+        try requireCloudWorkLocation()
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             if (response as? HTTPURLResponse)?.statusCode == 401 {
                 runtimeWasRejected = true

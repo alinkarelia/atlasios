@@ -186,7 +186,72 @@ private func data(_ text: String) -> Data { Data(text.utf8) }
             throw CheckError.failed("Runtime bearer must never reach account routes")
         } catch StaffIdentityError.invalidAccountToken {}
         print("CHECK bearer boundary: runtime token rejected before account request")
+
+        let policyContext = data("{\"client_id\":\"atlas\",\"user\":{\"id\":\"website-person-9\",\"name\":\"Operator\"},\"tasks\":[{\"id\":\"task-site-42\",\"title\":\"Fieldwork\",\"project_id\":\"workspace-site-7\",\"assignment_epoch\":2}],\"permissions\":{\"location_required\":true},\"expires_at\":\"\(accountISO)\"}")
+        let declared = try JSONDecoder().decode(StaffAccountContext.self, from: policyContext)
+        try declared.validated(accountExpiresAt: accountExpiry, now: now)
+        try check(declared.permissions?.locationRequired == true && declared.tasks.first?.expectedWorkspaceID == opaqueWorkspace
+            && declared.tasks.first?.assignmentEpoch == 2, "Declared location and assignment binding must survive decoding")
+        try check(empty.permissions?.locationRequired == nil, "Unknown legacy fields must not invent a location-sharing requirement")
+        print("CHECK context compatibility: explicit location policy and opaque assignment binding")
+
+        let deviceID = UUID().uuidString
+        let observedISO = formatter.string(from: Date())
+        let heartbeat = StaffLocationRequest(deviceID: deviceID, sequence: 11,
+            accuracyAuthorization: "reduced", observedAt: observedISO,
+            latitude: 61.7, longitude: 34.3, accuracyMeters: 120, simulatedBySoftware: false)
+        let reply: @Sendable (Int, Bool) throws -> Data = { sequence, allowed in
+            try JSONSerialization.data(withJSONObject: ["ok":true, "location_required":true,
+                "work_allowed":allowed, "reason_code":allowed ? "active" : "stopped",
+                "location":["device_id":deviceID, "sequence":sequence, "expires_at":runtimeISO,
+                    "fresh":allowed, "work_allowed":allowed]])
+        }
+        fixtures.append { request in
+            try check(request.url?.absoluteString == "https://archiverf.ru/api/native/account/location"
+                && request.httpMethod == "POST", "Heartbeat must use the pinned native POST endpoint")
+            try check(request.value(forHTTPHeaderField: "Authorization") == "Bearer " + accountToken,
+                "Heartbeat must use account bearer, never runtime bearer")
+            let body = try jsonBody(request)
+            try check(Set(body.keys) == Set(["client_id", "device_id", "sequence", "permission", "accuracy_authorization",
+                "foreground", "work_active", "observed_at", "latitude", "longitude", "accuracy_m", "is_simulated_by_software"]),
+                "Heartbeat must preserve the exact known observation fields")
+            try check(body["device_id"] as? String == deviceID && body["sequence"] as? Int == 11
+                && body["accuracy_authorization"] as? String == "reduced" && body["accuracy_m"] as? Double == 120,
+                "Heartbeat must preserve installation, sequence and actual approximate accuracy")
+            return (200, try reply(11, true))
+        }
+        let acknowledgement = try await api.location(accountToken: accountToken, payload: heartbeat)
+        try check(acknowledgement.location.deviceID == deviceID && acknowledgement.location.sequence == 11
+            && acknowledgement.workAllowed && acknowledgement.location.fresh, "Heartbeat acknowledgement must decode actual identity fields")
+        fixtures.append { request in
+            try check(request.url?.absoluteString == "https://archiverf.ru/api/native/account/location/stop",
+                "Stop must use the exact pinned native endpoint")
+            try check(request.value(forHTTPHeaderField: "Authorization") == "Bearer " + accountToken,
+                "Stop uses the captured account bearer")
+            let body = try jsonBody(request)
+            try check(Set(body.keys) == Set(["client_id", "device_id", "sequence", "reason"])
+                && body["sequence"] as? Int == 12 && body["reason"] as? String == "background",
+                "Stop must send sequence and reason without retaining coordinates")
+            return (200, try reply(12, false))
+        }
+        let stopped = try await api.stopLocation(accountToken: accountToken,
+            payload: StaffLocationStopRequest(deviceID: deviceID, sequence: 12, reason: "background"))
+        try check(!stopped.workAllowed && !stopped.location.workAllowed, "Stop acknowledgement must remain distinct from an active lease")
+        print("CHECK location transport: exact heartbeat, approximate accuracy and coordinate-free stop")
+
+        do {
+            let simulated = StaffLocationRequest(deviceID: deviceID, sequence: 13,
+                accuracyAuthorization: "full", observedAt: observedISO,
+                latitude: 61.7, longitude: 34.3, accuracyMeters: 2, simulatedBySoftware: true)
+            _ = try await api.location(accountToken: accountToken, payload: simulated)
+            throw CheckError.failed("Simulated observations must be rejected before sending")
+        } catch StaffAccountError.invalidResponse {}
+        do {
+            _ = try await api.location(accountToken: runtimeToken, payload: heartbeat)
+            throw CheckError.failed("Runtime bearer must not be accepted for heartbeat")
+        } catch StaffIdentityError.invalidAccountToken {}
+        print("CHECK location rejection: simulated fixes and runtime bearer never sent")
         try check(fixtures.isEmpty(), "All expected requests must actually execute")
-        print("PASS family archive account API: 8 scenarios (fixture transport; no production login claim)")
+        print("PASS family archive account API: 12 scenarios (fixture transport; no production login claim)")
     }
 }

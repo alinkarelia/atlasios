@@ -59,6 +59,7 @@ struct TeamProjectTransferScreen: View {
             archiveSharingSection
             personalUploadSection
             archiveConnectionSection
+            StaffWorkLocationSection(team: team, identifierPrefix: "transfer.workLocation")
             deliverySettings
             connectionSection
             sendSection

@@ -8,8 +8,12 @@ struct AtlasApp: App {
         WindowGroup {
             AtlasRootScreen(model: model)
                 .tint(.atlasAccent)
-                .task { await model.start() }
+                .task {
+                    model.team.setCloudWorkForeground(scenePhase == .active)
+                    await model.start()
+                }
                 .onChange(of: scenePhase) { _, phase in
+                    model.team.setCloudWorkForeground(phase == .active)
                     if phase == .active { model.transfers.sceneBecameActive() }
                     else if phase == .background { model.transfers.sceneBecameInactive() }
                 }
