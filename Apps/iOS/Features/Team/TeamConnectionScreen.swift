@@ -55,6 +55,14 @@ struct TeamConnectionScreen: View {
                 } header: { Text("Материалы на iPhone") }
                     .listRowBackground(Color.atlasCard)
             }
+            Section {
+                Label("Личная выгрузка не подключена", systemImage: "icloud.slash")
+                    .font(.subheadline.weight(.semibold))
+                Text("Текущее подключение не поддерживает личную выгрузку на сервер без задания. Все инструменты, сохранение на iPhone и передача ZIP доступны полностью.")
+                    .font(.footnote).foregroundStyle(Color.atlasMuted)
+                    .accessibilityIdentifier("team.personalUploadUnavailable")
+            } header: { Text("Личные проекты") }
+                .listRowBackground(Color.atlasCard)
             if let account = service.accountUser, service.accountSignedIn {
                 Section("Семейный архив: Живая память") {
                     Label(account.displayName.isEmpty ? "Рабочий аккаунт сайта" : account.displayName,

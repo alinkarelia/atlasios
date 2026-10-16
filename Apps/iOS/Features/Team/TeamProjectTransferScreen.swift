@@ -57,6 +57,7 @@ struct TeamProjectTransferScreen: View {
         List {
             projectHeader
             archiveSharingSection
+            personalUploadSection
             archiveConnectionSection
             deliverySettings
             connectionSection
@@ -117,8 +118,19 @@ struct TeamProjectTransferScreen: View {
                     .font(.footnote).foregroundStyle(Color.orange)
             }
         } header: { Text("Поделиться исходниками") } footer: {
-            Text("ZIP содержит исходники и метаданные проекта. Его можно отправить в рабочий чат, сохранить в Файлы или загрузить в семейный архив. Выбор получателя и загрузка выполняются через меню iPhone.")
+            Text("ZIP содержит исходники и метаданные проекта. Его можно сохранить в Файлы или передать в выбранное приложение через меню iPhone.")
         }.listRowBackground(Color.atlasCard)
+    }
+
+    private var personalUploadSection: some View {
+        Section {
+            Label("Личная выгрузка не подключена", systemImage: "icloud.slash")
+                .font(.subheadline.weight(.semibold))
+            Text("Текущее подключение не поддерживает личную выгрузку на сервер без задания. Проект сохраняется на iPhone; все инструменты и комплект ZIP доступны независимо.")
+                .font(.footnote).foregroundStyle(Color.atlasMuted)
+                .accessibilityIdentifier("transfer.personalUploadUnavailable")
+        } header: { Text("Личные проекты") }
+            .listRowBackground(Color.atlasCard)
     }
 
     private var projectHeader: some View {
@@ -130,7 +142,7 @@ struct TeamProjectTransferScreen: View {
                     .background(Color.atlasCanvas, in: RoundedRectangle(cornerRadius: 14))
                 VStack(alignment: .leading, spacing: 6) {
                     Text(project.name).font(.headline)
-                    Text("Исходники и паспорт проекта остаются на iPhone. Подготовьте ZIP или подключите отправку в семейный архив.")
+                    Text("Исходники и паспорт проекта остаются на iPhone. Подготовьте ZIP или подключите передачу в задание команды.")
                         .font(.subheadline).foregroundStyle(Color.atlasMuted)
                 }
             }.padding(.vertical, 4)
@@ -167,16 +179,28 @@ struct TeamProjectTransferScreen: View {
                     Toggle("Разрешить доступ к исходным файлам", isOn: $shareOriginals)
                         .disabled(!shareWithTask || team.busy || changingRuntime)
                         .accessibilityIdentifier("transfer.shareOriginals")
+                    Text("Для передачи в задание текущий сервер требует оба согласия: доступ участников к материалам и доступ к исходникам. Без согласия материалы остаются на iPhone.")
+                        .font(.footnote).foregroundStyle(Color.atlasMuted)
+                        .accessibilityIdentifier("transfer.teamConsentRequirement")
                     Button {
                         connectArchiveTask()
                     } label: {
                         if changingRuntime { ProgressView("Подключаем задание…").tint(.atlasAccent) }
                         else { Label(team.runtimeReady ? "Обновить подключение" : "Подключить отправку", systemImage: "link") }
-                    }.disabled(archiveTaskID.isEmpty || team.busy || changingRuntime)
+                    }.disabled(archiveTaskID.isEmpty || !shareWithTask || !shareOriginals || team.busy || changingRuntime)
                         .accessibilityIdentifier("transfer.connectArchiveTask")
                     if let selected = team.selectedTask, team.runtimeReady {
                         LabeledContent("Подключённое задание", value: selected.title)
                             .font(.footnote).accessibilityIdentifier("transfer.activeArchiveTask")
+                    }
+                    if team.runtimeSharing != nil {
+                        Button("Отключить отправку и выйти", role: .destructive) {
+                            Task {
+                                await team.signOut()
+                                await coordinator.authenticationChanged()
+                                archiveTaskID = ""; shareWithTask = false; shareOriginals = false
+                            }
+                        }.accessibilityIdentifier("transfer.disconnectArchive")
                     }
                 }
             } else {
@@ -207,7 +231,7 @@ struct TeamProjectTransferScreen: View {
     }
 
     private func connectArchiveTask() {
-        guard !changingRuntime, !archiveTaskID.isEmpty else { return }
+        guard !changingRuntime, !team.busy, !archiveTaskID.isEmpty, shareWithTask, shareOriginals else { return }
         let taskID = archiveTaskID, share = shareWithTask, originals = shareOriginals && shareWithTask
         changingRuntime = true; connectionIssue = nil
         Task {
@@ -264,7 +288,7 @@ struct TeamProjectTransferScreen: View {
             } else {
                 Label("Отправка на рабочий сервер", systemImage: "externaldrive.badge.person.crop")
                     .font(.subheadline.weight(.semibold))
-                Text("Войдите привычным аккаунтом сайта и выберите задание. Комплект ZIP выше доступен без входа и передаётся через меню «Поделиться».")
+                Text("Для передачи в команду войдите в аккаунт сайта и подключите задание выше. Личная серверная выгрузка в текущем подключении недоступна. Комплект ZIP доступен без входа.")
                     .font(.footnote).foregroundStyle(Color.atlasMuted)
                     .accessibilityIdentifier("transfer.connectionHint")
                 NavigationLink {
