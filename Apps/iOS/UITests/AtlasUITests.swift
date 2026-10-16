@@ -1346,8 +1346,16 @@ final class AtlasUITests: XCTestCase {
                        "Import must not activate a project before a valid file is selected and checked")
         screenshot("36-team-import", app: app)
         tap("teamPlan.chooseFile", in: app)
-        let cancel = app.buttons.matching(NSPredicate(format: "label IN %@", ["Cancel", "Отменить", "Отмена"])).firstMatch
-        XCTAssertTrue(cancel.waitForExistence(timeout: 15), "The real native Files chooser must open")
+        // iOS 26 hosts Files controls in a separate view-service process.
+        // Scope the query to its actual document navigation bar instead of
+        // the app-wide button predicate, which can miss remote descendants.
+        let filesNavigation = app.descendants(matching: .any)
+            .matching(identifier: "FullDocumentManagerViewControllerNavigationBar").firstMatch
+        XCTAssertTrue(filesNavigation.waitForExistence(timeout: 15), "The real native Files chooser must open")
+        let cancel = filesNavigation.descendants(matching: .button).firstMatch
+        XCTAssertTrue(cancel.waitForExistence(timeout: 15))
+        XCTAssertTrue(["Cancel", "Отменить", "Отмена"].contains(cancel.label),
+                      "Cancel must be the real Files navigation control")
         XCTAssertTrue(cancel.isHittable); cancel.tap()
         XCTAssertTrue(element("teamPlan.chooseFile", in: app).waitForExistence(timeout: 10))
         XCTAssertFalse(element("teamPlan.acceptImport", in: app).exists,
