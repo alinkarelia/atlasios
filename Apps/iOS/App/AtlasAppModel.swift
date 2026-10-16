@@ -265,15 +265,11 @@ final class AtlasAppModel: ObservableObject {
         transferPreparationTasks[project.id]?.cancel()
         transferPreparationTasks[project.id] = nil
         transferPreparationTickets[project.id] = nil
-        do {
-            _ = try await transfers.renewConnection(expectedScope: scope)
-            guard await prepareFieldTransfer(project: project, expectedScope: scope) else { return }
-            // Preparing a large package can outlast a short runtime. Refresh
-            // again before obtaining the context used to request this upload.
-            let context = try await transfers.renewConnection(expectedScope: scope)
-            await transfers.send(projectID: project.id, expectedContext: context)
-        } catch is CancellationError { }
-        catch { issue = error.localizedDescription }
+        // Stage source bytes and the operator's intent before any network
+        // renewal. A missing connection must not lose a manual send request.
+        guard await prepareFieldTransfer(project: project, expectedScope: scope) else { return }
+        do { try Task.checkCancellation(); try team.requireCurrentScope(scope) } catch { return }
+        await transfers.send(projectID: project.id, expectedScope: scope)
     }
 
     func openSharedProject(_ remote: RemoteProject) async -> AtlasProject? {

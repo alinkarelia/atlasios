@@ -49,8 +49,7 @@ struct TeamProjectTransferScreen: View {
         return behavior + " Настройка сохраняется отдельно для аккаунта, рабочего задания и выбранного доступа к материалам."
     }
     private var canSend: Bool {
-        team.runtimeReady && team.selectedOrganization != nil &&
-        ["owner", "admin", "manager", "surveyor"].contains(team.selectedOrganization?.role ?? "") &&
+        team.transferScope != nil &&
         !team.busy && !coordinator.isPreparing && !coordinator.isSending && !changingSettings && !changingRuntime
     }
 
@@ -334,7 +333,7 @@ struct TeamProjectTransferScreen: View {
                 TeamProjectMaterialsScreen(model: model, project: project)
             } label: {
                 Label("Материалы команды на сервере", systemImage: "tray.full")
-            }.disabled(!team.runtimeReady)
+            }.disabled(team.transferScope == nil || team.busy)
                 .accessibilityIdentifier("transfer.remoteMaterials")
         } header: { Text("В общем проекте") }
             .listRowBackground(Color.atlasCard)

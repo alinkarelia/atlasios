@@ -126,9 +126,12 @@ final class FieldTransferCoordinator: ObservableObject {
         // explicit action can wait for it without cancelling its own login.
         if let renewalTask { await renewalTask.value }
         try Task.checkCancellation(); try team.requireCurrentScope(scope)
+        guard active else { throw CancellationError() }
+        if network == .offline, (try? team.transferContext()) == nil { throw URLError(.notConnectedToInternet) }
         renewalBlockedScope = nil; blockedRuntimeGeneration = nil; renewalRetryAt = nil; renewalFailures = 0
         try await team.renewRuntimeIfNeeded()
         try Task.checkCancellation(); try team.requireCurrentScope(scope)
+        guard active else { throw CancellationError() }
         let context = try team.transferContext()
         guard context.scope == scope else { throw CancellationError() }
         return context
@@ -179,30 +182,42 @@ final class FieldTransferCoordinator: ObservableObject {
         } catch is CancellationError { return false }
         catch { issue = error.localizedDescription; return false }
     }
-    func send(projectID: UUID, expectedContext: TeamTransferContext? = nil) async {
-        guard let queue, let scope = expectedContext?.scope ?? team.transferScope else { return }
+    /// Operator consent is a local durable queue write. It must survive being
+    /// offline with an expired runtime; only the worker needs a fresh bearer.
+    func send(projectID: UUID, expectedContext: TeamTransferContext? = nil,
+              expectedScope: FieldTransferScope? = nil) async {
+        guard let queue, let scope = expectedScope ?? expectedContext?.scope ?? team.transferScope else { return }
         do {
-            let context = try await renewConnection(expectedScope: scope)
-            try await queue.requestSend(projectID: projectID, scope: context.scope)
-            try team.requireCurrentScope(scope)
+            try Task.checkCancellation(); try team.requireCurrentScope(scope)
+            try await queue.requestSend(projectID: projectID, scope: scope)
+            try Task.checkCancellation(); try team.requireCurrentScope(scope)
+            allowExplicitRetry(scope: scope)
             issue = nil; await refresh(); resume()
         } catch is CancellationError { }
         catch { issue = error.localizedDescription }
     }
-    func requestSend(projectID: UUID, expectedContext: TeamTransferContext? = nil) async {
-        await send(projectID: projectID, expectedContext: expectedContext)
+    func requestSend(projectID: UUID, expectedContext: TeamTransferContext? = nil,
+                     expectedScope: FieldTransferScope? = nil) async {
+        await send(projectID: projectID, expectedContext: expectedContext, expectedScope: expectedScope)
     }
 
     func retry(id: UUID) async {
         guard let queue, let scope = team.transferScope else { return }
         do {
+            try Task.checkCancellation(); try team.requireCurrentScope(scope)
             guard let record = try await queue.record(id: id), record.scope == scope else { throw FieldTransferError.invalidScope }
-            _ = try await renewConnection(expectedScope: scope)
+            try Task.checkCancellation(); try team.requireCurrentScope(scope)
             try await queue.requestSend(projectID: record.manifest.projectID, scope: scope, transferIDs: [id])
-            try team.requireCurrentScope(scope)
+            try Task.checkCancellation(); try team.requireCurrentScope(scope)
+            allowExplicitRetry(scope: scope)
             issue = nil; await refresh(); resume()
         } catch is CancellationError { }
         catch { issue = error.localizedDescription }
+    }
+    private func allowExplicitRetry(scope: FieldTransferScope) {
+        guard team.transferScope == scope else { return }
+        renewalBlockedScope = nil; blockedRuntimeGeneration = nil
+        renewalRetryAt = nil; renewalFailures = 0
     }
     func pause(id: UUID) async {
         guard let queue, let scope = team.transferScope else { return }
@@ -227,7 +242,9 @@ final class FieldTransferCoordinator: ObservableObject {
             observedScope = scope
             renewalBlockedScope = nil; blockedRuntimeGeneration = nil; renewalRetryAt = nil; renewalFailures = 0
         }
-        pendingPreparations = [:]; records = []; await refresh(); resume()
+        if let scope { pendingPreparations = pendingPreparations.filter { $0.value.2 == scope } }
+        else { pendingPreparations = [:] }
+        records = []; await refresh(); resume()
     }
     func deliveryPassport(snapshot: AtlasProjectSnapshot, assetDirectory: URL) async throws -> Data {
         let preparedBy = team.user.map { FieldCaptureOperator(userID: $0.id, displayName: $0.displayName) }
