@@ -1,0 +1,57 @@
+name: Focused native and Family Archive diagnosis
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terraview-native-diagnostic-${{ github.ref }}-${{ github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  native_diagnostic:
+    name: Focused native and Family Archive diagnostic (Xcode 16.4)
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Select Xcode 16.4
+        run: |
+          test -d /Applications/Xcode_16.4.app/Contents/Developer
+          sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
+          xcodebuild -version
+          xcrun swift --version
+      - name: Install the project generator dependency
+        run: python3 -m pip install 'PyYAML==6.0.3'
+      - name: Validate the exact checked-in project
+        run: |
+          python3 Scripts/generate-xcode-project.py --check
+          xcrun swift Scripts/check-project.swift
+      - name: Compile the native iOS app against the Simulator SDK
+        run: |
+          mkdir -p artifacts/native-diagnostic
+          set -o pipefail
+          bash Scripts/check-native.sh 2>&1 | tee artifacts/native-diagnostic/native-build.log
+      - name: Check the Family Archive native account contract
+        run: |
+          mkdir -p artifacts/native-diagnostic
+          set -o pipefail
+          bash Apps/iOS/Adapters/Tests/family-archive-account-checks.sh 2>&1 | tee artifacts/native-diagnostic/family-archive-account-checks.log
+      - name: Preserve the actual native diagnostic results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: focused-native-diagnostic-${{ github.run_id }}
+          path: |
+            artifacts/native-diagnostic/
+            artifacts/native/*.xcresult
+          if-no-files-found: warn
+          retention-days: 7
