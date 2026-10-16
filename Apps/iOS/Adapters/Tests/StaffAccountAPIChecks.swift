@@ -37,18 +37,46 @@ private final class FixtureURLProtocol: URLProtocol, @unchecked Sendable {
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
             client?.urlProtocol(self, didLoad: data)
             client?.urlProtocolDidFinishLoading(self)
-        } catch { client?.urlProtocol(self, didFailWithError: error) }
+        } catch {
+            // Static assertion messages only: never dump request headers or
+            // bodies, which would be unsafe if a future fixture used secrets.
+            FileHandle.standardError.write(Data(("FAIL account fixture: " + error.localizedDescription + "\n").utf8))
+            client?.urlProtocol(self, didFailWithError: error)
+        }
     }
     override func stopLoading() {}
 }
-private enum CheckError: Error { case failed(String) }
+private enum CheckError: LocalizedError {
+    case failed(String)
+    var errorDescription: String? {
+        switch self { case let .failed(message): message }
+    }
+}
 private func check(_ condition: @autoclosure () -> Bool, _ message: String) throws {
     if !condition() { throw CheckError.failed(message) }
 }
 private func jsonBody(_ request: URLRequest) throws -> [String: Any] {
-    guard let body = request.httpBody,
-          let json = try JSONSerialization.jsonObject(with: body) as? [String: Any] else {
-        throw CheckError.failed("Missing JSON body")
+    let body: Data
+    if let bytes = request.httpBody {
+        body = bytes
+    } else if let stream = request.httpBodyStream {
+        // Darwin URLSession can replace httpBody with an equivalent stream
+        // before handing the canonical request to URLProtocol. Inspect those
+        // exact bytes instead of incorrectly treating the request as bodyless.
+        stream.open()
+        defer { stream.close() }
+        var bytes = Data(), buffer = [UInt8](repeating: 0, count: 4_096)
+        while true {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            guard count >= 0 else { throw CheckError.failed("JSON request stream could not be read") }
+            if count == 0 { break }
+            bytes.append(contentsOf: buffer.prefix(count))
+            guard bytes.count <= 1_048_576 else { throw CheckError.failed("Unexpectedly large JSON request body") }
+        }
+        body = bytes
+    } else { throw CheckError.failed("Missing JSON request body and stream") }
+    guard let json = try JSONSerialization.jsonObject(with: body) as? [String: Any] else {
+        throw CheckError.failed("Expected an actual JSON object request body")
     }
     return json
 }
@@ -70,6 +98,18 @@ private func data(_ text: String) -> Data { Data(text.utf8) }
         let accountToken = "nsa_fixture_account_not_a_real_secret"
         let runtimeToken = String(repeating: "R", count: 43)
         let verifier = String(repeating: "v", count: 43)
+        // Exercise the Darwin representation even on Linux, where URLSession
+        // usually leaves an in-memory httpBody on this same fixture request.
+        var streamed = URLRequest(url: URL(string: "https://archiverf.ru/api/native/oauth/token")!)
+        streamed.httpMethod = "POST"
+        streamed.httpBodyStream = InputStream(data: try JSONEncoder().encode(
+            StaffCodeExchangeRequest(code: "opaque+/=code", codeVerifier: verifier)))
+        let streamedBody = try jsonBody(streamed)
+        try check(Set(streamedBody.keys) == Set(["client_id", "code", "redirect_uri", "code_verifier"]),
+            "Stream inspection must preserve all exact exchange fields")
+        try check(streamedBody["code"] as? String == "opaque+/=code",
+            "Stream inspection must not rewrite opaque values")
+        print("CHECK request inspection: actual streamed JSON preserves exchange fields")
         let opaqueTask = "task-site-42", opaqueWorkspace = "workspace-site-7"
         let tokenJSON = "{\"access_token\":\"\(accountToken)\",\"token_type\":\"Bearer\",\"expires_at\":\"\(accountISO)\",\"expires_in\":3600,\"client_id\":\"atlas\"}"
         fixtures.append { request in
