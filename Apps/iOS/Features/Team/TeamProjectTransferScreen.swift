@@ -15,6 +15,11 @@ struct TeamProjectTransferScreen: View {
     @State private var creatingArchive = false
     @State private var archiveURL: URL?
     @State private var archiveIssue: String?
+    @State private var archiveTaskID = ""
+    @State private var shareWithTask = false
+    @State private var shareOriginals = false
+    @State private var changingRuntime = false
+    @State private var connectionIssue: String?
 
     init(model: AtlasAppModel, project: AtlasProject) {
         self.model = model
@@ -28,29 +33,32 @@ struct TeamProjectTransferScreen: View {
     private var completed: [FieldTransferRecord] { records.filter { $0.state == .completed } }
     private var preferenceContextID: String {
         team.serverAddress + "|" + (team.user?.id.uuidString ?? "local") + "|" +
-        (team.selectedOrganizationID?.uuidString ?? "none")
+        (team.selectedOrganizationID?.uuidString ?? "none") + "|" +
+        (team.selectedTaskID ?? "none") + "|" + String(team.runtimeSharing?.withTask ?? false) + "|" +
+        String(team.runtimeSharing?.originals ?? false)
     }
     private var deliveryExplanation: String {
         let behavior: String
         if settings.policy == .manual {
             behavior = "Снимайте и проверяйте материалы на устройстве. Отправка начнётся после нажатия «Отправить материалы». Ограничение Wi-Fi действует и при ручной отправке."
-        } else if team.connected, team.selectedOrganization != nil {
+        } else if team.runtimeReady {
             behavior = "Сохранённые материалы ставятся в очередь этого проекта. Без подходящей сети очередь сохраняется и продолжится при открытом приложении."
         } else {
-            behavior = "Автоматическая отправка применяется к дополнительному рабочему серверу \(AppBrand.displayName). Для неё войдите в рабочий аккаунт и выберите организацию. Комплект ZIP можно передать в архив или чат вручную."
+            behavior = "Автоматическая передача в команду использует рабочее подключение семейного архива. Локальная работа и передача ZIP доступны без задания и без входа."
         }
-        return behavior + " Настройка сохраняется отдельно для каждого рабочего аккаунта и организации."
+        return behavior + " Настройка сохраняется отдельно для аккаунта, рабочего задания и выбранного доступа к материалам."
     }
     private var canSend: Bool {
-        team.connected && team.selectedOrganization != nil &&
+        team.runtimeReady && team.selectedOrganization != nil &&
         ["owner", "admin", "manager", "surveyor"].contains(team.selectedOrganization?.role ?? "") &&
-        !team.busy && !coordinator.isPreparing && !coordinator.isSending && !changingSettings
+        !team.busy && !coordinator.isPreparing && !coordinator.isSending && !changingSettings && !changingRuntime
     }
 
     var body: some View {
         List {
             projectHeader
             archiveSharingSection
+            archiveConnectionSection
             deliverySettings
             connectionSection
             sendSection
@@ -77,6 +85,7 @@ struct TeamProjectTransferScreen: View {
             guard !Task.isCancelled else { return }
             settings = storedSettings
             settingsLoaded = true
+            restoreRuntimeChoice()
         }
         .refreshable { await coordinator.refresh(projectID: project.id) }
     }
@@ -122,11 +131,94 @@ struct TeamProjectTransferScreen: View {
                     .background(Color.atlasCanvas, in: RoundedRectangle(cornerRadius: 14))
                 VStack(alignment: .leading, spacing: 6) {
                     Text(project.name).font(.headline)
-                    Text("Исходники и паспорт проекта остаются на iPhone. Подготовьте ZIP для передачи или выберите дополнительный рабочий сервер.")
+                    Text("Исходники и паспорт проекта остаются на iPhone. Подготовьте ZIP или подключите отправку в семейный архив.")
                         .font(.subheadline).foregroundStyle(Color.atlasMuted)
                 }
             }.padding(.vertical, 4)
         }.listRowBackground(Color.atlasCard)
+    }
+
+    @ViewBuilder private var archiveConnectionSection: some View {
+        Section {
+            Label("Семейный архив — Живая память", systemImage: "person.crop.circle.badge.checkmark")
+                .font(.subheadline.weight(.semibold))
+            Text("Все инструменты приложения доступны без заданий. Этот раздел нужен только для передачи материалов в команду; съёмка, карточки, планы, прогулки и экспорт работают независимо.")
+                .font(.footnote).foregroundStyle(Color.atlasMuted)
+                .accessibilityIdentifier("transfer.fullToolsWithoutTask")
+            if team.accountSignedIn {
+                if let account = team.accountUser {
+                    Text(account.displayName.isEmpty ? account.email : account.displayName)
+                        .font(.subheadline).foregroundStyle(Color.atlasMuted)
+                }
+                if team.availableTasks.isEmpty {
+                    Text("Рабочих заданий пока нет. Это не ограничивает приложение: все инструменты и экспорт доступны. Привязка к заданию используется только при отправке материалов в команду.")
+                        .font(.footnote).foregroundStyle(Color.atlasMuted)
+                } else {
+                    Picker("Задание команды · по желанию", selection: $archiveTaskID) {
+                        Text("Выберите задание").tag("")
+                        ForEach(team.availableTasks) { task in
+                            Text(task.title + (task.workspaceTitle.map { " · " + $0 } ?? "")).tag(task.id)
+                        }
+                    }.disabled(team.busy || changingRuntime)
+                        .accessibilityIdentifier("transfer.archiveTask")
+                    Toggle("Предоставить материалы участникам задания", isOn: $shareWithTask)
+                        .disabled(team.busy || changingRuntime)
+                        .accessibilityIdentifier("transfer.shareWithTask")
+                        .onChange(of: shareWithTask) { _, value in if !value { shareOriginals = false } }
+                    Toggle("Разрешить доступ к исходным файлам", isOn: $shareOriginals)
+                        .disabled(!shareWithTask || team.busy || changingRuntime)
+                        .accessibilityIdentifier("transfer.shareOriginals")
+                    Button {
+                        connectArchiveTask()
+                    } label: {
+                        if changingRuntime { ProgressView("Подключаем задание…").tint(.atlasAccent) }
+                        else { Label(team.runtimeReady ? "Обновить подключение" : "Подключить отправку", systemImage: "link") }
+                    }.disabled(archiveTaskID.isEmpty || team.busy || changingRuntime)
+                        .accessibilityIdentifier("transfer.connectArchiveTask")
+                    if let selected = team.selectedTask, team.runtimeReady {
+                        LabeledContent("Подключённое задание", value: selected.title)
+                            .font(.footnote).accessibilityIdentifier("transfer.activeArchiveTask")
+                    }
+                }
+            } else {
+                Text("Войдите по логину и паролю сайта. Откроется защищённая страница семейного архива; пароль в TerraView не сохраняется.")
+                    .font(.footnote).foregroundStyle(Color.atlasMuted)
+            }
+            NavigationLink {
+                TeamConnectionScreen(model: model)
+            } label: {
+                Label(team.accountSignedIn ? "Аккаунт и доступные задания" : "Войти через семейный архив", systemImage: "person.badge.key")
+            }.accessibilityIdentifier("transfer.archiveAccount")
+            if let connectionIssue {
+                Label(connectionIssue, systemImage: "exclamationmark.triangle")
+                    .font(.footnote).foregroundStyle(Color.orange)
+            }
+        } header: { Text("Передача в команду · дополнительно") } footer: {
+            Text("Выбор применяется кнопкой «Подключить отправку» или «Обновить подключение». Изменение задания или доступа создаёт отдельную очередь: прежние материалы не переадресуются. Доступ проверяет сервер. Файлы загружаются только после ручной отправки или включения автоматического режима.")
+        }.listRowBackground(Color.atlasCard)
+    }
+
+    private func restoreRuntimeChoice() {
+        if let selected = team.selectedTaskID { archiveTaskID = selected }
+        else if !team.availableTasks.contains(where: { $0.id == archiveTaskID }) { archiveTaskID = "" }
+        if let sharing = team.runtimeSharing {
+            shareWithTask = sharing.withTask
+            shareOriginals = sharing.originals
+        }
+    }
+
+    private func connectArchiveTask() {
+        guard !changingRuntime, !archiveTaskID.isEmpty else { return }
+        let taskID = archiveTaskID, share = shareWithTask, originals = shareOriginals && shareWithTask
+        changingRuntime = true; connectionIssue = nil
+        Task {
+            defer { changingRuntime = false }
+            do {
+                try await team.prepareRuntime(taskID: taskID, shareWithTask: share, shareOriginals: originals)
+                await coordinator.authenticationChanged()
+            } catch is CancellationError { }
+            catch { connectionIssue = error.localizedDescription }
+        }
     }
 
     private var deliverySettings: some View {
@@ -155,14 +247,14 @@ struct TeamProjectTransferScreen: View {
             ))
             .disabled(!settingsLoaded || changingSettings)
             .accessibilityIdentifier("transfer.wifiOnly")
-        } header: { Text("Рабочий сервер \(AppBrand.displayName) · дополнительно") } footer: {
+        } header: { Text("Способ отправки в семейный архив") } footer: {
             Text(deliveryExplanation)
         }.listRowBackground(Color.atlasCard)
     }
 
     @ViewBuilder private var connectionSection: some View {
         Section {
-            if let organization = team.selectedOrganization, team.connected {
+            if let organization = team.selectedOrganization, team.runtimeReady {
                 Label(organization.name, systemImage: "person.2")
                     .font(.subheadline.weight(.semibold))
                 Text(team.serverAddress).font(.caption).foregroundStyle(Color.atlasMuted)
@@ -173,7 +265,7 @@ struct TeamProjectTransferScreen: View {
             } else {
                 Label("Отправка на рабочий сервер", systemImage: "externaldrive.badge.person.crop")
                     .font(.subheadline.weight(.semibold))
-                Text("Если ваша команда использует сервер \(AppBrand.displayName), подключите рабочий аккаунт. Комплект ZIP выше доступен без входа и передаётся через меню «Поделиться».")
+                Text("Войдите привычным аккаунтом сайта и выберите задание. Комплект ZIP выше доступен без входа и передаётся через меню «Поделиться».")
                     .font(.footnote).foregroundStyle(Color.atlasMuted)
                     .accessibilityIdentifier("transfer.connectionHint")
                 NavigationLink {
@@ -242,7 +334,7 @@ struct TeamProjectTransferScreen: View {
                 TeamProjectMaterialsScreen(model: model, project: project)
             } label: {
                 Label("Материалы команды на сервере", systemImage: "tray.full")
-            }.disabled(!team.connected || team.selectedOrganization == nil)
+            }.disabled(!team.runtimeReady)
                 .accessibilityIdentifier("transfer.remoteMaterials")
         } header: { Text("В общем проекте") }
             .listRowBackground(Color.atlasCard)

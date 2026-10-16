@@ -221,11 +221,11 @@ final class AtlasAppModel: ObservableObject {
         } catch { issue = error.localizedDescription; return nil }
     }
 
-    /// Saving a source is separate from consenting to publish it. The coordinator
-    /// applies the project's durable manual/automatic policy and account scope.
+    /// Saving a source never waits for a server. Capture the destination before
+    /// debouncing so a later task switch cannot redirect this saved material.
     func fieldMaterialsDidChange(projectID: UUID) {
         transferPreparationTasks[projectID]?.cancel()
-        guard let originalContext = try? team.transferContext() else { return }
+        guard let originalScope = team.transferScope else { return }
         let ticket = UUID()
         transferPreparationTickets[projectID] = ticket
         transferPreparationTasks[projectID] = Task { [weak self] in
@@ -237,41 +237,52 @@ final class AtlasAppModel: ObservableObject {
                     self.transferPreparationTickets[projectID] = nil
                 }
             }
-            guard !Task.isCancelled, self.team.connected,
+            guard !Task.isCancelled,
                   let project = self.projects.first(where: { $0.id == projectID }) else { return }
-            do { try self.team.requireCurrentTransfer(originalContext) } catch { return }
-            // Manual delivery stages the reviewed snapshot when the operator
-            // sends it, avoiding file copies and intermediate drafts on every edit.
+            do { try self.team.requireCurrentScope(originalScope) } catch { return }
             let preferences = await self.transfers.settings(projectID: projectID)
             guard !Task.isCancelled else { return }
-            do { try self.team.requireCurrentTransfer(originalContext) } catch { return }
+            do { try self.team.requireCurrentScope(originalScope) } catch { return }
             guard preferences.policy == .automatic else { return }
-            _ = await self.prepareFieldTransfer(project: project, expectedContext: originalContext)
+            // Staging is local and durable even offline or after runtime expiry.
+            // The coordinator renews before obtaining any network context.
+            _ = await self.prepareFieldTransfer(project: project, expectedScope: originalScope)
         }
     }
 
     @discardableResult
-    func prepareFieldTransfer(project: AtlasProject, expectedContext: TeamTransferContext? = nil) async -> Bool {
-        guard let context = expectedContext ?? (try? team.transferContext()) else { return false }
+    func prepareFieldTransfer(project: AtlasProject, expectedContext: TeamTransferContext? = nil,
+                              expectedScope: FieldTransferScope? = nil) async -> Bool {
+        guard let scope = expectedScope ?? expectedContext?.scope ?? team.transferScope else { return false }
+        do { try Task.checkCancellation(); try team.requireCurrentScope(scope) } catch { return false }
         guard let snapshot = await snapshot(of: project) else { return false }
-        do { try team.requireCurrentTransfer(context) } catch { return false }
-        return await transfers.prepare(snapshot: snapshot, assetDirectory: directory, expectedContext: context)
+        do { try Task.checkCancellation(); try team.requireCurrentScope(scope) } catch { return false }
+        return await transfers.prepare(snapshot: snapshot, assetDirectory: directory, expectedScope: scope)
     }
 
     func sendFieldMaterials(project: AtlasProject) async {
-        guard let context = try? team.transferContext() else { return }
+        guard let scope = team.transferScope else { return }
         transferPreparationTasks[project.id]?.cancel()
         transferPreparationTasks[project.id] = nil
         transferPreparationTickets[project.id] = nil
-        guard await prepareFieldTransfer(project: project, expectedContext: context) else { return }
-        do { try team.requireCurrentTransfer(context) } catch { return }
-        await transfers.send(projectID: project.id, expectedContext: context)
+        do {
+            _ = try await transfers.renewConnection(expectedScope: scope)
+            guard await prepareFieldTransfer(project: project, expectedScope: scope) else { return }
+            // Preparing a large package can outlast a short runtime. Refresh
+            // again before obtaining the context used to request this upload.
+            let context = try await transfers.renewConnection(expectedScope: scope)
+            await transfers.send(projectID: project.id, expectedContext: context)
+        } catch is CancellationError { }
+        catch { issue = error.localizedDescription }
     }
 
     func openSharedProject(_ remote: RemoteProject) async -> AtlasProject? {
         guard let store else { return nil }
+        guard let scope = team.transferScope else { return nil }
         do {
+            _ = try await transfers.renewConnection(expectedScope: scope)
             let incoming = try await team.sharedProject(remote)
+            try team.requireCurrentScope(scope)
             if let existing = projects.first(where: { $0.id == incoming.id }) {
                 guard existing.coordinateReference == incoming.coordinateReference else {
                     throw TeamError.rejected("Система координат локального проекта отличается. Исходники сохранены; автоматическое объединение остановлено.")

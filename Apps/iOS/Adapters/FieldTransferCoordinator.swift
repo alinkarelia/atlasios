@@ -22,13 +22,21 @@ final class FieldTransferCoordinator: ObservableObject {
     private var subscriptions = Set<AnyCancellable>()
     private var worker: Task<Void, Never>?
     private var retryTimer: Task<Void, Never>?
+    private var renewalTask: Task<Void, Never>?
+    private var renewalID: UUID?
+    private var renewalScope: FieldTransferScope?
+    private var renewalRetryAt: Date?
+    private var renewalFailures = 0
+    private var renewalBlockedScope: FieldTransferScope?
+    private var blockedRuntimeGeneration: UInt64?
+    private var observedScope: FieldTransferScope?
     private var activePackageID: UUID?
     private var active = true
     private var generation: UInt64 = 0
     private var preparingProjects = Set<UUID>()
     private var displayedProjectID: UUID?
     private var lastProgressReport = Date.distantPast
-    private var pendingPreparations: [UUID: (AtlasProjectSnapshot, URL, TeamTransferContext)] = [:]
+    private var pendingPreparations: [UUID: (AtlasProjectSnapshot, URL, FieldTransferScope)] = [:]
     private let offlineScope = FieldTransferScope(serverOrigin: "https://local.atlas.invalid",
         userID: UUID(uuidString: "00000000-0000-0000-0000-000000000000")!,
         organizationID: UUID(uuidString: "00000000-0000-0000-0000-000000000000")!)
@@ -51,11 +59,19 @@ final class FieldTransferCoordinator: ObservableObject {
         team.$selectedOrganizationID.removeDuplicates().sink { [weak self] _ in
             Task { @MainActor [weak self] in await self?.authenticationChanged() }
         }.store(in: &subscriptions)
+        team.$busy.removeDuplicates().sink { [weak self] busy in
+            guard !busy else { return }
+            Task { @MainActor [weak self] in self?.resume() }
+        }.store(in: &subscriptions)
     }
 
     var connectionHint: String {
-        guard team.connected, team.selectedOrganizationID != nil else {
-            return "Команда не подключена. Исходники доступны на устройстве; выберите рабочее пространство для отправки."
+        guard team.transferScope != nil else {
+            return "Исходники доступны на устройстве. Выберите подключение для серверной передачи; локальные инструменты работают без него."
+        }
+        if renewalTask != nil { return "Обновляем защищённое подключение. Очередь и подтверждённые фрагменты сохранены." }
+        if renewalBlockedScope == team.transferScope {
+            return "Для продолжения обновите подключение или войдите на сайт снова. Очередь и исходники сохранены."
         }
         switch network {
         case .offline: return "Нет сети. Очередь сохранена и продолжится после подключения при открытом TerraView."
@@ -65,22 +81,26 @@ final class FieldTransferCoordinator: ObservableObject {
         }
     }
     func projectRecords(projectID: UUID) -> [FieldTransferRecord] {
-        guard let context = try? team.transferContext() else { return [] }
-        return records.filter { $0.manifest.projectID == projectID && $0.scope == context.scope }
+        guard let scope = team.transferScope else { return [] }
+        return records.filter { $0.manifest.projectID == projectID && $0.scope == scope }
     }
     func settings(projectID: UUID) async -> FieldTransferSettings {
         guard let queue else { return FieldTransferSettings() }
-        let scope = (try? team.transferContext().scope) ?? offlineScope
-        do { return try await queue.settings(projectID: projectID, scope: scope) }
-        catch { issue = error.localizedDescription; return FieldTransferSettings() }
+        let scope = team.transferScope ?? offlineScope
+        do {
+            let value = try await queue.settings(projectID: projectID, scope: scope)
+            guard (team.transferScope ?? offlineScope) == scope else { return FieldTransferSettings() }
+            return value
+        } catch { issue = error.localizedDescription; return FieldTransferSettings() }
     }
     func setSettings(_ value: FieldTransferSettings, projectID: UUID) async {
         guard let queue else { return }
-        let scope = (try? team.transferContext().scope) ?? offlineScope
+        let scope = team.transferScope ?? offlineScope
         do {
             try await queue.setSettings(value, projectID: projectID, scope: scope)
-            // Applying a new restriction cancels an in-flight chunk before the
-            // next one, including switching automatic delivery back to manual.
+            guard (team.transferScope ?? offlineScope) == scope else { return }
+            // The durable setting belongs to the captured destination even if
+            // the operator switches accounts while SQLite finishes its write.
             generation &+= 1; worker?.cancel(); retryTimer?.cancel()
             await refresh(); resume()
         } catch { issue = error.localizedDescription }
@@ -88,25 +108,42 @@ final class FieldTransferCoordinator: ObservableObject {
     func refresh(projectID: UUID? = nil) async {
         if let projectID { displayedProjectID = projectID }
         guard let queue else { return }
-        guard let context = try? team.transferContext() else { records = []; return }
+        guard let scope = team.transferScope else { records = []; return }
         do {
-            let values = try await queue.records(projectID: displayedProjectID, scope: context.scope, limit: 100)
-            try team.requireCurrentTransfer(context)
+            let values = try await queue.records(projectID: displayedProjectID, scope: scope, limit: 100)
+            try team.requireCurrentScope(scope)
             records = values
         } catch is CancellationError { records = [] }
         catch { issue = error.localizedDescription }
     }
 
-    /// Called after a durable local save. There is no network requirement for
-    /// saving a capture, and preparing a manual package never starts an upload.
+    /// A network context is obtained only after renewal, then checked against
+    /// the identity and sharing destination captured before the first await.
+    func renewConnection(expectedScope scope: FieldTransferScope) async throws -> TeamTransferContext {
+        try Task.checkCancellation(); try team.requireCurrentScope(scope)
+        guard active else { throw CancellationError() }
+        // Automatic renewal has its own task, never the upload worker. An
+        // explicit action can wait for it without cancelling its own login.
+        if let renewalTask { await renewalTask.value }
+        try Task.checkCancellation(); try team.requireCurrentScope(scope)
+        renewalBlockedScope = nil; blockedRuntimeGeneration = nil; renewalRetryAt = nil; renewalFailures = 0
+        try await team.renewRuntimeIfNeeded()
+        try Task.checkCancellation(); try team.requireCurrentScope(scope)
+        let context = try team.transferContext()
+        guard context.scope == scope else { throw CancellationError() }
+        return context
+    }
+
+    /// Called after a durable local save. Local staging needs destination
+    /// metadata, never a valid network token or a successful server request.
     @discardableResult
     func prepare(snapshot: AtlasProjectSnapshot, assetDirectory: URL,
-                 expectedContext: TeamTransferContext? = nil) async -> Bool {
-        guard let queue, let context = expectedContext ?? (try? team.transferContext()) else { return false }
-        do { try Task.checkCancellation(); try team.requireCurrentTransfer(context) }
+                 expectedContext: TeamTransferContext? = nil, expectedScope: FieldTransferScope? = nil) async -> Bool {
+        guard let queue, let scope = expectedScope ?? expectedContext?.scope ?? team.transferScope else { return false }
+        do { try Task.checkCancellation(); try team.requireCurrentScope(scope) }
         catch { return false }
         guard preparingProjects.insert(snapshot.project.id).inserted else {
-            pendingPreparations[snapshot.project.id] = (snapshot, assetDirectory, context)
+            pendingPreparations[snapshot.project.id] = (snapshot, assetDirectory, scope)
             return false
         }
         isPreparing = true
@@ -115,24 +152,24 @@ final class FieldTransferCoordinator: ObservableObject {
             if let pending = pendingPreparations.removeValue(forKey: snapshot.project.id) {
                 Task { [weak self] in
                     guard let self else { return }
-                    do { try self.team.requireCurrentTransfer(pending.2) }
+                    do { try self.team.requireCurrentScope(pending.2) }
                     catch { return }
-                    _ = await self.prepare(snapshot: pending.0, assetDirectory: pending.1, expectedContext: pending.2)
+                    _ = await self.prepare(snapshot: pending.0, assetDirectory: pending.1, expectedScope: pending.2)
                 }
             }
         }
         do {
-            let existing = try await queue.records(projectID: snapshot.project.id, scope: context.scope,
+            let existing = try await queue.records(projectID: snapshot.project.id, scope: scope,
                 limit: FieldTransferQueue.maximumRecords)
-            try Task.checkCancellation(); try team.requireCurrentTransfer(context)
+            try Task.checkCancellation(); try team.requireCurrentScope(scope)
             let prepared = try await assembler.prepare(snapshot: snapshot, assetDirectory: assetDirectory,
-                scope: context.scope, device: Self.device(), previous: existing.map(\.manifest))
-            try Task.checkCancellation(); try team.requireCurrentTransfer(context)
+                scope: scope, device: Self.device(), previous: existing.map(\.manifest))
+            try Task.checkCancellation(); try team.requireCurrentScope(scope)
             for package in prepared {
-                try Task.checkCancellation(); try team.requireCurrentTransfer(context)
-                _ = try await queue.register(manifest: package.manifest, scope: context.scope)
+                try Task.checkCancellation(); try team.requireCurrentScope(scope)
+                _ = try await queue.register(manifest: package.manifest, scope: scope)
             }
-            try Task.checkCancellation(); try team.requireCurrentTransfer(context)
+            try Task.checkCancellation(); try team.requireCurrentScope(scope)
             let skipped = snapshot.scans.filter { $0.status != .ready }.count
             if skipped > 0 {
                 issue = "В очередь вошли завершённые материалы. Незавершённых съёмок: \(skipped). Завершите или восстановите их для отправки."
@@ -143,12 +180,11 @@ final class FieldTransferCoordinator: ObservableObject {
         catch { issue = error.localizedDescription; return false }
     }
     func send(projectID: UUID, expectedContext: TeamTransferContext? = nil) async {
-        guard let queue else { return }
+        guard let queue, let scope = expectedContext?.scope ?? team.transferScope else { return }
         do {
-            let context = try expectedContext ?? team.transferContext()
-            try Task.checkCancellation(); try team.requireCurrentTransfer(context)
+            let context = try await renewConnection(expectedScope: scope)
             try await queue.requestSend(projectID: projectID, scope: context.scope)
-            try team.requireCurrentTransfer(context)
+            try team.requireCurrentScope(scope)
             issue = nil; await refresh(); resume()
         } catch is CancellationError { }
         catch { issue = error.localizedDescription }
@@ -158,31 +194,39 @@ final class FieldTransferCoordinator: ObservableObject {
     }
 
     func retry(id: UUID) async {
-        guard let queue else { return }
+        guard let queue, let scope = team.transferScope else { return }
         do {
-            let context = try team.transferContext()
-            guard let record = try await queue.record(id: id), record.scope == context.scope else { throw FieldTransferError.invalidScope }
-            try await queue.requestSend(projectID: record.manifest.projectID, scope: context.scope, transferIDs: [id])
-            try team.requireCurrentTransfer(context)
-            await refresh(); resume()
-        } catch { issue = error.localizedDescription }
+            guard let record = try await queue.record(id: id), record.scope == scope else { throw FieldTransferError.invalidScope }
+            _ = try await renewConnection(expectedScope: scope)
+            try await queue.requestSend(projectID: record.manifest.projectID, scope: scope, transferIDs: [id])
+            try team.requireCurrentScope(scope)
+            issue = nil; await refresh(); resume()
+        } catch is CancellationError { }
+        catch { issue = error.localizedDescription }
     }
     func pause(id: UUID) async {
-        guard let queue else { return }
+        guard let queue, let scope = team.transferScope else { return }
         do {
-            let context = try team.transferContext()
-            guard let record = try await queue.record(id: id), record.scope == context.scope else { throw FieldTransferError.invalidScope }
+            guard let record = try await queue.record(id: id), record.scope == scope else { throw FieldTransferError.invalidScope }
+            try team.requireCurrentScope(scope)
             _ = try await queue.pause(id: id)
             if activePackageID == id { generation &+= 1; worker?.cancel() }
             await refresh()
-        } catch { issue = error.localizedDescription }
+        } catch is CancellationError { }
+        catch { issue = error.localizedDescription }
     }
     func sceneBecameActive() { active = true; resume() }
     func sceneBecameInactive() {
-        active = false; generation &+= 1; worker?.cancel(); retryTimer?.cancel()
+        active = false; generation &+= 1; worker?.cancel(); retryTimer?.cancel(); renewalTask?.cancel()
     }
     func authenticationChanged() async {
+        let scope = team.transferScope
         generation &+= 1; worker?.cancel(); retryTimer?.cancel()
+        if renewalScope != scope { renewalTask?.cancel() }
+        if observedScope != scope {
+            observedScope = scope
+            renewalBlockedScope = nil; blockedRuntimeGeneration = nil; renewalRetryAt = nil; renewalFailures = 0
+        }
         pendingPreparations = [:]; records = []; await refresh(); resume()
     }
     func deliveryPassport(snapshot: AtlasProjectSnapshot, assetDirectory: URL) async throws -> Data {
@@ -192,7 +236,8 @@ final class FieldTransferCoordinator: ObservableObject {
     }
 
     func remoteMaterials(projectID: UUID) async throws -> [RemoteFieldMaterial] {
-        let context = try team.transferContext()
+        guard let scope = team.transferScope else { throw TeamError.notConnected }
+        let context = try await renewConnection(expectedScope: scope)
         let values = try await transport.list(projectID: projectID, context: context)
         try team.requireCurrentTransfer(context)
         return values
@@ -201,7 +246,8 @@ final class FieldTransferCoordinator: ObservableObject {
         // The supplied root is accepted for API symmetry; this assembler owns
         // its managed package directory and never writes over live originals.
         _ = assetDirectory
-        let context = try team.transferContext()
+        guard let scope = team.transferScope else { throw TeamError.notConnected }
+        let context = try await renewConnection(expectedScope: scope)
         try material.manifest.validate()
         let runGeneration = generation
         for asset in material.manifest.assets {
@@ -225,11 +271,26 @@ final class FieldTransferCoordinator: ObservableObject {
 
     private func networkChanged(_ value: TransferNetwork) {
         guard network != value else { return }
-        network = value; generation &+= 1; worker?.cancel(); retryTimer?.cancel(); resume()
+        network = value; generation &+= 1; worker?.cancel(); retryTimer?.cancel()
+        if value == .offline { renewalTask?.cancel() }
+        resume()
     }
     private func resume() {
-        guard active, worker == nil, network != .offline, let queue,
-              let context = try? team.transferContext() else { return }
+        guard active, worker == nil, renewalTask == nil, network != .offline, let queue,
+              let scope = team.transferScope else { return }
+        if renewalBlockedScope == scope {
+            if let current = try? team.transferContext(), current.generation != blockedRuntimeGeneration {
+                // The operator established a new runtime after the rejection.
+                renewalBlockedScope = nil; blockedRuntimeGeneration = nil
+            } else { return }
+        }
+        if let retryAt = renewalRetryAt, retryAt > Date() { scheduleRetry(); return }
+        guard let context = try? team.transferContext() else {
+            guard renewalBlockedScope != scope else { return }
+            if team.busy { return } // The busy publisher wakes us when it clears.
+            startRenewal(scope: scope, queue: queue)
+            return
+        }
         retryTimer?.cancel(); retryTimer = nil
         let runGeneration = generation
         worker = Task { [weak self] in
@@ -237,18 +298,73 @@ final class FieldTransferCoordinator: ObservableObject {
             await self.run(context: context, queue: queue, generation: runGeneration)
             self.worker = nil; self.isSending = false; self.activePackageID = nil
             await self.refresh()
-            // An old worker may finish after a workspace/account switch.
-            // Wake eligible work in the current destination, not the cancelled
-            // worker's scope; every actual request still captures a fresh context.
-            if self.active, self.network != .offline, self.worker == nil,
-               let current = try? self.team.transferContext(),
-               let pending = try? await queue.pending(scope: current.scope, network: self.network,
-                   now: Date().addingTimeInterval(301), limit: 1), !pending.isEmpty,
-               (try? self.team.requireCurrentTransfer(current)) != nil,
-               self.active, self.network != .offline, self.worker == nil {
-                self.scheduleRetry()
-            }
+            guard self.active, self.network != .offline, self.worker == nil,
+                  let scope = self.team.transferScope,
+                  let pending = try? await queue.pending(scope: scope, network: self.network,
+                      now: Date().addingTimeInterval(301), limit: 1), !pending.isEmpty,
+                  self.team.transferScope == scope, self.active, self.network != .offline,
+                  self.worker == nil else { return }
+            self.scheduleRetry()
         }
+    }
+
+    /// Renewing outside `worker` prevents auth publishers from cancelling the
+    /// refresh operation that a cancelled upload would otherwise be awaiting.
+    private func startRenewal(scope: FieldTransferScope, queue: FieldTransferQueue) {
+        let id = UUID()
+        renewalID = id; renewalScope = scope
+        renewalTask = Task { [weak self] in
+            guard let self else { return }
+            var retry = false
+            var succeeded = false
+            var interrupted = false
+            do {
+                try Task.checkCancellation(); try self.team.requireCurrentScope(scope)
+                guard self.active, self.network != .offline else { throw CancellationError() }
+                let pending = try await queue.pending(scope: scope, network: self.network,
+                    now: Date().addingTimeInterval(301), limit: 1)
+                try Task.checkCancellation(); try self.team.requireCurrentScope(scope)
+                guard !pending.isEmpty else { throw CancellationError() }
+                try await self.team.renewRuntimeIfNeeded()
+                try Task.checkCancellation(); try self.team.requireCurrentScope(scope)
+                let context = try self.team.transferContext()
+                guard context.scope == scope, self.active, self.network != .offline else { throw CancellationError() }
+                self.renewalFailures = 0; self.renewalRetryAt = nil; self.issue = nil
+                succeeded = true
+            } catch is CancellationError {
+                // A rapid return to the foreground must wake work after the
+                // cancelled network call actually unwinds, not before it.
+                interrupted = Task.isCancelled
+            } catch {
+                if self.team.transferScope == scope {
+                    self.issue = error.localizedDescription
+                    if self.isTransientRenewal(error) {
+                        self.renewalFailures = min(self.renewalFailures + 1, 6)
+                        self.renewalRetryAt = Date().addingTimeInterval(min(60, pow(2, Double(self.renewalFailures))))
+                        retry = true
+                    } else {
+                        // No automatic login, permission bypass, or repeated
+                        // 401/403 requests. An explicit operator retry may renew.
+                        self.renewalBlockedScope = scope
+                        self.blockedRuntimeGeneration = (try? self.team.transferContext())?.generation
+                    }
+                }
+            }
+            guard self.renewalID == id else { return }
+            self.renewalTask = nil; self.renewalID = nil; self.renewalScope = nil
+            await self.refresh()
+            if succeeded || interrupted { self.resume() }
+            else if retry, self.active, self.network != .offline { self.scheduleRetry() }
+        }
+    }
+    private func isTransientRenewal(_ error: Error) -> Bool {
+        if let value = error as? URLError {
+            return value.code != .cancelled && value.code != .userAuthenticationRequired
+        }
+        if case let StaffAccountError.http(status) = error {
+            return status == 408 || status == 429 || status >= 500
+        }
+        return false
     }
     private func scheduleRetry() {
         retryTimer?.cancel()
@@ -305,10 +421,20 @@ final class FieldTransferCoordinator: ObservableObject {
                 _ = try await queue.markCompleted(id: record.id, serverReceiptID: status.captureID.uuidString, completedAt: completedAt)
                 issue = nil
             } catch {
+                if case StaffAccountError.http(403) = error {
+                    renewalBlockedScope = context.scope; blockedRuntimeGeneration = context.generation
+                }
+                if case TeamError.runtimeExpired = error {
+                    renewalBlockedScope = context.scope; blockedRuntimeGeneration = context.generation
+                }
                 if error is CancellationError || Task.isCancelled {
                     _ = try? await queue.markFailed(id: record.id,
                         message: "Передача приостановлена. Подтверждённые данные сохранены; продолжим при подходящих условиях.", retryable: true)
                 } else if let failure = error as? FieldTransportError {
+                    if case let .failed(status, _) = failure, status == 401 || status == 403 {
+                        renewalBlockedScope = context.scope
+                        blockedRuntimeGeneration = context.generation
+                    }
                     if case let .manifestConflict(message) = failure {
                         _ = try? await queue.markConflict(id: record.id, message: message)
                     } else {
@@ -322,6 +448,7 @@ final class FieldTransferCoordinator: ObservableObject {
                 }
             }
             await refresh(); activePackageID = nil
+            if renewalBlockedScope == context.scope { return }
         }
     }
     private func reportProgress(id: UUID, context: TeamTransferContext) async {

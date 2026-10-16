@@ -120,8 +120,13 @@ final class EvidenceService: ObservableObject {
     /// Copies an actual camera frame into JPEG on its owning executor. Neither
     /// ARFrame nor CVPixelBuffer is passed to the asynchronous evidence actor.
     func captureCameraPhoto(from view: ARView, projectID: UUID, frameID: UUID?,
-                            outputDirectory: URL, geoFix: GeoLocationFix? = nil) async throws -> PhotoEvidence {
-        guard let frame = view.session.currentFrame else { throw EvidenceError.cameraNotReady }
+                            outputDirectory: URL, geoFix: GeoLocationFix? = nil,
+                            acceptsFrame: (TimeInterval) -> Bool) async throws -> PhotoEvidence {
+        guard let frame = view.session.currentFrame, acceptsFrame(frame.timestamp) else {
+            throw EvidenceError.cameraNotReady
+        }
+        let now = ProcessInfo.processInfo.systemUptime
+        let capturedAt = Date().addingTimeInterval(frame.timestamp - now)
         let orientation = view.window?.windowScene?.interfaceOrientation ?? .portrait
         let imageOrientation: CGImagePropertyOrientation
         switch orientation {
@@ -140,7 +145,6 @@ final class EvidenceService: ObservableObject {
         }
         let transform = frame.camera.transform
         let values = (0..<4).flatMap { column in (0..<4).map { row in transform[column][row] } }
-        let capturedAt = Date()
         // A cached, malformed, or unavailable GPS fix never prevents the photo.
         let acceptedFix = geoFix.flatMap { GeoTagPolicy.acceptDeviceFix($0, now: capturedAt) ? $0 : nil }
         return try await save(data: data, projectID: projectID, outputDirectory: outputDirectory,

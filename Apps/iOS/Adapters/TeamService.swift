@@ -40,6 +40,25 @@ private struct SessionResponse: Codable, Sendable {
 private struct StoredTeamSession: Codable, Sendable {
     var baseURL: URL
     var session: SessionResponse
+    var runtime: StaffRuntimeCredentials
+    var shareWithTask: Bool
+    var shareOriginals: Bool
+    var organizationID: UUID? = nil
+}
+private struct StoredStaffConnection: Codable, Sendable {
+    var account: StaffAccountSession
+    var runtime: StoredTeamSession?
+    var runtimeRejected: Bool
+    init(account: StaffAccountSession, runtime: StoredTeamSession?, runtimeRejected: Bool = false) {
+        self.account = account; self.runtime = runtime; self.runtimeRejected = runtimeRejected
+    }
+    private enum CodingKeys: String, CodingKey { case account, runtime, runtimeRejected }
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        account = try values.decode(StaffAccountSession.self, forKey: .account)
+        runtime = try values.decodeIfPresent(StoredTeamSession.self, forKey: .runtime)
+        runtimeRejected = try values.decodeIfPresent(Bool.self, forKey: .runtimeRejected) ?? false
+    }
 }
 private struct OrganizationsResponse: Decodable { var organizations: [RemoteOrganization] }
 private struct ProjectsResponse: Decodable { var projects: [RemoteProject] }
@@ -92,11 +111,12 @@ private struct TeamRequestContext: Sendable {
 }
 
 enum TeamError: LocalizedError {
-    case invalidURL, notConnected, keychain(OSStatus), rejected(String)
+    case invalidURL, notConnected, runtimeExpired, keychain(OSStatus), rejected(String)
     var errorDescription: String? {
         switch self {
         case .invalidURL: "Укажите HTTPS-адрес сервера без логина, пароля или параметров в ссылке."
-        case .notConnected: "Подключитесь к серверу организации."
+        case .notConnected: "Войдите в «Семейный архив» и выберите подключение для отправки."
+        case .runtimeExpired: "Рабочее подключение истекло или отозвано. Обновите подключение перед отправкой."
         case let .keychain(status): "Не удалось сохранить защищённую сессию (\(status))."
         case let .rejected(message): message
         }
@@ -106,6 +126,11 @@ enum TeamError: LocalizedError {
 @MainActor
 final class TeamService: ObservableObject {
     @Published private(set) var user: RemoteUser?
+    @Published private(set) var accountUser: StaffAccountUser?
+    @Published private(set) var availableTasks: [StaffAccountTask] = []
+    @Published private(set) var accountExpiresAt: Date?
+    @Published private(set) var selectedTaskID: String?
+    @Published private(set) var runtimeExpiresAt: Date?
     @Published private(set) var organizations: [RemoteOrganization] = []
     @Published private(set) var projects: [RemoteProject] = []
     @Published private(set) var members: [RemoteMember] = []
@@ -116,57 +141,223 @@ final class TeamService: ObservableObject {
         didSet {
             if oldValue != selectedOrganizationID {
                 projects = []; members = []; publicationMessage = nil
+                if stored != nil {
+                    stored?.organizationID = selectedOrganizationID
+                    try? persistConnection()
+                }
             }
         }
     }
     private var stored: StoredTeamSession?
+    private var accountSession: StaffAccountSession?
     private var sessionGeneration: UInt64 = 0
-    private let keychainKey = "atlas-team-session-v1"
+    private var runtimeWasRejected = false
+    private let keychainKey = "family-archive-account-v1"
+    private let api = StaffAccountAPI()
+    private let webAuthenticator = StaffWebAuthenticator()
     private let publicationURL: URL
 
     init() {
         publicationURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Atlas/team-publication-v1.json")
-        if let data = Self.keychainRead(key: keychainKey), let value = try? JSONDecoder().decode(StoredTeamSession.self, from: data) {
-            stored = value; user = value.session.user
-        }
+        // Prototype passwords/tokens cannot be migrated into website accounts.
+        Self.keychainDelete(key: "atlas-team-session-v1")
+        if let data = Self.keychainRead(key: keychainKey),
+           let saved = try? JSONDecoder().decode(StoredStaffConnection.self, from: data),
+           (try? saved.account.credentials.validated()) != nil,
+           let expiry = saved.account.credentials.expiry,
+           (try? saved.account.context.validated(accountExpiresAt: expiry)) != nil {
+            installAccount(saved.account)
+            if let runtime = saved.runtime,
+               saved.account.context.tasks.contains(where: { $0.id == runtime.runtime.taskID }),
+               runtime.baseURL.absoluteString == StaffIdentityPolicy.dataBaseURL.absoluteString,
+               runtime.runtime.clientID == StaffIdentityPolicy.clientID,
+               runtime.runtime.tokenType.lowercased() == "bearer",
+               runtime.session.token == runtime.runtime.accessToken,
+               runtime.session.expiresAt == runtime.runtime.expiresAt,
+               (try? StaffIdentityPolicy.validateRuntimeTokenFormat(runtime.runtime.accessToken)) != nil,
+               !runtime.runtime.workspaceID.isEmpty,
+               let runtimeExpiry = runtime.runtime.expiry, runtimeExpiry <= expiry,
+               (try? StaffIdentityPolicy.trustedRuntimeBaseURL(runtime.runtime.baseURL)) == runtime.baseURL {
+                // A just-expired runtime is retained only for its explicit task
+                // and sharing choice. transferContext rejects its expired token.
+                stored = runtime; runtimeWasRejected = saved.runtimeRejected; user = runtime.session.user
+                selectedTaskID = runtime.runtime.taskID
+                runtimeExpiresAt = runtime.runtime.expiry
+                selectedOrganizationID = runtime.organizationID
+            }
+        } else { Self.keychainDelete(key: keychainKey) }
     }
 
-    var connected: Bool { stored != nil }
-    var serverAddress: String { stored?.baseURL.absoluteString ?? "" }
+    var accountSignedIn: Bool { accountSession != nil && (accountExpiresAt ?? .distantPast) > Date() }
+    var connected: Bool { accountSignedIn }
+    var runtimeReady: Bool {
+        guard runtimeTokenValid, selectedOrganizationID != nil else { return false }
+        return true
+    }
+    private var runtimeTokenValid: Bool {
+        guard !runtimeWasRejected, accountSignedIn, let stored, let expiry = accountExpiresAt else { return false }
+        return (try? stored.runtime.validated(accountExpiresAt: expiry, taskID: stored.runtime.taskID)) != nil
+    }
+    var serverAddress: String { StaffIdentityPolicy.dataBaseURL.absoluteString }
     var selectedOrganization: RemoteOrganization? { organizations.first { $0.id == selectedOrganizationID } }
+    var selectedTask: StaffAccountTask? { availableTasks.first { $0.id == selectedTaskID } }
+    var runtimeSharing: (withTask: Bool, originals: Bool)? {
+        stored.map { ($0.shareWithTask, $0.shareOriginals) }
+    }
 
-    func authenticate(server: String, email: String, password: String, displayName: String?, organizationName: String?) async {
+    func signInToFamilyArchive() async {
         guard !busy else { return }
         sessionGeneration &+= 1
         let generation = sessionGeneration
         busy = true; issue = nil
+        var mintedToken: String?
         defer { if sessionGeneration == generation { busy = false } }
         do {
-            let baseURL = try Self.validatedURL(server)
-            var body = ["email": email.trimmingCharacters(in: .whitespacesAndNewlines), "password": password]
-            let registering = displayName != nil
-            if let displayName { body["displayName"] = displayName }
-            if let organizationName { body["organizationName"] = organizationName }
-            let response: SessionResponse = try await request(base: baseURL,
-                path: registering ? "v1/auth/register" : "v1/auth/login", method: "POST",
-                body: JSONEncoder().encode(body), token: nil, generation: generation)
-            let value = StoredTeamSession(baseURL: baseURL, session: response)
-            try Self.keychainSave(JSONEncoder().encode(value), key: keychainKey)
-            stored = value; user = response.user
-            organizations = []; projects = []; members = []; selectedOrganizationID = nil
-            publicationMessage = nil
-            try await fetchOrganizations(context())
-        } catch { if sessionGeneration == generation { issue = error.localizedDescription } }
+            let pkce = try StaffIdentityPolicy.makePKCE(verifier: StaffWebAuthenticator.secureRandom(),
+                state: StaffWebAuthenticator.secureRandom())
+            let callback = try await webAuthenticator.authorize(pkce.authorizationURL)
+            guard generation == sessionGeneration else { throw CancellationError() }
+            let code = try StaffIdentityPolicy.validateCallback(callback, expectedState: pkce.state)
+            let credentials = try await api.exchange(code: code, verifier: pkce.verifier)
+            mintedToken = credentials.accessToken
+            try credentials.validated()
+            guard generation == sessionGeneration, let expiry = credentials.expiry else { throw CancellationError() }
+            let accountContext = try await api.context(accountToken: credentials.accessToken)
+            try accountContext.validated(accountExpiresAt: expiry)
+            guard generation == sessionGeneration else { throw CancellationError() }
+            let account = StaffAccountSession(credentials: credentials, context: accountContext)
+            try Self.keychainSave(JSONEncoder().encode(StoredStaffConnection(account: account, runtime: nil)), key: keychainKey)
+            clearRuntime()
+            installAccount(account)
+            mintedToken = nil
+        } catch {
+            if let mintedToken { Task { try? await api.logout(accountToken: mintedToken) } }
+            if generation == sessionGeneration, !(error is CancellationError) { issue = error.localizedDescription }
+        }
     }
 
+    /// Login succeeds with zero assignments. A task is needed only when the
+    /// operator explicitly prepares a server transfer.
     func refresh() async {
-        guard connected, !busy else { return }
+        guard accountSignedIn, !busy else { return }
         let generation = sessionGeneration
         busy = true; issue = nil
         defer { if sessionGeneration == generation { busy = false } }
-        do { try await fetchOrganizations(context()) }
-        catch { if sessionGeneration == generation { issue = error.localizedDescription } }
+        do {
+            try await refreshAccountContext(generation: generation)
+            if runtimeTokenValid { try await fetchOrganizations(context()) }
+        } catch {
+            if generation == sessionGeneration { handleAccountError(error); issue = error.localizedDescription }
+        }
+    }
+
+    func prepareRuntime(taskID: String, shareWithTask: Bool, shareOriginals: Bool) async throws {
+        guard !busy else { throw TeamError.rejected("Дождитесь завершения подключения.") }
+        guard accountSignedIn, let account = accountSession, let expiry = account.credentials.expiry else {
+            throw StaffAccountError.accountExpired
+        }
+        // Invalidate old in-flight requests before changing destination or
+        // disclosure choices. Old queued bytes remain bound to their own scope.
+        let renewingSameBinding = stored.map {
+            $0.runtime.taskID == taskID && $0.shareWithTask == shareWithTask && $0.shareOriginals == shareOriginals
+        } ?? false
+        sessionGeneration &+= 1
+        let generation = sessionGeneration
+        busy = true; issue = nil
+        if renewingSameBinding {
+            // Keep only the task/consent binding for retry after network failure;
+            // this bearer is unusable until the server issues a new one.
+            runtimeWasRejected = true
+        } else { clearRuntime() }
+        try? persistConnection()
+        defer { if sessionGeneration == generation { busy = false } }
+        do {
+            try await refreshAccountContext(generation: generation)
+            guard let task = availableTasks.first(where: { $0.id == taskID }) else {
+                throw TeamError.rejected("Задание больше недоступно. Обновите список или обратитесь к руководителю.")
+            }
+            let credentials = try await api.runtime(accountToken: account.credentials.accessToken,
+                taskID: taskID, shareWithTask: shareWithTask, shareOriginals: shareOriginals)
+            let baseURL = try credentials.validated(accountExpiresAt: min(expiry, accountExpiresAt ?? expiry), taskID: taskID)
+            if let expectedWorkspace = task.workspaceID, expectedWorkspace != credentials.workspaceID {
+                throw StaffAccountError.invalidResponse
+            }
+            guard generation == sessionGeneration else { throw CancellationError() }
+            struct Me: Decodable { let user: RemoteUser }
+            let me: Me = try await request(base: baseURL, path: "v1/me", token: credentials.accessToken,
+                generation: generation)
+            guard generation == sessionGeneration, accountSignedIn else { throw CancellationError() }
+            let value = StoredTeamSession(baseURL: baseURL,
+                session: SessionResponse(token: credentials.accessToken, expiresAt: credentials.expiresAt, user: me.user),
+                runtime: credentials, shareWithTask: shareWithTask, shareOriginals: shareOriginals,
+                organizationID: selectedOrganizationID)
+            stored = value; runtimeWasRejected = false; user = me.user
+            selectedTaskID = taskID; runtimeExpiresAt = credentials.expiry
+            try persistConnection()
+            try await fetchOrganizations(context())
+        } catch {
+            if generation == sessionGeneration {
+                if renewingSameBinding { runtimeWasRejected = true }
+                else { clearRuntime() }
+                try? persistConnection()
+                handleAccountError(error)
+                issue = error.localizedDescription
+            }
+            throw error
+        }
+    }
+
+    /// No refresh_token endpoint exists. Reissue the scoped runtime through the
+    /// still-valid account session, retaining the operator's explicit choices.
+    func renewRuntimeIfNeeded() async throws {
+        guard accountSignedIn else { throw StaffAccountError.accountExpired }
+        guard let stored else { throw TeamError.rejected("Выберите задание и подключите отправку материалов.") }
+        if !runtimeWasRejected, let expiry = stored.runtime.expiry, expiry.timeIntervalSinceNow > 60,
+           let accountExpiry = accountExpiresAt,
+           (try? stored.runtime.validated(accountExpiresAt: accountExpiry, taskID: stored.runtime.taskID)) != nil {
+            return
+        }
+        try await prepareRuntime(taskID: stored.runtime.taskID, shareWithTask: stored.shareWithTask,
+            shareOriginals: stored.shareOriginals)
+    }
+
+    private func refreshAccountContext(generation: UInt64) async throws {
+        guard let account = accountSession, let expiry = account.credentials.expiry else {
+            throw StaffAccountError.accountExpired
+        }
+        try account.credentials.validated()
+        let value = try await api.context(accountToken: account.credentials.accessToken)
+        guard generation == sessionGeneration else { throw CancellationError() }
+        try value.validated(accountExpiresAt: expiry)
+        guard value.user.id == account.context.user.id else { throw StaffAccountError.invalidResponse }
+        installAccount(StaffAccountSession(credentials: account.credentials, context: value))
+        if let selectedTaskID, !value.tasks.contains(where: { $0.id == selectedTaskID }) { clearRuntime() }
+        try persistConnection()
+    }
+
+    private func installAccount(_ value: StaffAccountSession) {
+        accountSession = value; accountUser = value.context.user
+        let contextExpiry = try? StaffIdentityPolicy.parseUTCDate(value.context.expiresAt)
+        accountExpiresAt = [value.credentials.expiry, contextExpiry].compactMap { $0 }.min()
+        availableTasks = value.context.tasks
+    }
+    private func clearRuntime() {
+        stored = nil; runtimeWasRejected = false; user = nil; organizations = []; projects = []; members = []
+        selectedOrganizationID = nil; selectedTaskID = nil; runtimeExpiresAt = nil
+        publicationMessage = nil
+    }
+    private func persistConnection() throws {
+        guard let accountSession else { Self.keychainDelete(key: keychainKey); return }
+        try Self.keychainSave(JSONEncoder().encode(StoredStaffConnection(account: accountSession, runtime: stored, runtimeRejected: runtimeWasRejected)), key: keychainKey)
+    }
+    private func handleAccountError(_ error: Error) {
+        if case StaffAccountError.http(401) = error {
+            sessionGeneration &+= 1
+            clearRuntime(); accountSession = nil; accountUser = nil; availableTasks = []; accountExpiresAt = nil
+            Self.keychainDelete(key: keychainKey)
+            busy = false
+        }
     }
 
     func loadOrganization(_ organization: RemoteOrganization) async {
@@ -184,24 +375,6 @@ final class TeamService: ObservableObject {
         } catch {
             if sessionGeneration == generation, selectedOrganizationID == organization.id { issue = error.localizedDescription }
         }
-    }
-
-    func addMember(email: String, role: String, organization: RemoteOrganization) async {
-        guard !busy else { return }
-        let generation = sessionGeneration
-        busy = true; issue = nil
-        do {
-            let context = try context()
-            try requireCurrent(context, organizationID: organization.id)
-            let _: RemoteMember = try await request(context: context,
-                path: "v1/organizations/\(organization.id.uuidString)/members", method: "POST",
-                body: JSONEncoder().encode(["email": email, "role": role]))
-        } catch {
-            if sessionGeneration == generation, selectedOrganizationID == organization.id { issue = error.localizedDescription }
-        }
-        guard sessionGeneration == generation else { return }
-        busy = false
-        if selectedOrganizationID == organization.id { await loadOrganization(organization) }
     }
 
     /// Sends a verified snapshot of metadata. Raw files, floor plans and automatic
@@ -343,36 +516,64 @@ final class TeamService: ObservableObject {
     }
 
     func signOut() async {
-        let previous = stored
+        let token = accountSession?.credentials.accessToken
         sessionGeneration &+= 1
+        webAuthenticator.cancel()
         Self.keychainDelete(key: keychainKey)
-        stored = nil; user = nil; organizations = []; projects = []; members = []
-        selectedOrganizationID = nil
+        clearRuntime(); accountSession = nil; accountUser = nil; availableTasks = []; accountExpiresAt = nil
         busy = false; issue = nil; publicationMessage = nil
-        if let previous {
-            // Local logout and entitlement clearing never wait for connectivity.
-            // Revocation uses the captured token and cannot touch a newer login.
-            Task {
-                var request = URLRequest(url: previous.baseURL.appendingPathComponent("v1/auth/logout"))
-                request.httpMethod = "POST"; request.timeoutInterval = 10
-                request.setValue("Bearer \(previous.session.token)", forHTTPHeaderField: "Authorization")
-                _ = try? await TeamHTTP.session.data(for: request)
-            }
+        if let token {
+            // Local logout is immediate. Revoke the captured website session;
+            // a late response cannot mutate a newly signed-in account.
+            Task { try? await api.logout(accountToken: token) }
         }
+    }
+
+    /// Identity and destination only, for reading preferences and staging local
+    /// originals while the runtime expires. It is never a network credential.
+    var transferScope: FieldTransferScope? {
+        guard accountSignedIn, let stored, let organizationID = selectedOrganizationID else { return nil }
+        let scope = FieldTransferScope(serverOrigin: stored.baseURL.absoluteString,
+            userID: stored.session.user.id, organizationID: organizationID,
+            destination: FieldTransferDestination(workspaceID: stored.runtime.workspaceID,
+                taskID: stored.runtime.taskID, shareWithTask: stored.shareWithTask, shareOriginals: stored.shareOriginals))
+        guard (try? scope.validate()) != nil else { return nil }
+        return scope
+    }
+
+    func requireCurrentScope(_ scope: FieldTransferScope) throws {
+        guard transferScope == scope else { throw CancellationError() }
     }
 
     /// A fixed destination binds every queued package to its original workspace.
     /// The bearer stays private to the request context and never becomes UI text.
     func transferContext() throws -> TeamTransferContext {
-        guard let stored, let organizationID = selectedOrganizationID else { throw TeamError.notConnected }
+        guard !runtimeWasRejected, let stored, let organizationID = selectedOrganizationID,
+              accountSignedIn, let expiry = accountExpiresAt else { throw TeamError.notConnected }
+        _ = try stored.runtime.validated(accountExpiresAt: expiry, taskID: stored.runtime.taskID)
         return TeamTransferContext(baseURL: stored.baseURL, token: stored.session.token,
-            userID: stored.session.user.id, organizationID: organizationID, generation: sessionGeneration)
+            userID: stored.session.user.id, organizationID: organizationID, generation: sessionGeneration,
+            destination: FieldTransferDestination(workspaceID: stored.runtime.workspaceID,
+                taskID: stored.runtime.taskID, shareWithTask: stored.shareWithTask, shareOriginals: stored.shareOriginals))
     }
 
     func requireCurrentTransfer(_ context: TeamTransferContext) throws {
-        guard context.generation == sessionGeneration, context.baseURL == stored?.baseURL,
+        guard !runtimeWasRejected, accountSignedIn, (runtimeExpiresAt ?? .distantPast) > Date(),
+              context.generation == sessionGeneration, context.baseURL == stored?.baseURL,
               context.userID == stored?.session.user.id, context.organizationID == selectedOrganizationID,
-              context.matchesToken(stored?.session.token) else { throw CancellationError() }
+              context.matchesToken(stored?.session.token),
+              context.destination == stored.map({ FieldTransferDestination(workspaceID: $0.runtime.workspaceID,
+                taskID: $0.runtime.taskID, shareWithTask: $0.shareWithTask, shareOriginals: $0.shareOriginals) }) else { throw CancellationError() }
+    }
+
+    /// A data bearer may be revoked while its nominal expiry is still future.
+    /// Keep the website account and task choice, but never retry this bearer.
+    func rejectRuntime(_ context: TeamTransferContext) {
+        guard context.generation == sessionGeneration, context.baseURL == stored?.baseURL,
+              context.userID == stored?.session.user.id, context.matchesToken(stored?.session.token) else { return }
+        runtimeWasRejected = true
+        try? persistConnection()
+        issue = "Рабочее подключение истекло или отозвано. Обновите подключение выбранного задания."
     }
 
     /// Creates the shared project with the same UUID; an existing project in a
@@ -417,13 +618,15 @@ final class TeamService: ObservableObject {
     }
 
     private func context() throws -> TeamRequestContext {
-        guard let stored else { throw TeamError.notConnected }
+        guard !runtimeWasRejected, accountSignedIn, let stored, let expiry = accountExpiresAt else { throw TeamError.notConnected }
+        _ = try stored.runtime.validated(accountExpiresAt: expiry, taskID: stored.runtime.taskID)
         return TeamRequestContext(baseURL: stored.baseURL, token: stored.session.token,
             userID: stored.session.user.id, generation: sessionGeneration)
     }
 
     private func requireCurrent(_ context: TeamRequestContext, organizationID: UUID? = nil) throws {
-        guard context.generation == sessionGeneration,
+        guard !runtimeWasRejected, accountSignedIn, (runtimeExpiresAt ?? .distantPast) > Date(),
+              context.generation == sessionGeneration,
               stored?.session.token == context.token, stored?.session.user.id == context.userID,
               organizationID == nil || selectedOrganizationID == organizationID else { throw CancellationError() }
     }
@@ -448,9 +651,12 @@ final class TeamService: ObservableObject {
     private func request<Response: Decodable>(base: URL, path: String, method: String = "GET", body: Data? = nil, token: String?, generation: UInt64) async throws -> Response {
         guard generation == sessionGeneration else { throw CancellationError() }
         let split = path.split(separator: "?", maxSplits: 1).map(String.init)
-        guard var components = URLComponents(url: base.appendingPathComponent(split[0]), resolvingAgainstBaseURL: false) else { throw TeamError.invalidURL }
-        if split.count == 2 { components.percentEncodedQuery = split[1] }
-        guard let url = components.url else { throw TeamError.invalidURL }
+        var query: [URLQueryItem] = []
+        if split.count == 2 {
+            var components = URLComponents(); components.percentEncodedQuery = split[1]
+            query = components.queryItems ?? []
+        }
+        let url = try StaffIdentityPolicy.dataURL(baseURL: base, relativePath: split[0], queryItems: query)
         var request = URLRequest(url: url)
         request.httpMethod = method; request.httpBody = body; request.timeoutInterval = 30
         request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -459,6 +665,14 @@ final class TeamService: ObservableObject {
         let (data, response) = try await TeamHTTP.session.data(for: request)
         guard generation == sessionGeneration else { throw CancellationError() }
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            if (response as? HTTPURLResponse)?.statusCode == 401 {
+                runtimeWasRejected = true
+                try? persistConnection()
+                let message = "Рабочее подключение истекло или отозвано. Обновите подключение выбранного задания."
+                issue = message
+                throw TeamError.runtimeExpired
+            }
+            if (response as? HTTPURLResponse)?.statusCode == 403 { throw StaffAccountError.http(403) }
             if let error = try? JSONDecoder().decode(APIErrorResponse.self, from: data) {
                 let descriptions = ["invalid_credentials": "Почта или пароль не совпали.",
                     "forbidden": "У вашей роли нет разрешения на это действие.",
@@ -478,10 +692,7 @@ final class TeamService: ObservableObject {
     }
 
     static func validatedURL(_ text: String) throws -> URL {
-        guard let url = URL(string: text.trimmingCharacters(in: .whitespacesAndNewlines)),
-              let host = url.host, url.user == nil, url.password == nil, url.query == nil, url.fragment == nil,
-              url.scheme == "https" || (url.scheme == "http" && ["localhost", "127.0.0.1", "::1"].contains(host)) else { throw TeamError.invalidURL }
-        return url
+        try StaffIdentityPolicy.trustedRuntimeBaseURL(text.trimmingCharacters(in: .whitespacesAndNewlines))
     }
     private static func keychainRead(key: String) -> Data? {
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,

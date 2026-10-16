@@ -22,6 +22,17 @@
 	<true/>
 	<key>CFBundleDisplayName</key>
 	<string>TerraView</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.atlasfield.family-archive</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>archiverf-atlas</string>
+			</array>
+		</dict>
+	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>Камера нужна для 3D-съёмки, AR-рулетки, обмеров и фотофиксации объекта.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>

@@ -30,28 +30,24 @@ struct TeamTransferContext: Sendable {
     let userID: UUID
     let organizationID: UUID
     let generation: UInt64
+    let destination: FieldTransferDestination?
     private let token: String
 
-    init(baseURL: URL, token: String, userID: UUID, organizationID: UUID, generation: UInt64) {
+    init(baseURL: URL, token: String, userID: UUID, organizationID: UUID, generation: UInt64,
+         destination: FieldTransferDestination? = nil) {
         self.baseURL = baseURL; self.token = token; self.userID = userID
         self.organizationID = organizationID; self.generation = generation
+        self.destination = destination
     }
     var scope: FieldTransferScope {
-        FieldTransferScope(serverOrigin: baseURL.absoluteString, userID: userID, organizationID: organizationID)
+        FieldTransferScope(serverOrigin: baseURL.absoluteString, userID: userID, organizationID: organizationID,
+                           destination: destination)
     }
     func matchesToken(_ value: String?) -> Bool { token == value }
 
     func request(path: String, method: String = "GET", body: Data? = nil,
                  query: [URLQueryItem] = [], contentType: String = "application/json") throws -> URLRequest {
-        guard !path.hasPrefix("/"), !path.contains(".."), !path.contains("://"),
-              var components = URLComponents(url: baseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false) else {
-            throw FieldTransportError.invalidResponse
-        }
-        components.queryItems = query.isEmpty ? nil : query
-        guard let url = components.url, url.scheme == baseURL.scheme, url.host == baseURL.host,
-              url.port == baseURL.port, url.user == nil, url.password == nil else {
-            throw FieldTransportError.invalidResponse
-        }
+        let url = try StaffIdentityPolicy.dataURL(baseURL: baseURL, relativePath: path, queryItems: query)
         var request = URLRequest(url: url)
         request.httpMethod = method; request.httpBody = body
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -217,6 +213,7 @@ actor FieldTransferTransport {
         try await team.requireCurrentTransfer(context)
         guard let http = response as? HTTPURLResponse else { throw FieldTransportError.invalidResponse }
         guard (200..<300).contains(http.statusCode) else {
+            if http.statusCode == 401 { await team.rejectRuntime(context) }
             struct APIError: Decodable { struct Detail: Decodable { let code: String; let message: String }; let error: Detail }
             let detail = try? JSONDecoder().decode(APIError.self, from: data).error
             let descriptions = ["unauthorized": "Сессия закончилась. Войдите в рабочий аккаунт снова.",

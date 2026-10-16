@@ -151,11 +151,40 @@ public struct FieldTransferManifest: Identifiable, Codable, Hashable, Sendable {
 
 /// Authentication tokens never enter the durable queue. A transfer can only be
 /// selected by the exact server, account and organization it was prepared for.
+/// Website identifiers stay opaque strings. A queue must never inherit a new
+/// task or sharing decision merely because the adapter user/org UUIDs match.
+public struct FieldTransferDestination: Codable, Hashable, Sendable {
+    public let workspaceID: String
+    public let taskID: String
+    public let shareWithTask: Bool
+    public let shareOriginals: Bool
+
+    public init(workspaceID: String, taskID: String, shareWithTask: Bool, shareOriginals: Bool) {
+        self.workspaceID = workspaceID; self.taskID = taskID
+        self.shareWithTask = shareWithTask; self.shareOriginals = shareOriginals
+    }
+
+    public func validate() throws {
+        for value in [workspaceID, taskID] {
+            guard !value.isEmpty, value.utf8.count <= 512,
+                  !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
+                throw FieldTransferError.invalidScope
+            }
+        }
+    }
+
+    fileprivate var keyComponents: [String] {
+        [workspaceID, taskID, shareWithTask ? "shared" : "private", shareOriginals ? "originals" : "no-original-sharing"]
+    }
+}
+
 public struct FieldTransferScope: Codable, Hashable, Sendable {
     public let serverOrigin: String
     public let userID: UUID
     public let organizationID: UUID
-    public init(serverOrigin: String, userID: UUID, organizationID: UUID) {
+    public let destination: FieldTransferDestination?
+    public init(serverOrigin: String, userID: UUID, organizationID: UUID,
+                destination: FieldTransferDestination? = nil) {
         var components = URLComponents(string: serverOrigin.trimmingCharacters(in: .whitespacesAndNewlines))
         let scheme = components?.scheme?.lowercased(), host = components?.host?.lowercased()
         components?.scheme = scheme
@@ -168,6 +197,7 @@ public struct FieldTransferScope: Codable, Hashable, Sendable {
         }
         self.serverOrigin = components?.string ?? serverOrigin
         self.userID = userID; self.organizationID = organizationID
+        self.destination = destination
     }
 
     public func validate() throws {
@@ -176,10 +206,16 @@ public struct FieldTransferScope: Codable, Hashable, Sendable {
               components.scheme == "https" || (components.scheme == "http" && ["localhost", "127.0.0.1", "::1", "[::1]"].contains(host)) else {
             throw FieldTransferError.invalidScope
         }
+        try destination?.validate()
     }
 
     public var key: String {
-        FieldTransferDigest.sha256(Data((serverOrigin + "|" + userID.uuidString.lowercased() + "|" + organizationID.uuidString.lowercased()).utf8))
+        let legacy = serverOrigin + "|" + userID.uuidString.lowercased() + "|" + organizationID.uuidString.lowercased()
+        guard let destination else { return FieldTransferDigest.sha256(Data(legacy.utf8)) }
+        // Length-prefix opaque IDs, so embedded separators cannot alias another
+        // task. Leave legacy keys byte-for-byte stable for existing local queues.
+        let binding = destination.keyComponents.map { String($0.utf8.count) + ":" + $0 }.joined()
+        return FieldTransferDigest.sha256(Data((legacy + "|native-v1|" + binding).utf8))
     }
 }
 

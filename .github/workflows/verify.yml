@@ -86,6 +86,7 @@ jobs:
           bash Apps/iOS/Adapters/Tests/fragment-assembly-checks.sh
           bash Apps/iOS/Adapters/Tests/collaborative-survey-checks.sh
           bash Apps/iOS/Adapters/Tests/collaboration-export-checks.sh
+          bash Apps/iOS/Adapters/Tests/family-archive-account-checks.sh
           python3 Apps/iOS/Adapters/Tests/check-lidar-overlay.py
           bash Apps/iOS/Adapters/Tests/mesh-export-checks.sh
           bash Apps/iOS/Adapters/Tests/check-field-assembler.sh
@@ -155,7 +156,7 @@ jobs:
     name: Full UI tests (Xcode ${{ matrix.toolchain }}, iOS ${{ matrix.ios_major }})
     needs: preflight
     runs-on: macos-15
-    # Full 16-case UI suites and xcresult export exceeded the earlier limit on
+    # Full UI suites and xcresult export exceeded the earlier limit on
     # iOS 26. Keep every test and preserve complete failure diagnostics.
     timeout-minutes: 60
     strategy:
@@ -215,8 +216,8 @@ jobs:
           root = Path('artifacts/runtime')
           summary = json.loads((root / 'diagnostics/test-summary.json').read_text())
           total = summary.get('totalTestCount', 0)
-          if total < 18 or summary.get('passedTests') != total or summary.get('result') != 'Passed':
-              raise SystemExit('Full UI verification requires all eighteen passing tests, including fieldwork, identity, floor grouping and dimension pixels.')
+          if total < 19 or summary.get('passedTests') != total or summary.get('result') != 'Passed':
+              raise SystemExit('Full UI verification requires all nineteen passing tests, including Family Archive sign-in, fieldwork, identity, floor grouping and dimension pixels.')
           if any(summary.get(field, 0) != 0 for field in ('failedTests', 'skippedTests', 'expectedFailures')):
               raise SystemExit('UI verification contains failed, skipped, or expected-failure tests.')
           selection = json.loads((root / 'simulator-selection.json').read_text())
@@ -242,6 +243,7 @@ jobs:
               '29-surface-classification_', '30-cabinet-door-review_',
               '33-team-planning_', '34-team-coverage_',
               '35-fragment-assembly_', '36-team-import_',
+              '37-archive-sign-in_',
           }
           found = set()
           for entry in manifest:

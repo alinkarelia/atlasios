@@ -103,6 +103,67 @@ final class AtlasUITests: XCTestCase {
         tap("capture.close", in: app)
         XCTAssertTrue(element("projects.startCapture", in: app).waitForExistence(timeout: 10),
                       "Capture screen must let the operator return to the project")
+
+        // A second presentation must create a usable capture screen after the
+        // old screen and its preparation task have been dismissed. Simulator
+        // exercises navigation lifetime only; it cannot prove a physical AR
+        // camera overlay or a late LiDAR callback was rendered correctly.
+        tap("projects.startCapture", in: app)
+        XCTAssertTrue(element("capture.unavailable", in: app).waitForExistence(timeout: 15))
+        tap("capture.mode.evidence", in: app)
+        XCTAssertTrue(element("evidence.cameraUnavailable", in: app).waitForExistence(timeout: 15))
+        tap("capture.mode.lidar", in: app)
+        XCTAssertTrue(element("capture.unavailable", in: app).waitForExistence(timeout: 10))
+        tap("capture.close", in: app)
+        XCTAssertTrue(element("projects.startCapture", in: app).waitForExistence(timeout: 10))
+    }
+
+    @MainActor
+    func testFamilyArchiveSignInKeepsOfflineCaptureAvailable() {
+        let app = launch()
+        let name = createProject(in: app)
+        let tabs = app.tabBars.firstMatch
+        XCTAssertTrue(tabs.buttons["Профиль"].isHittable)
+        tabs.buttons["Профиль"].tap()
+        let accountLink = app.buttons["Моя команда"].firstMatch
+        XCTAssertTrue(accountLink.waitForExistence(timeout: 10))
+        revealWholeControl(accountLink, in: app)
+        accountLink.tap()
+        XCTAssertTrue(app.navigationBars["Моя команда"].waitForExistence(timeout: 10))
+
+        let signIn = element("team.archiveSignIn", in: app)
+        revealWholeControl(signIn, in: app)
+        XCTAssertTrue(signIn.isEnabled, "An existing archive account must have a usable website sign-in action")
+        let explanation = element("team.archiveExplanation", in: app)
+        XCTAssertTrue(explanation.exists)
+        XCTAssertTrue(explanation.label.localizedCaseInsensitiveContains("сайт") ||
+                      explanation.label.localizedCaseInsensitiveContains("Семейный архив"),
+                      "The sign-in screen must identify the existing Family Archive account")
+        for retiredControl in ["team.server", "team.email", "team.password", "team.connect"] {
+            XCTAssertFalse(element(retiredControl, in: app).exists,
+                           "The website account must not expose the retired standalone login form: \(retiredControl)")
+        }
+        XCTAssertEqual(app.secureTextFields.count, 0,
+                       "The native app must let the website handle the archive password")
+        XCTAssertFalse(app.segmentedControls.buttons["Регистрация"].exists,
+                       "Archive sign-in must not create a second user database")
+        screenshot("37-archive-sign-in", app: app)
+
+        // Do not launch ASWebAuthenticationSession from this offline UI test.
+        // PKCE/state/token tests cover the protocol separately; dismissing this
+        // account screen must retain local work without any server credential.
+        let back = app.navigationBars["Моя команда"].buttons.firstMatch
+        XCTAssertTrue(back.isHittable); back.tap()
+        XCTAssertTrue(tabs.buttons["Проекты"].isHittable)
+        tabs.buttons["Проекты"].tap()
+        XCTAssertTrue(app.staticTexts[name].firstMatch.waitForExistence(timeout: 10),
+                      "Leaving archive sign-in must preserve the original local project")
+        tap("projects.startCapture", in: app)
+        XCTAssertTrue(element("capture.unavailable", in: app).waitForExistence(timeout: 15),
+                      "Local capture must remain accessible without website sign-in or an assigned task")
+        tap("capture.close", in: app)
+        XCTAssertTrue(element("projects.startCapture", in: app).waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts[name].firstMatch.exists)
     }
 
     @MainActor

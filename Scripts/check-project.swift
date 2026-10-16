@@ -109,6 +109,12 @@ func validateProject(at root: URL) throws {
     let infoData = try Data(contentsOf: app.appendingPathComponent("Info.plist"))
     let info = try PropertyListSerialization.propertyList(from: infoData, options: [], format: nil) as? [String: Any]
     try require(info?["NSCameraUsageDescription"] as? String != nil, "Missing camera permission explanation")
+    guard let callbackTypes = info?["CFBundleURLTypes"] as? [[String: Any]],
+          callbackTypes.count == 1,
+          callbackTypes[0]["CFBundleURLName"] as? String == "com.atlasfield.family-archive",
+          callbackTypes[0]["CFBundleURLSchemes"] as? [String] == ["archiverf-atlas"] else {
+        throw ProjectCheckError(description: "Family Archive sign-in requires the exact archiverf-atlas callback URL scheme")
+    }
     try require(info?["UIRequiredDeviceCapabilities"] == nil && info?["UIRequiresPersistentWiFi"] == nil,
                 "Manual tools must remain installable on devices without LiDAR")
     let scheme = try String(contentsOf: root.appendingPathComponent("Atlas.xcodeproj/xcshareddata/xcschemes/AtlasUITests.xcscheme"), encoding: .utf8)

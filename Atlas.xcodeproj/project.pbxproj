@@ -18,6 +18,13 @@
 			"path" = "Apps/iOS/Adapters/BurialPhotoService.swift";
 			"sourceTree" = "SOURCE_ROOT";
 		};
+		"847A6BB3D0A916E49084DFD9" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "CaptureCameraLifecycle.swift";
+			"path" = "Apps/iOS/Adapters/CaptureCameraLifecycle.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
 		"97EDBAA33147BF663940B7A7" = {
 			"isa" = "PBXFileReference";
 			"lastKnownFileType" = "sourcecode.swift";
@@ -254,6 +261,20 @@
 			"lastKnownFileType" = "sourcecode.swift";
 			"name" = "RoomCaptureAdapter.swift";
 			"path" = "Apps/iOS/Adapters/RoomCaptureAdapter.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"80191D39786FD95547E03D1D" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "StaffAccountSession.swift";
+			"path" = "Apps/iOS/Adapters/StaffAccountSession.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"E36CDBD715867B7B56D7336B" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"name" = "StaffWebAuthenticator.swift";
+			"path" = "Apps/iOS/Adapters/StaffWebAuthenticator.swift";
 			"sourceTree" = "SOURCE_ROOT";
 		};
 		"AC5E94FBE8BA5AF79458ED06" = {
@@ -758,6 +779,7 @@
 			"children" = (
 				3A4D363F080D148038AB7949,
 				584DA691EDD3900B1FA1C01C,
+				847A6BB3D0A916E49084DFD9,
 				97EDBAA33147BF663940B7A7,
 				63E9342A24C2E1740F469593,
 				A08D391A214DE3054C640150,
@@ -792,6 +814,8 @@
 				0B6D8091408D6CB7C3191A27,
 				048AF99A3378B851A673C93F,
 				6E5F0AB3195C1CD45AD5EC46,
+				80191D39786FD95547E03D1D,
+				E36CDBD715867B7B56D7336B,
 				AC5E94FBE8BA5AF79458ED06,
 				BAFDDABD632BD67F677C4328,
 				C835C7BD1BECD47976E90687,
@@ -1023,6 +1047,10 @@
 			"isa" = "PBXBuildFile";
 			"fileRef" = 584DA691EDD3900B1FA1C01C;
 		};
+		"4A1043A73E96D5D7BD31A208" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = 847A6BB3D0A916E49084DFD9;
+		};
 		"CAE174072EFE722A53D96896" = {
 			"isa" = "PBXBuildFile";
 			"fileRef" = 97EDBAA33147BF663940B7A7;
@@ -1158,6 +1186,14 @@
 		"C9480A6326A3AEB4CDFF0AD0" = {
 			"isa" = "PBXBuildFile";
 			"fileRef" = 6E5F0AB3195C1CD45AD5EC46;
+		};
+		"815A16BA924D74A071639F02" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = 80191D39786FD95547E03D1D;
+		};
+		"4BFA558588F696AE20377DA8" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = E36CDBD715867B7B56D7336B;
 		};
 		"816217B421A6F4472BB402F2" = {
 			"isa" = "PBXBuildFile";
@@ -1441,6 +1477,7 @@
 			"files" = (
 				8270E3877DACB9641446641E,
 				4B605BF1B981D7DBCB6CD3F1,
+				4A1043A73E96D5D7BD31A208,
 				CAE174072EFE722A53D96896,
 				529BBA292ED26C3144D72969,
 				9217DA3F118BB3729325FC87,
@@ -1475,6 +1512,8 @@
 				89F780514FCFE843D5143C5F,
 				D59928379F010B40A263FF11,
 				C9480A6326A3AEB4CDFF0AD0,
+				815A16BA924D74A071639F02,
+				4BFA558588F696AE20377DA8,
 				816217B421A6F4472BB402F2,
 				93B5DF519FD7DFB5D0EEB180,
 				FFA91AF9EFC2D9570A72E1D8,
@@ -1568,8 +1607,8 @@
 				"SWIFT_VERSION" = "6.0";
 				"SWIFT_STRICT_CONCURRENCY" = "complete";
 				"IPHONEOS_DEPLOYMENT_TARGET" = "17.0";
-				"MARKETING_VERSION" = "0.7.0";
-				"CURRENT_PROJECT_VERSION" = "9";
+				"MARKETING_VERSION" = "0.8.0";
+				"CURRENT_PROJECT_VERSION" = "10";
 				"DEVELOPMENT_TEAM" = "";
 				"SDKROOT" = "iphoneos";
 				"CLANG_ENABLE_MODULES" = "YES";
@@ -1615,8 +1654,8 @@
 				"SWIFT_VERSION" = "6.0";
 				"SWIFT_STRICT_CONCURRENCY" = "complete";
 				"IPHONEOS_DEPLOYMENT_TARGET" = "17.0";
-				"MARKETING_VERSION" = "0.7.0";
-				"CURRENT_PROJECT_VERSION" = "9";
+				"MARKETING_VERSION" = "0.8.0";
+				"CURRENT_PROJECT_VERSION" = "10";
 				"DEVELOPMENT_TEAM" = "";
 				"SDKROOT" = "iphoneos";
 				"CLANG_ENABLE_MODULES" = "YES";

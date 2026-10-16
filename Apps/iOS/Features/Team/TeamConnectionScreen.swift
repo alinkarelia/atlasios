@@ -4,14 +4,6 @@ import AtlasCore
 struct TeamConnectionScreen: View {
     @ObservedObject var model: AtlasAppModel
     @ObservedObject private var service: TeamService
-    @State private var registering = false
-    @State private var server = ""
-    @State private var email = ""
-    @State private var password = ""
-    @State private var name = ""
-    @State private var organizationName = ""
-    @State private var memberEmail = ""
-    @State private var memberRole = "surveyor"
     @State private var projectID: UUID?
     @State private var openingProjectID: UUID?
     @State private var openedProject: AtlasProject?
@@ -45,9 +37,9 @@ struct TeamConnectionScreen: View {
                     Label("Архив, рабочий чат и встреча", systemImage: "bubble.left.and.bubble.right")
                 }.accessibilityIdentifier("team.communication")
             } header: { Text("Связь с командой") } footer: {
-                Text("Комплект ZIP с исходниками и метаданными можно передать в ваш архив или чат. Подключение рабочего сервера \(AppBrand.displayName) — дополнительный способ обмена.")
+                Text("Все инструменты доступны без заданий. Комплект ZIP можно передать вручную; передача в задание команды использует существующий аккаунт сайта.")
             }.listRowBackground(Color.atlasCard)
-            if !service.connected, !model.projects.isEmpty {
+            if !model.projects.isEmpty {
                 Section {
                     Picker("Проект на iPhone", selection: $projectID) {
                         Text("Выберите проект").tag(Optional<UUID>.none)
@@ -60,53 +52,67 @@ struct TeamConnectionScreen: View {
                             Label("Подготовить и передать материалы", systemImage: "archivebox")
                         }.accessibilityIdentifier("team.projectTransfer")
                     }
-                } header: { Text("Поделиться без входа") }
+                } header: { Text("Материалы на iPhone") }
                     .listRowBackground(Color.atlasCard)
             }
-            if let user = service.user {
-                Section("Рабочий аккаунт") {
-                    Label(user.displayName, systemImage: "person.crop.circle")
-                    Text(user.email).foregroundStyle(Color.atlasMuted)
-                    Text(service.serverAddress).font(.caption).textSelection(.enabled)
-                    Button("Выйти", role: .destructive) {
-                        Task {
-                            await service.signOut()
-                            await model.transfers.authenticationChanged()
-                        }
+            if let account = service.accountUser, service.accountSignedIn {
+                Section("Семейный архив: Живая память") {
+                    Label(account.displayName.isEmpty ? "Рабочий аккаунт сайта" : account.displayName,
+                        systemImage: "person.crop.circle")
+                        .accessibilityIdentifier("team.accountStatus")
+                    if !account.email.isEmpty { Text(account.email).foregroundStyle(Color.atlasMuted) }
+                    if let expiry = service.accountExpiresAt {
+                        Text("Вход действует до \(expiry.formatted(date: .abbreviated, time: .shortened))")
+                            .font(.caption).foregroundStyle(Color.atlasMuted)
+                    }
+                    Button("Обновить доступные задания") {
+                        Task { await service.refresh(); await model.transfers.authenticationChanged() }
                     }.disabled(service.busy)
+                    Button("Выйти из рабочего аккаунта", role: .destructive) {
+                        Task { await service.signOut(); await model.transfers.authenticationChanged() }
+                    }.accessibilityIdentifier("team.archiveSignOut")
                 }.listRowBackground(Color.atlasCard)
-                workspace
+                Section {
+                    if service.availableTasks.isEmpty {
+                        Text("Доступных заданий пока нет").font(.headline)
+                        Text("Вход выполнен. Все инструменты, съёмка, карточки и экспорт доступны полностью. Задания нужны только для организации совместной работы.")
+                            .font(.subheadline).foregroundStyle(Color.atlasMuted)
+                    } else {
+                        ForEach(service.availableTasks) { task in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(task.title)
+                                if let workspace = task.workspaceTitle {
+                                    Text(workspace).font(.caption).foregroundStyle(Color.atlasMuted)
+                                }
+                            }
+                        }
+                        Text("Задание и доступ к оригиналам выбираются в разделе «Материалы и отправка» нужного проекта.")
+                            .font(.footnote).foregroundStyle(Color.atlasMuted)
+                    }
+                    Link("Открыть рабочий кабинет сайта", destination: URL(string: "https://archiverf.ru/#staff/apps")!)
+                } header: { Text("Доступные задания") }
+                    .listRowBackground(Color.atlasCard)
+                if service.runtimeReady { workspace }
             } else {
                 Section {
-                    Picker("Аккаунт", selection: $registering) {
-                        Text("Войти").tag(false)
-                        Text("Регистрация").tag(true)
-                    }.pickerStyle(.segmented)
-                    TextField("Адрес сервера команды", text: $server)
-                        .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
-                        .accessibilityIdentifier("team.server")
-                    TextField("Электронная почта", text: $email)
-                        .keyboardType(.emailAddress).textContentType(.username).textInputAutocapitalization(.never).autocorrectionDisabled()
-                        .accessibilityIdentifier("team.email")
-                    SecureField(registering ? "Пароль · от 12 символов" : "Пароль", text: $password)
-                        .textContentType(registering ? .newPassword : .password)
-                        .accessibilityIdentifier("team.password")
-                    if registering {
-                        TextField("Ваше имя", text: $name).textContentType(.name)
-                        TextField("Название организации", text: $organizationName)
-                    }
-                    Button(registering ? "Создать рабочее пространство" : "Подключиться") {
+                    Text("Используйте логин и пароль сайта «Семейный архив: Живая память». Защищённое окно сайта откроется после нажатия кнопки. Пароль вводится на сайте и не сохраняется в TerraView.")
+                        .font(.subheadline).foregroundStyle(Color.atlasMuted)
+                        .accessibilityIdentifier("team.archiveExplanation")
+                    Button {
                         Task {
-                            await service.authenticate(server: server, email: email, password: password,
-                                displayName: registering ? name : nil, organizationName: registering ? organizationName : nil)
-                            if service.connected { password = "" }
+                            await service.signInToFamilyArchive()
                             await model.transfers.authenticationChanged()
-                            if let organization = service.selectedOrganization { await service.loadOrganization(organization) }
                         }
-                    }.disabled(service.busy || !formReady)
-                        .accessibilityIdentifier("team.connect")
-                } header: { Text("Сервер \(AppBrand.displayName) · дополнительно") } footer: {
-                    Text("Для рабочего сервера укажите HTTPS-адрес администратора организации. Все локальные инструменты, съёмка и экспорт доступны бесплатно без входа.")
+                    } label: {
+                        Label("Войти через Семейный архив", systemImage: "person.badge.key")
+                    }.disabled(service.busy).accessibilityIdentifier("team.archiveSignIn")
+                    if service.busy {
+                        Button("Отменить вход", role: .cancel) {
+                            Task { await service.signOut(); await model.transfers.authenticationChanged() }
+                        }.accessibilityIdentifier("team.archiveCancelSignIn")
+                    }
+                } header: { Text("Один аккаунт с сайтом") } footer: {
+                    Text("Съёмка, измерения и экспорт доступны бесплатно без входа и без заданий. Передача в задание команды подключается отдельно; новая учётная запись в приложении не создаётся.")
                 }.listRowBackground(Color.atlasCard)
             }
             if service.busy { Section { ProgressView("Соединяемся с сервером…").tint(.atlasAccent) }.listRowBackground(Color.atlasCard) }
@@ -141,11 +147,6 @@ struct TeamConnectionScreen: View {
         }
     }
 
-    private var formReady: Bool {
-        !server.isEmpty && email.contains("@") && !password.isEmpty &&
-        (!registering || (password.count >= 12 && !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !organizationName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
-    }
-
     @ViewBuilder private var workspace: some View {
         if !service.organizations.isEmpty {
             Section("Рабочее пространство") {
@@ -163,35 +164,7 @@ struct TeamConnectionScreen: View {
                 ForEach(service.members) { member in
                     LabeledContent(member.displayName, value: roleTitle(member.role))
                 }
-                if let organization = service.selectedOrganization, ["owner", "admin"].contains(organization.role ?? "") {
-                    TextField("Почта нового участника", text: $memberEmail)
-                        .keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
-                    Picker("Роль участника", selection: $memberRole) {
-                        ForEach(["surveyor", "reviewer", "manager", "viewer"], id: \.self) { role in
-                            Text(roleTitle(role)).tag(role)
-                        }
-                    }
-                    Button("Добавить участника") {
-                        Task { await service.addMember(email: memberEmail, role: memberRole, organization: organization) }
-                    }.disabled(service.busy || !memberEmail.contains("@"))
-                    Text("Участник сначала регистрируется на этом сервере. Роль и доступ подтверждает сервер.")
-                        .font(.footnote).foregroundStyle(Color.atlasMuted)
-                }
-            }.listRowBackground(Color.atlasCard)
-            Section {
-                Picker("Локальный проект", selection: $projectID) {
-                    Text("Выберите проект").tag(Optional<UUID>.none)
-                    ForEach(model.projects) { project in Text(project.name).tag(Optional(project.id)) }
-                }
-                if let project = model.projects.first(where: { $0.id == projectID }) {
-                    NavigationLink {
-                        TeamProjectTransferScreen(model: model, project: project)
-                    } label: {
-                        Label("Материалы и отправка", systemImage: "arrow.up.doc")
-                    }.accessibilityIdentifier("team.projectTransfer")
-                }
-            } header: { Text("Отправить с этого iPhone") } footer: {
-                Text("По умолчанию отправка ручная. В проекте можно включить автоматическую отправку после сохранения и ограничить её Wi-Fi.")
+                Link("Управлять доступом на сайте", destination: URL(string: "https://archiverf.ru/#staff/apps")!)
             }.listRowBackground(Color.atlasCard)
             Section("Общие проекты") {
                 if service.projects.isEmpty {

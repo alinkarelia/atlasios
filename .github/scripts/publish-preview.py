@@ -20,7 +20,7 @@ import zipfile
 
 REPOSITORY = 'alinkarelia/atlasios'
 IPA_ARTIFACT = 'Atlas-unsigned-device-IPA-candidate'
-MINIMUM_UI_TESTS = 18
+MINIMUM_UI_TESTS = 19
 REQUIRED_VISUAL_STATES = {
     'initial_3D', 'orbit_rotated', 'foreground_return', 'walk_forward',
     'transfer_manual', 'transfer_automatic', 'transfer_restored_manual',
@@ -29,6 +29,7 @@ REQUIRED_VISUAL_STATES = {
     'map_search', 'empty_room_unavailable', 'building_plans', 'plan_dimensions',
     'tour_contours', 'tour_linked_card', 'survey_stations', 'survey_boundary',
     'opening_measurement', 'measurement_journal', 'surface_classification', 'cabinet_door_review',
+    'team_planning', 'team_coverage', 'fragment_assembly', 'team_import', 'archive_sign_in',
 }
 REQUIRED_SCREENSHOT_LABELS = {
     '01-project-created', '02-project-reopened', '03-capture-lidar-unavailable',
@@ -42,6 +43,7 @@ REQUIRED_SCREENSHOT_LABELS = {
     '26-survey-boundary', '27-opening-measurement', '28-measurement-journal',
     '29-surface-classification', '30-cabinet-door-review',
     '33-team-planning', '34-team-coverage', '35-fragment-assembly', '36-team-import',
+    '37-archive-sign-in',
 }
 EXPECTED_JOBS = {
     'Source project and Server',
@@ -126,7 +128,7 @@ def release_configuration(record):
             'Unexpected reviewed application identity or platform.')
     required_tests = record.get('required_ui_tests')
     require(type(required_tests) is int and required_tests >= MINIMUM_UI_TESTS,
-            'The review record must require all thirteen UI tests, including offline fieldwork and designer flows.')
+            'The review record must require all nineteen UI tests, including Family Archive sign-in, offline fieldwork and designer flows.')
     return tag, release_id, version, build, required_tests
 
 
@@ -170,7 +172,7 @@ def verify_context():
                 'All required actual runtime screenshot labels and their archive digest are required.')
         require(runtime.get('manual_visual_review') == 'passed'
                 and REQUIRED_VISUAL_STATES <= set(runtime.get('reviewed', [])),
-                'Incomplete actual 3D, fieldwork, designer, and project-transfer screenshot review.')
+                'Incomplete actual 3D, fieldwork, designer, team-project, and Family Archive sign-in screenshot review.')
     repository = api('GET', f'/repos/{REPOSITORY}')
     require(repository.get('private') is False and repository.get('full_name') == REPOSITORY,
             'Publication requires the public source repository.')
@@ -274,6 +276,16 @@ def validate_app_icons(archive, app, info):
             'iPad_PNGs': {name: list(size) for name, size in sorted(tablet.items())}}
 
 
+def validate_archive_callback(info):
+    """The packaged app must register the browser sign-in return scheme."""
+    callbacks = info.get('CFBundleURLTypes')
+    require(isinstance(callbacks, list) and len(callbacks) == 1
+            and isinstance(callbacks[0], dict)
+            and callbacks[0].get('CFBundleURLName') == 'com.atlasfield.family-archive'
+            and callbacks[0].get('CFBundleURLSchemes') == ['archiverf-atlas'],
+            'Packaged Family Archive sign-in callback scheme is missing or differs from the native contract.')
+
+
 def validate_ipa(ipa, source_sha, record):
     _, _, version, build, _ = release_configuration(record)
     require(ipa.is_file() and not ipa.is_symlink() and 0 < ipa.stat().st_size <= 512 * 1024 * 1024,
@@ -305,6 +317,7 @@ def validate_ipa(ipa, source_sha, record):
         require(all(info.get(key) == value for key, value in identity.items())
                 and info.get('MinimumOSVersion') in ('17.0', '17.0.0')
                 and 1 in info.get('UIDeviceFamily', []), 'IPA identity or iPhone platform does not match.')
+        validate_archive_callback(info)
         icons = validate_app_icons(archive, app, info)
         executable = info.get('CFBundleExecutable')
         require(isinstance(executable, str) and executable not in ('', '.', '..')

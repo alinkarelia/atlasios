@@ -254,6 +254,12 @@ struct CaptureScreen: View {
             if mode == .lidar && CaptureCoordinator.isSupported {
                 LiDARCameraView(coordinator: lidar)
                     .accessibilityLabel("Камера LiDAR")
+                if !lidar.isCameraReady {
+                    // ARView can retain its last camera drawable while paused
+                    // or resetting. Do not present that stale image as a live
+                    // preview while waiting for a fresh frame from this run.
+                    graphite.allowsHitTesting(false).accessibilityHidden(true)
+                }
                 // Each pair is independently near/screen-clipped. Reconnecting
                 // clipped pieces would invent the ceiling lines users reported.
                 Canvas { context, _ in
@@ -502,16 +508,19 @@ struct CaptureScreen: View {
                 Group {
                     if mode == .lidar && lidar.state == .recording {
                         Button {
+                            guard let ticket = lidar.evidenceCameraTicket else { return }
                             let fix = location.currentFix
                             Task {
                                 do { _ = try await evidence.captureCameraPhoto(from: lidar.arView, projectID: project.id,
-                                    frameID: lidar.currentFrameID, outputDirectory: outputDirectory, geoFix: fix)
+                                    frameID: ticket.frameID, outputDirectory: outputDirectory, geoFix: fix,
+                                    acceptsFrame: { lidar.acceptsEvidenceFrame(timestamp: $0, ticket: ticket) })
                                     onEvidenceSaved?()
                                 }
                                 catch { failure = error.localizedDescription }
                             }
                         } label: { Image(systemName: "camera").font(.title2).frame(width: 48, height: 48) }
-                            .disabled(evidence.isProcessing).accessibilityLabel("Фото с камеры")
+                            .disabled(evidence.isProcessing || lidar.evidenceCameraTicket == nil)
+                            .accessibilityLabel("Фото с камеры")
                     } else { Color.clear.frame(width: 48, height: 48) }
                 }
             }
@@ -996,8 +1005,12 @@ struct CaptureScreen: View {
 
 private struct LiDARCameraView: UIViewRepresentable {
     let coordinator: CaptureCoordinator
+    func makeCoordinator() -> CaptureCoordinator { coordinator }
     func makeUIView(context: Context) -> ARView { coordinator.arView }
     func updateUIView(_ uiView: ARView, context: Context) {}
+    static func dismantleUIView(_ uiView: ARView, coordinator: CaptureCoordinator) {
+        coordinator.suspendForDismissal()
+    }
 }
 
 private struct NativeRoomCaptureView: UIViewRepresentable {

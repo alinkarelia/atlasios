@@ -300,3 +300,74 @@ private func transferDirectory() throws -> URL {
     }
     try transferScope(server: "http://localhost:3000").validate()
 }
+
+@Test func legacyTransferScopeDecodesWithoutTaskAndKeepsItsStoredQueueKey() throws {
+    let data = Data(#"{"serverOrigin":"https://archiverf.ru/atlas","userID":"11111111-1111-1111-1111-111111111111","organizationID":"22222222-2222-2222-2222-222222222222"}"#.utf8)
+    let scope = try FieldTransferJSON.decode(FieldTransferScope.self, from: data)
+    #expect(scope.destination == nil)
+    #expect(scope.key == "1134baf8df4c17a4e508926adc56aeb506d0c8f91390033600370b93c527589e")
+    let bound = FieldTransferScope(serverOrigin: scope.serverOrigin, userID: scope.userID,
+        organizationID: scope.organizationID, destination: FieldTransferDestination(
+            workspaceID: "site-workspace-7", taskID: "site-task-9", shareWithTask: false, shareOriginals: false))
+    #expect(bound.key != scope.key)
+    #expect(try FieldTransferJSON.decode(FieldTransferScope.self, from: FieldTransferJSON.encode(bound)) == bound)
+}
+
+@Test func taskAndSharingChangesCannotClaimOrSendAnotherDestinationsPendingBytes() async throws {
+    let queue = try FieldTransferQueue(path: ":memory:")
+    let userID = UUID(), organizationID = UUID(), manifest = transferManifest()
+    func scope(_ workspace: String, _ task: String, _ share: Bool, _ originals: Bool) -> FieldTransferScope {
+        FieldTransferScope(serverOrigin: "https://archiverf.ru/atlas/", userID: userID,
+            organizationID: organizationID, destination: .init(workspaceID: workspace, taskID: task,
+                shareWithTask: share, shareOriginals: originals))
+    }
+    let original = scope("workspace-A", "task-A", false, false)
+    _ = try await queue.register(manifest: manifest, scope: original)
+    try await queue.requestSend(projectID: manifest.projectID, scope: original)
+    let others = [scope("workspace-A", "task-B", false, false), scope("workspace-B", "task-A", false, false),
+                  scope("workspace-A", "task-A", true, false), scope("workspace-A", "task-A", false, true),
+                  FieldTransferScope(serverOrigin: original.serverOrigin, userID: userID, organizationID: organizationID)]
+    for other in others {
+        #expect(try await queue.pending(scope: other, network: .wifi).isEmpty)
+        #expect(try await queue.claimNext(scope: other, network: .wifi) == nil)
+        await #expect(throws: FieldTransferError.invalidScope) {
+            try await queue.requestSend(projectID: manifest.projectID, scope: other, transferIDs: [manifest.id])
+        }
+    }
+    #expect(try await queue.claimNext(scope: original, network: .wifi)?.id == manifest.id)
+}
+
+@Test func taskBoundQueueRetainsAcknowledgedOffsetsAcrossRestartWithoutRebinding() async throws {
+    let directory = try transferDirectory(); defer { try? FileManager.default.removeItem(at: directory) }
+    let path = directory.appendingPathComponent("task-bound.sqlite").path
+    let account = transferScope(server: "https://archiverf.ru/atlas/")
+    let scope = FieldTransferScope(serverOrigin: account.serverOrigin, userID: account.userID,
+        organizationID: account.organizationID, destination: .init(workspaceID: "opaque/site|workspace", taskID: "task-42",
+            shareWithTask: true, shareOriginals: false))
+    let manifest = transferManifest(), queue = try FieldTransferQueue(path: path)
+    _ = try await queue.register(manifest: manifest, scope: scope)
+    try await queue.requestSend(projectID: manifest.projectID, scope: scope)
+    #expect(try await queue.claimNext(scope: scope, network: .wifi)?.id == manifest.id)
+    _ = try await queue.recordAcknowledgedOffset(id: manifest.id, assetID: manifest.assets[0].id, offset: 6)
+    let reopened = try FieldTransferQueue(path: path)
+    #expect(try await reopened.claimNext(scope: account, network: .wifi) == nil)
+    let resumed = try #require(try await reopened.claimNext(scope: scope, network: .wifi))
+    #expect(resumed.scope == scope)
+    #expect(resumed.uploadedBytes == 6)
+    #expect(resumed.id == manifest.id)
+}
+
+@Test func destinationIdentifiersStayOpaqueAndCannotAliasUsingSeparators() throws {
+    let account = transferScope()
+    func scope(_ workspace: String, _ task: String) -> FieldTransferScope {
+        FieldTransferScope(serverOrigin: account.serverOrigin, userID: account.userID,
+            organizationID: account.organizationID, destination: .init(workspaceID: workspace, taskID: task,
+                shareWithTask: false, shareOriginals: false))
+    }
+    try scope("site/задание|A", "opaque-ID:42").validate()
+    #expect(scope("A|B", "C").key != scope("A", "B|C").key)
+    for bad in ["", "\n", "id\rvalue", String(repeating: "a", count: 513)] {
+        #expect(throws: FieldTransferError.invalidScope) { try scope(bad, "task").validate() }
+        #expect(throws: FieldTransferError.invalidScope) { try scope("workspace", bad).validate() }
+    }
+}

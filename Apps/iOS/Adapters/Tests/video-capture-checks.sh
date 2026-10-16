@@ -5,6 +5,10 @@ test_workspace="$(mktemp -d)"
 trap 'rm -rf -- "$test_workspace"' EXIT
 swift_compiler="${SWIFTC:-swiftc}"
 "$swift_compiler" -swift-version 6 -strict-concurrency=complete \
+  "$test_directory/../CaptureCameraLifecycle.swift" "$test_directory/CaptureCameraLifecycleChecks.swift" \
+  -o "$test_workspace/camera-lifecycle"
+"$test_workspace/camera-lifecycle"
+"$swift_compiler" -swift-version 6 -strict-concurrency=complete \
   "$test_directory/../CaptureVideoDocument.swift" "$test_directory/CaptureVideoDocumentChecks.swift" \
   -o "$test_workspace/video-provenance"
 "$test_workspace/video-provenance"
